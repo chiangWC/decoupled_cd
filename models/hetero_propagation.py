@@ -26,6 +26,7 @@ class HeterogeneousGraphPropagation(nn.Module):
         self.beta = nn.Parameter(torch.tensor(float(beta), dtype=torch.float32))
         self.exercise_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.concept_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
+        self.tkc_fusion_gate = nn.Linear(concept_dim * 2, 1, bias=True)
 
     def forward(
         self,
@@ -54,7 +55,11 @@ class HeterogeneousGraphPropagation(nn.Module):
         )
 
         shared_neighbor_component = concept_neighbor_messages.unsqueeze(0).expand(student_tkc_mask.size(0), -1, -1)
-        tkc_states = student_tkc_mask.unsqueeze(-1) * (tkc_exercise_component + shared_neighbor_component)
+        fusion_inputs = torch.cat([tkc_exercise_component, shared_neighbor_component], dim=-1)
+        fusion_gate = torch.sigmoid(self.tkc_fusion_gate(fusion_inputs))
+        tkc_states = student_tkc_mask.unsqueeze(-1) * (
+            fusion_gate * tkc_exercise_component + (1.0 - fusion_gate) * shared_neighbor_component
+        )
         ukc_states = student_ukc_mask.unsqueeze(-1) * shared_neighbor_component
 
         tkc_mean = _masked_average(tkc_states, student_tkc_mask)

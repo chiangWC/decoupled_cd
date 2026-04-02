@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from typing import Optional
 
@@ -56,5 +55,4 @@ def resolve_device(device: str = "auto", gpu_candidates: str | None = None) -> t
     gpu_id = select_best_gpu(candidates)
     if gpu_id is None:
         return torch.device("cuda:0")
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    return torch.device("cuda:0")
+    return torch.device(f"cuda:{gpu_id}")

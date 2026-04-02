@@ -16,6 +16,7 @@ class TrainResult:
     final_loss: float
     best_val_auc: float
     best_epoch: int
+    best_checkpoint_path: str | None
 
 
 def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, torch.Tensor]:
@@ -77,12 +78,23 @@ def train_model(
     learning_rate: float = 1e-3,
     device: str = "cpu",
     early_stop_patience: int = 5,
+    lr_scheduler_patience: int = 10,
+    lr_scheduler_factor: float = 0.5,
+    min_learning_rate: float = 1e-5,
+    checkpoint_path: str | None = None,
 ) -> TrainResult:
     torch_device = torch.device(device)
     model = model.to(torch_device)
     train_tensors = _bundle_tensors(train_bundle, torch_device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="max",
+        factor=lr_scheduler_factor,
+        patience=lr_scheduler_patience,
+        min_lr=min_learning_rate,
+    )
     history: list[dict[str, float]] = []
     best_state = None
     best_val_auc = float("-inf")
@@ -113,6 +125,7 @@ def train_model(
             "train_loss": float(mean_loss),
             "alpha": float(model.propagation.alpha.detach().cpu().item()),
             "beta": float(model.propagation.beta.detach().cpu().item()),
+            "learning_rate": float(optimizer.param_groups[0]["lr"]),
         }
 
         if valid_bundle is not None:
@@ -121,12 +134,15 @@ def train_model(
             row["val_auc"] = float(val_metrics["auc"])
             row["val_acc"] = float(val_metrics["acc"])
             row["val_rmse"] = float(val_metrics["rmse"])
+            scheduler.step(row["val_auc"])
 
             if row["val_auc"] > best_val_auc:
                 best_val_auc = row["val_auc"]
                 best_epoch = epoch
                 patience_counter = 0
                 best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                if checkpoint_path is not None:
+                    torch.save(best_state, checkpoint_path)
             else:
                 patience_counter += 1
                 if patience_counter >= early_stop_patience:
@@ -148,4 +164,5 @@ def train_model(
         final_loss=final_loss,
         best_val_auc=best_val_auc,
         best_epoch=best_epoch,
+        best_checkpoint_path=checkpoint_path if best_state is not None else None,
     )

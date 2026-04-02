@@ -3,12 +3,14 @@ from __future__ import annotations
 
 DATASET_DEFAULTS = {
     "assist_09": {
-        "train_interactions": "../ConceptSkillCDM/data/assist_09/train.csv",
-        "valid_interactions": "../ConceptSkillCDM/data/assist_09/valid.csv",
-        "test_interactions": "../ConceptSkillCDM/data/assist_09/test.csv",
-        "epochs": 5,
+        "train_interactions": "data/assist_09_ordered/train.csv",
+        "valid_interactions": "data/assist_09_ordered/valid.csv",
+        "test_interactions": "data/assist_09_ordered/test.csv",
+        "q_matrix": "data/assist_09_ordered/Q_matrix.csv",
+        "concept_graph": "data/assist_09_ordered/transition_graph/propagation_graph.csv",
+        "epochs": 20,
         "learning_rate": 1e-3,
-        "concept_dim": 16,
+        "concept_dim": 64,
         "alpha": 1.0,
         "beta": 1.0,
         "early_stop_patience": 5,

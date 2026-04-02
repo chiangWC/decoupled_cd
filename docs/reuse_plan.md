@@ -13,6 +13,8 @@
   - 训练历史 CSV 落盘
   - 实验 summary CSV 追加
   - GPU 设备选择工具
+  - best checkpoint 自动保存
+  - learning-rate scheduler 接入
 - 已实现的主线文件:
   - [scripts/train.py](/home/xph/jwc/research/decoupled_cd/scripts/train.py)
   - [trainers/engine.py](/home/xph/jwc/research/decoupled_cd/trainers/engine.py)
@@ -50,7 +52,7 @@
 
 - 已改造复用 [../ConceptSkillCDM/src/trainer.py](/home/xph/jwc/research/ConceptSkillCDM/src/trainer.py) 的思路:
   - 在 [trainers/engine.py](/home/xph/jwc/research/decoupled_cd/trainers/engine.py) 中实现 `train / validate / test` 评估骨架
-  - 已具备 `best val AUC` 选模和 early-stop 结构
+  - 已具备 `best val AUC` 选模、best checkpoint 保存、early-stop 和 scheduler 结构
 
 - 已改造复用 [../ConceptSkillCDM/gpu_utils.py](/home/xph/jwc/research/ConceptSkillCDM/gpu_utils.py) 的思路:
   - 在 [utils/device.py](/home/xph/jwc/research/decoupled_cd/utils/device.py) 中实现 GPU 候选解析、显存查询与自动设备选择
@@ -192,6 +194,25 @@
 - [../ConceptSkillCDM/run_all_datasets.py](/home/xph/jwc/research/ConceptSkillCDM/run_all_datasets.py)
   - 多数据集调度框架
   - 适合在当前单任务训练稳定后再复用
+
+## 当前已稳定下来的训练基线
+
+- 数据:
+  - `data/assist_09_ordered/train.csv`
+  - `data/assist_09_ordered/valid.csv`
+  - `data/assist_09_ordered/test.csv`
+- 知识图:
+  - `data/assist_09_ordered/transition_graph/propagation_graph.csv`
+- 默认超参数:
+  - `learning_rate = 1e-3`
+  - `concept_dim = 64`
+  - `gs_mode = conditional`
+- 当前最好正式结果:
+  - `300 epoch`
+  - `best_val_auc = 0.716939`
+  - `test_auc = 0.709411`
+  - best checkpoint:
+    - `results/assist_09_current_worktree_300ep_best.pt`
 
 ## 推荐的新项目目录结构
 

@@ -37,19 +37,43 @@ class DecoupledCDM(nn.Module):
         concept_dim: int = 32,
         alpha: float = 1.0,
         beta: float = 1.0,
+        gs_mode: str = "conditional",
     ):
         super().__init__()
+        if gs_mode not in {"constant", "conditional"}:
+            raise ValueError(f"Unsupported gs_mode: {gs_mode}")
+        self.gs_mode = gs_mode
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
         self.exercise_difficulty = nn.Embedding(num_exercises, 1)
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
         self.q_pool_gate = nn.Linear(concept_dim, 1, bias=False)
+        self.exercise_q_fusion = nn.Sequential(
+            nn.Linear(concept_dim * 2, concept_dim),
+            nn.ReLU(),
+            nn.Linear(concept_dim, concept_dim),
+        )
         self.q_pool_mlp = nn.Sequential(
             nn.Linear(concept_dim, concept_dim),
             nn.ReLU(),
             nn.Linear(concept_dim, concept_dim),
         )
+        self.cognitive_match_mlp = nn.Sequential(
+            nn.Linear(concept_dim * 4, concept_dim),
+            nn.ReLU(),
+            nn.Linear(concept_dim, 1),
+        )
         self.guess_logit = nn.Embedding(num_students, 1)
         self.slip_logit = nn.Embedding(num_students, 1)
+        self.guess_mlp = nn.Sequential(
+            nn.Linear(concept_dim * 2, concept_dim),
+            nn.ReLU(),
+            nn.Linear(concept_dim, 1),
+        )
+        self.slip_mlp = nn.Sequential(
+            nn.Linear(concept_dim * 2, concept_dim),
+            nn.ReLU(),
+            nn.Linear(concept_dim, 1),
+        )
         self.propagation = HeterogeneousGraphPropagation(concept_dim=concept_dim, alpha=alpha, beta=beta)
 
     def forward(
@@ -83,13 +107,28 @@ class DecoupledCDM(nn.Module):
 
         student_state = propagated.student_state[target_student_ids]
         q_vectors = q_matrix[target_exercise_ids]
-        q_repr = self._build_exercise_q_representation(q_vectors=q_vectors, concept_embeddings=concept_embeddings)
+        target_exercise_embeddings = exercise_embeddings[target_exercise_ids]
+        q_repr = self._build_exercise_q_representation(
+            q_vectors=q_vectors,
+            concept_embeddings=concept_embeddings,
+            exercise_embeddings=target_exercise_embeddings,
+        )
         difficulty = self.exercise_difficulty(target_exercise_ids).squeeze(-1)
-        cognitive_logits = (student_state * q_repr).sum(dim=-1) - difficulty
+        match_inputs = torch.cat(
+            [student_state, q_repr, student_state * q_repr, torch.abs(student_state - q_repr)],
+            dim=-1,
+        )
+        cognitive_logits = self.cognitive_match_mlp(match_inputs).squeeze(-1) - difficulty
         cognitive_probs = torch.sigmoid(cognitive_logits)
 
-        guess_probs = torch.sigmoid(self.guess_logit(target_student_ids)).squeeze(-1)
-        slip_probs = torch.sigmoid(self.slip_logit(target_student_ids)).squeeze(-1)
+        guess_logits = self.guess_logit(target_student_ids).squeeze(-1)
+        slip_logits = self.slip_logit(target_student_ids).squeeze(-1)
+        if self.gs_mode == "conditional":
+            non_cognitive_inputs = torch.cat([student_state, q_repr], dim=-1)
+            guess_logits = guess_logits + self.guess_mlp(non_cognitive_inputs).squeeze(-1)
+            slip_logits = slip_logits + self.slip_mlp(non_cognitive_inputs).squeeze(-1)
+        guess_probs = torch.sigmoid(guess_logits)
+        slip_probs = torch.sigmoid(slip_logits)
         probs = (1.0 - slip_probs) * cognitive_probs + guess_probs * (1.0 - cognitive_probs)
 
         return DecoupledForwardOutput(
@@ -110,9 +149,11 @@ class DecoupledCDM(nn.Module):
         *,
         q_vectors: torch.Tensor,
         concept_embeddings: torch.Tensor,
+        exercise_embeddings: torch.Tensor,
     ) -> torch.Tensor:
         raw_scores = self.q_pool_gate(concept_embeddings).squeeze(-1)
         masked_scores = raw_scores.unsqueeze(0).expand(q_vectors.size(0), -1).masked_fill(q_vectors <= 0, -1e9)
         attn = torch.softmax(masked_scores, dim=1)
         pooled = attn @ concept_embeddings
-        return self.q_pool_mlp(pooled)
+        fused = self.exercise_q_fusion(torch.cat([pooled, exercise_embeddings], dim=-1))
+        return self.q_pool_mlp(fused)

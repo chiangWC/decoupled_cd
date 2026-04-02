@@ -40,10 +40,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concept-dim", type=int, default=32)
     parser.add_argument("--alpha", type=float, default=1.0)
     parser.add_argument("--beta", type=float, default=1.0)
+    parser.add_argument("--gs-mode", choices=["constant", "conditional"], default="conditional")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None, help="Optional comma-separated GPU candidates when --device auto.")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap for quick smoke runs.")
     parser.add_argument("--early-stop-patience", type=int, default=5)
+    parser.add_argument("--lr-scheduler-patience", type=int, default=10)
+    parser.add_argument("--lr-scheduler-factor", type=float, default=0.5)
+    parser.add_argument("--min-learning-rate", type=float, default=1e-5)
     parser.add_argument("--log-dir", default="logs")
     parser.add_argument("--output", default="results/train_summary.json")
     args = parser.parse_args()
@@ -136,7 +140,9 @@ def main() -> None:
         concept_dim=args.concept_dim,
         alpha=args.alpha,
         beta=args.beta,
+        gs_mode=args.gs_mode,
     )
+    checkpoint_path = str(Path(args.output).with_name(Path(args.output).stem + "_best.pt"))
     result = train_model(
         train_bundle=train_bundle,
         valid_bundle=valid_bundle,
@@ -145,6 +151,10 @@ def main() -> None:
         learning_rate=args.learning_rate,
         device=resolved_device,
         early_stop_patience=args.early_stop_patience,
+        lr_scheduler_patience=args.lr_scheduler_patience,
+        lr_scheduler_factor=args.lr_scheduler_factor,
+        min_learning_rate=args.min_learning_rate,
+        checkpoint_path=checkpoint_path,
     )
     test_metrics = evaluate_model(bundle=test_bundle, model=model, device=resolved_device)
     valid_metrics = evaluate_model(bundle=valid_bundle, model=model, device=resolved_device) if valid_bundle is not None else None
@@ -157,11 +167,13 @@ def main() -> None:
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
+        "gs_mode": args.gs_mode,
         "device": resolved_device,
         "max_rows": args.max_rows,
         "final_loss": result.final_loss,
         "best_val_auc": result.best_val_auc,
         "best_epoch": result.best_epoch,
+        "best_checkpoint_path": result.best_checkpoint_path,
         "valid_metrics": valid_metrics,
         "test_metrics": test_metrics,
         "history": result.history,
@@ -179,13 +191,18 @@ def main() -> None:
         "test_interactions": args.test_interactions or args.interactions,
         "epochs": args.epochs,
         "learning_rate": args.learning_rate,
+        "lr_scheduler_patience": args.lr_scheduler_patience,
+        "lr_scheduler_factor": args.lr_scheduler_factor,
+        "min_learning_rate": args.min_learning_rate,
         "device": resolved_device,
         "concept_dim": args.concept_dim,
+        "gs_mode": args.gs_mode,
         "best_epoch": result.best_epoch,
         "best_val_auc": result.best_val_auc,
         "test_auc": test_metrics["auc"],
         "test_acc": test_metrics["acc"],
         "test_rmse": test_metrics["rmse"],
+        "best_checkpoint_path": str(Path(checkpoint_path).resolve()),
         "output_json": str(Path(args.output).resolve()),
         "history_csv": str(Path(history_path).resolve()),
     }
