@@ -1,0 +1,19 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local environments and editor files
+.env
+.venv/
+.idea/
+.vscode/
+
+# Logs and runtime outputs
+logs/
+results/
+
+# Generated datasets and graph artifacts
+data/assist_09_ordered/
+
+# OS files
+.DS_Store
