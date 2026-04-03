@@ -13,6 +13,7 @@
   - 训练历史 CSV 落盘
   - 实验 summary CSV 追加
   - GPU 设备选择工具
+  - 显式随机种子控制
   - best checkpoint 自动保存
   - learning-rate scheduler 接入
 - 已实现的主线文件:
@@ -56,6 +57,11 @@
 
 - 已改造复用 [../ConceptSkillCDM/gpu_utils.py](/home/xph/jwc/research/ConceptSkillCDM/gpu_utils.py) 的思路:
   - 在 [utils/device.py](/home/xph/jwc/research/decoupled_cd/utils/device.py) 中实现 GPU 候选解析、显存查询与自动设备选择
+  - 默认配置里已取消 `gpus = "0"` 的硬编码，`auto` 现在会在所有可见卡里选空闲最多的设备
+
+- 已补充当前项目自身需要的训练基础设施:
+  - 在 [utils/seed.py](/home/xph/jwc/research/decoupled_cd/utils/seed.py) 中实现全局随机种子控制
+  - 在 [scripts/train.py](/home/xph/jwc/research/decoupled_cd/scripts/train.py) 中接入 `--seed`
 
 ## 可直接复用的文件/函数
 
@@ -207,12 +213,15 @@
   - `learning_rate = 1e-3`
   - `concept_dim = 64`
   - `gs_mode = conditional`
+  - `TKC/UKC` 结构传播参数独立
 - 当前最好正式结果:
   - `300 epoch`
-  - `best_val_auc = 0.716939`
-  - `test_auc = 0.709411`
+  - `best_val_auc = 0.721520`
+  - `test_auc = 0.714303`
   - best checkpoint:
-    - `results/assist_09_current_worktree_300ep_best.pt`
+    - `results/assist_09_tkc_ukc_separate_300ep_best.pt`
+  - 多 seed 结果:
+    - `test_auc` 均值约 `0.7120`
 
 ## 推荐的新项目目录结构
 

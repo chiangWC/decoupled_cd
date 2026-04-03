@@ -34,7 +34,7 @@ cd /home/xph/jwc/research/decoupled_cd
 - `train / valid / test` 评估链路
 - GPU 全量训练能力
 
-当前不是工程闭环问题，而是模型效果问题。
+当前不是工程闭环问题，而是继续在稳定基线上做可解释的模型改动。
 
 ## 已实现的工程层
 
@@ -58,6 +58,7 @@ cd /home/xph/jwc/research/decoupled_cd
   - [utils/logging.py](/home/xph/jwc/research/decoupled_cd/utils/logging.py)
   - [utils/metrics.py](/home/xph/jwc/research/decoupled_cd/utils/metrics.py)
   - [utils/io.py](/home/xph/jwc/research/decoupled_cd/utils/io.py)
+  - [utils/seed.py](/home/xph/jwc/research/decoupled_cd/utils/seed.py)
 
 ## ASSIST09 相关数据
 
@@ -98,6 +99,30 @@ cd /home/xph/jwc/research/decoupled_cd
   - [data/assist_09_ordered/Q_matrix.csv](/home/xph/jwc/research/decoupled_cd/data/assist_09_ordered/Q_matrix.csv)
 - 图:
   - [data/assist_09_ordered/transition_graph/propagation_graph.csv](/home/xph/jwc/research/decoupled_cd/data/assist_09_ordered/transition_graph/propagation_graph.csv)
+- 默认配置:
+  - `learning_rate = 1e-3`
+  - `concept_dim = 64`
+  - `gs_mode = conditional`
+  - `TKC/UKC` 结构传播参数独立
+  - 长训基线按 `300 epoch` 看
+
+当前推荐结果口径:
+
+- 结果文件:
+  - [assist_09_tkc_ukc_separate_300ep.json](/home/xph/jwc/research/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep.json)
+- 最优 checkpoint:
+  - [assist_09_tkc_ukc_separate_300ep_best.pt](/home/xph/jwc/research/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep_best.pt)
+- 指标:
+  - `best_val_auc = 0.721520`
+  - `best_epoch = 203`
+  - `test_auc = 0.714303`
+  - `test_acc = 0.695675`
+  - `test_rmse = 0.449215`
+- 多 seed:
+  - [assist_09_tkc_ukc_separate_seed2024_300ep.json](/home/xph/jwc/research/decoupled_cd/results/multiseed/assist_09_tkc_ukc_separate_seed2024_300ep.json)
+  - [assist_09_tkc_ukc_separate_seed2025_300ep.json](/home/xph/jwc/research/decoupled_cd/results/multiseed/assist_09_tkc_ukc_separate_seed2025_300ep.json)
+  - [assist_09_tkc_ukc_separate_seed2026_300ep.json](/home/xph/jwc/research/decoupled_cd/results/multiseed/assist_09_tkc_ukc_separate_seed2026_300ep.json)
+  - `test_auc` 均值约 `0.7120`
 
 ## 图构建说明
 
@@ -115,43 +140,118 @@ cd /home/xph/jwc/research/decoupled_cd
 - 先修边数: `1161`
 - 相似边数: `2492`
 
+## 当前模型主干
+
+当前主干不是最早的“简单点积 + 学生常数 g/s”版本，而是:
+
+- Step 1:
+  - 从交互中构造 `student_exercise_mask / TKC / UKC`
+- Step 2:
+  - `TKC` 分支同时接收
+    - 题目-行为消息
+    - 概念邻接消息
+  - `UKC` 分支只接收概念邻接消息
+  - `TKC` 与 `UKC` 的结构传播参数现已解耦，不再共享同一套概念传播变换
+  - 学生状态由 `alpha * mean(TKC) + beta * mean(UKC)` 融合
+- Step 3:
+  - 题目表示 `q_e` 由 Q 掩码下的概念 gated pooling 与题目独立 embedding 融合得到
+  - 认知概率不是简单点积，而是通过一个小匹配头计算
+  - `g/s` 使用 `conditional` 模式，即依赖学生状态和题目表示，而不是纯学生常数
+- Step 4:
+  - BCE 训练
+  - `train/valid/test` 评估
+  - early stopping
+  - best checkpoint 保存
+  - `ReduceLROnPlateau` 调度框架
+
+相关主文件:
+
+- [models/decoupled_cdm.py](/home/xph/jwc/research/decoupled_cd/models/decoupled_cdm.py)
+- [models/hetero_propagation.py](/home/xph/jwc/research/decoupled_cd/models/hetero_propagation.py)
+- [trainers/engine.py](/home/xph/jwc/research/decoupled_cd/trainers/engine.py)
+
 ## 已做过的关键实验结论
 
-### 原始共现图基线
+### 1. 图构建
 
-- 能训练
-- 效果接近随机略高
+- 原始 Q 共现图可训练，但效果弱
+- 论文式 transition graph 明显更值得保留
+- ordered ASSIST09 + transition graph 已经是当前固定基线
 
-### 稀疏归一化共现图 + 可学习 `q_e`
+### 2. 超参数与训练长度
 
-- 能训练
-- 没有形成稳定提升
+- `learning_rate = 1e-3`
+- `concept_dim = 64`
+- `gs_mode = conditional`
 
-### 论文式转移图
+这套组合明显优于之前默认值。更关键的是，训练长度影响非常大:
 
-- 当前最值得保留
-- 在 `assist_09` 上取得目前更好的 `test_auc`
+- `20 epoch` 仍然远未训满
+- `100 epoch` 后效果大幅上升
+- `200 epoch` 继续提升
+- `300 epoch` 达到当前最好结果
 
-最新一版完整实验结果:
+### 3. `conditional g/s` 是有效改动
 
-- [assist_09_transition_graph_20ep.json](/home/xph/jwc/research/decoupled_cd/results/assist_09_transition_graph_20ep.json)
+- 在调优后超参数下，`conditional g/s` 明显优于 `constant g/s`
+- 因此当前正式基线应保留 `conditional g/s`
+
+### 4. scheduler 已接入，但更激进的 patience 没带来更好结果
+
+- 当前训练引擎已支持 checkpoint 与 `ReduceLROnPlateau`
+- 把 scheduler patience 调到更激进后，结果略差于原始单图 `300 epoch` 基线
+- 因此 scheduler 不是当前主提升来源
+- 当前正式主线应以 [assist_09_tkc_ukc_separate_300ep.json](/home/xph/jwc/research/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep.json) 为准
+
+### 5. 自动 GPU 选择问题已修复
+
+- 之前 `--device auto` 看起来会错误选到满卡
+- 根因不是 `utils/device.py`，而是 [configs/defaults.py](/home/xph/jwc/research/decoupled_cd/configs/defaults.py) 里默认把 `gpus` 锁死成了 `"0"`
+- 现在默认 `gpus = None`
+- 所以 `--device auto` 会在所有可见卡里选空闲最多的设备
+
+### 6. 双图分开传播是负结果
+
+- 当前代码支持:
+  - `graph_mode = single`
+  - `graph_mode = dual`
+- `dual` 模式会分别读取:
+  - `prerequisite_graph`
+  - `similarity_graph`
+- 但在 `assist_09` 上，双图 300 epoch 结果明显退化:
+  - [assist_09_dual_graph_300ep.json](/home/xph/jwc/research/decoupled_cd/results/assist_09_dual_graph_300ep.json)
+  - `test_auc = 0.501716`
+- 结论:
+  - 双图接口可保留作实验开关
+  - 但默认主线应继续使用单图 `propagation_graph`
+
+### 7. `TKC/UKC` 结构传播参数解耦是正结果
+
+- 当前最好结构改动是:
+  - 保持单图 `propagation_graph`
+  - 保持 `conditional g/s`
+  - 将 `TKC` 与 `UKC` 的概念结构传播参数从共享改成独立
+- 单次最好结果:
+  - [assist_09_tkc_ukc_separate_300ep.json](/home/xph/jwc/research/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep.json)
+  - `test_auc = 0.714303`
+- 多 seed 也稳定优于旧基线
+- 这条改动应视为当前新的候选主线
 
 ## 下一步建议
 
-优先做:
+优先顺序:
 
-1. `TKC` 两路消息融合
-   - 把 `exercise/behavior` 消息
-   - 和 `concept neighbor` 消息
-   - 从简单相加改成可学习融合
-2. 再考虑升级 `g / s`
-   - 从学生常数升级到 `student + exercise` 偏置
+1. 先清理或回退当前未提交的 `concept_self` 负向实验
+2. 继续结构探索时，不要再沿这条 self residual 方向深挖
+3. 更值得尝试的新方向:
+   - 将 `prerequisite_graph` 和 `similarity_graph` 分开传播，而不是提前合并成一张 `propagation_graph`
+   - 或在当前长训基线不变的前提下，做单变量的传播结构对比
 
 当前不建议:
 
-- 继续只靠增加 epoch
-- 回退到裸 Q 共现图
-- 同时大改多个模块
+- 回到裸 Q 共现图
+- 忽略 `300 epoch` 基线重新讨论结构优劣
+- 同时大改多处主干
 
 ## 推荐给下一个会话的开场提示
 
@@ -171,8 +271,14 @@ cd /home/xph/jwc/research/decoupled_cd
 当前推荐基线是：
 - ordered ASSIST09
 - data/assist_09_ordered/transition_graph/propagation_graph.csv
+- learning_rate=1e-3
+- concept_dim=64
+- gs_mode=conditional
+- TKC/UKC 结构传播参数独立
+- 当前正式最好结果见 results/assist_09_tkc_ukc_separate_300ep.json
 
 当前下一步：
-- 优先修改 TKC 两路消息融合
-- 然后再考虑升级 g/s
+- 在这条新主线上继续做单变量结构改动
+- 不要把 dual graph 误当成当前主线
+- 如需比较新结构，默认先跑 2-3 个 seed
 ```

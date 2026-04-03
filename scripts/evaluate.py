@@ -23,6 +23,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--valid-interactions", default=None)
     parser.add_argument("--test-interactions", default=None)
     parser.add_argument("--q-matrix", default=None)
+    parser.add_argument("--concept-graph", default=None)
+    parser.add_argument("--prerequisite-graph", default=None)
+    parser.add_argument("--similarity-graph", default=None)
+    parser.add_argument("--graph-mode", choices=["single", "dual"], default="single")
     parser.add_argument("--concept-dim", type=int, default=16)
     parser.add_argument("--alpha", type=float, default=1.0)
     parser.add_argument("--beta", type=float, default=1.0)
@@ -52,6 +56,8 @@ def derive_q_matrix_from_splits_if_needed(train_path: str, valid_path: str, test
 
 def main() -> None:
     args = parse_args()
+    if args.graph_mode == "dual" and (args.prerequisite_graph is None or args.similarity_graph is None):
+        raise ValueError("Dual graph mode requires both --prerequisite-graph and --similarity-graph.")
     if not all([args.train_interactions, args.valid_interactions, args.test_interactions]):
         raise ValueError("Evaluation requires --train-interactions, --valid-interactions, and --test-interactions.")
 
@@ -66,6 +72,9 @@ def main() -> None:
         valid_interactions_path=args.valid_interactions,
         test_interactions_path=args.test_interactions,
         q_matrix_path=q_matrix_path,
+        concept_graph_path=args.concept_graph,
+        prerequisite_graph_path=args.prerequisite_graph if args.graph_mode == "dual" else None,
+        similarity_graph_path=args.similarity_graph if args.graph_mode == "dual" else None,
     )
     device = str(resolve_device(args.device, args.gpus))
     model = DecoupledCDM(
@@ -79,6 +88,7 @@ def main() -> None:
 
     payload = {
         "device": device,
+        "graph_mode": args.graph_mode,
         "train_metrics": evaluate_model(bundle=bundles["train"], model=model, device=device),
         "valid_metrics": evaluate_model(bundle=bundles["valid"], model=model, device=device),
         "test_metrics": evaluate_model(bundle=bundles["test"], model=model, device=device),

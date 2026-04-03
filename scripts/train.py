@@ -17,7 +17,7 @@ from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles, prepare_step_data_bundle
 from models import DecoupledCDM
 from trainers import evaluate_model, train_model
-from utils import append_summary_csv, resolve_device, save_history_csv, setup_logging, write_json
+from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +34,9 @@ def parse_args() -> argparse.Namespace:
         help="Optional Q-matrix CSV. If omitted, it is derived from unique exer_id/cpt_seq pairs in interactions.",
     )
     parser.add_argument("--concept-graph", default=None, help="Optional external concept graph CSV.")
+    parser.add_argument("--prerequisite-graph", default=None, help="Optional prerequisite graph CSV for dual-graph mode.")
+    parser.add_argument("--similarity-graph", default=None, help="Optional similarity graph CSV for dual-graph mode.")
+    parser.add_argument("--graph-mode", choices=["single", "dual"], default="single")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
@@ -48,6 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr-scheduler-patience", type=int, default=10)
     parser.add_argument("--lr-scheduler-factor", type=float, default=0.5)
     parser.add_argument("--min-learning-rate", type=float, default=1e-5)
+    parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument("--log-dir", default="logs")
     parser.add_argument("--output", default="results/train_summary.json")
     args = parser.parse_args()
@@ -97,9 +101,14 @@ def materialize_subset_if_needed(interactions_path: str, max_rows: int | None) -
 
 def main() -> None:
     args = parse_args()
+    if args.graph_mode == "dual" and (args.prerequisite_graph is None or args.similarity_graph is None):
+        raise ValueError("Dual graph mode requires both --prerequisite-graph and --similarity-graph.")
+    set_global_seed(args.seed)
     logger, log_path = setup_logging(args.log_dir, name="train")
     resolved_device = str(resolve_device(args.device, args.gpus))
     logger.info("Resolved device: %s", resolved_device)
+    logger.info("Graph mode: %s", args.graph_mode)
+    logger.info("Seed: %s", args.seed)
     using_splits = all([args.train_interactions, args.valid_interactions, args.test_interactions])
     if not using_splits and not args.interactions:
         raise ValueError("Provide either --interactions or all of --train-interactions/--valid-interactions/--test-interactions.")
@@ -116,6 +125,8 @@ def main() -> None:
             test_interactions_path=test_path,
             q_matrix_path=q_matrix_source,
             concept_graph_path=args.concept_graph,
+            prerequisite_graph_path=args.prerequisite_graph if args.graph_mode == "dual" else None,
+            similarity_graph_path=args.similarity_graph if args.graph_mode == "dual" else None,
         )
         train_bundle = bundles["train"]
         valid_bundle = bundles["valid"]
@@ -128,6 +139,8 @@ def main() -> None:
             interactions_path=interactions_path,
             q_matrix_path=q_matrix_path,
             concept_graph_path=args.concept_graph,
+            prerequisite_graph_path=args.prerequisite_graph if args.graph_mode == "dual" else None,
+            similarity_graph_path=args.similarity_graph if args.graph_mode == "dual" else None,
         )
         train_bundle = single_bundle
         valid_bundle = None
@@ -142,7 +155,9 @@ def main() -> None:
         beta=args.beta,
         gs_mode=args.gs_mode,
     )
-    checkpoint_path = str(Path(args.output).with_name(Path(args.output).stem + "_best.pt"))
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = str(output_path.with_name(output_path.stem + "_best.pt"))
     result = train_model(
         train_bundle=train_bundle,
         valid_bundle=valid_bundle,
@@ -168,6 +183,8 @@ def main() -> None:
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
         "gs_mode": args.gs_mode,
+        "graph_mode": args.graph_mode,
+        "seed": args.seed,
         "device": resolved_device,
         "max_rows": args.max_rows,
         "final_loss": result.final_loss,
@@ -181,7 +198,7 @@ def main() -> None:
     }
 
     write_json(output, args.output)
-    history_path = str(Path(args.output).with_name(Path(args.output).stem + "_history.csv"))
+    history_path = str(output_path.with_name(output_path.stem + "_history.csv"))
     save_history_csv(result.history, history_path)
 
     summary_row = {
@@ -197,13 +214,15 @@ def main() -> None:
         "device": resolved_device,
         "concept_dim": args.concept_dim,
         "gs_mode": args.gs_mode,
+        "graph_mode": args.graph_mode,
+        "seed": args.seed,
         "best_epoch": result.best_epoch,
         "best_val_auc": result.best_val_auc,
         "test_auc": test_metrics["auc"],
         "test_acc": test_metrics["acc"],
         "test_rmse": test_metrics["rmse"],
         "best_checkpoint_path": str(Path(checkpoint_path).resolve()),
-        "output_json": str(Path(args.output).resolve()),
+        "output_json": str(output_path.resolve()),
         "history_csv": str(Path(history_path).resolve()),
     }
     append_summary_csv(summary_row, "results/experiment_results.csv")

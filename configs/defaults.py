@@ -8,6 +8,9 @@ DATASET_DEFAULTS = {
         "test_interactions": "data/assist_09_ordered/test.csv",
         "q_matrix": "data/assist_09_ordered/Q_matrix.csv",
         "concept_graph": "data/assist_09_ordered/transition_graph/propagation_graph.csv",
+        "prerequisite_graph": "data/assist_09_ordered/transition_graph/prerequisite_graph.csv",
+        "similarity_graph": "data/assist_09_ordered/transition_graph/similarity_graph.csv",
+        "graph_mode": "single",
         "epochs": 20,
         "learning_rate": 1e-3,
         "concept_dim": 64,
@@ -15,7 +18,7 @@ DATASET_DEFAULTS = {
         "beta": 1.0,
         "early_stop_patience": 5,
         "device": "auto",
-        "gpus": "0",
+        "gpus": None,
     },
     "assist_17": {
         "train_interactions": "../ConceptSkillCDM/data/assist_17/train.csv",
@@ -28,7 +31,7 @@ DATASET_DEFAULTS = {
         "beta": 1.0,
         "early_stop_patience": 5,
         "device": "auto",
-        "gpus": "0",
+        "gpus": None,
     },
     "junyi": {
         "train_interactions": "../ConceptSkillCDM/data/junyi/train.csv",
@@ -41,7 +44,7 @@ DATASET_DEFAULTS = {
         "beta": 1.0,
         "early_stop_patience": 5,
         "device": "auto",
-        "gpus": "0",
+        "gpus": None,
     },
 }
 

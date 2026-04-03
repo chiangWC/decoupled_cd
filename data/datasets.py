@@ -25,6 +25,8 @@ class StepDataBundle:
     interaction_student_ids: torch.Tensor
     interaction_exercise_ids: torch.Tensor
     interaction_labels: torch.Tensor
+    prerequisite_graph: torch.Tensor | None = None
+    similarity_graph: torch.Tensor | None = None
 
     @property
     def num_students(self) -> int:

@@ -19,10 +19,12 @@ class TrainResult:
     best_checkpoint_path: str | None
 
 
-def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, torch.Tensor]:
+def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, torch.Tensor | None]:
     return {
         "q_matrix": bundle.q_matrix_tensor.to(device),
         "concept_graph": bundle.concept_graph.to(device),
+        "prerequisite_graph": bundle.prerequisite_graph.to(device) if bundle.prerequisite_graph is not None else None,
+        "similarity_graph": bundle.similarity_graph.to(device) if bundle.similarity_graph is not None else None,
         "student_exercise_mask": bundle.student_exercise_mask.to(device),
         "student_tkc_mask": bundle.student_tkc_mask.to(device),
         "student_ukc_mask": bundle.student_ukc_mask.to(device),
@@ -52,6 +54,8 @@ def evaluate_model(
         output = model(
             q_matrix=tensors["q_matrix"],
             concept_graph=tensors["concept_graph"],
+            prerequisite_graph=tensors["prerequisite_graph"],
+            similarity_graph=tensors["similarity_graph"],
             student_exercise_mask=tensors["student_exercise_mask"],
             response_matrix=tensors["response_matrix"],
             student_tkc_mask=tensors["student_tkc_mask"],
@@ -108,6 +112,8 @@ def train_model(
         output = model(
             q_matrix=train_tensors["q_matrix"],
             concept_graph=train_tensors["concept_graph"],
+            prerequisite_graph=train_tensors["prerequisite_graph"],
+            similarity_graph=train_tensors["similarity_graph"],
             student_exercise_mask=train_tensors["student_exercise_mask"],
             response_matrix=train_tensors["response_matrix"],
             student_tkc_mask=train_tensors["student_tkc_mask"],

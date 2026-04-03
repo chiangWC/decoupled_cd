@@ -49,6 +49,8 @@ def prepare_step_data_bundle(
     interactions_path: str | Path,
     q_matrix_path: str | Path,
     concept_graph_path: str | Path | None = None,
+    prerequisite_graph_path: str | Path | None = None,
+    similarity_graph_path: str | Path | None = None,
 ) -> StepDataBundle:
     base = prepare_data_bundle(interactions_path=interactions_path, q_matrix_path=q_matrix_path)
 
@@ -62,6 +64,10 @@ def prepare_step_data_bundle(
         if concept_graph_path is not None
         else build_concept_graph_from_q(q_matrix_tensor=q_matrix_tensor)
     )
+    prerequisite_graph = (
+        load_concept_graph_csv(prerequisite_graph_path) if prerequisite_graph_path is not None else None
+    )
+    similarity_graph = load_concept_graph_csv(similarity_graph_path) if similarity_graph_path is not None else None
     student_exercise_mask = build_student_exercise_mask(
         interactions=base["interactions"],
         student_id_map=base["student_id_map"],
@@ -93,6 +99,8 @@ def prepare_step_data_bundle(
         interaction_student_ids=interaction_student_ids,
         interaction_exercise_ids=interaction_exercise_ids,
         interaction_labels=interaction_labels,
+        prerequisite_graph=prerequisite_graph,
+        similarity_graph=similarity_graph,
     )
 
 
@@ -120,6 +128,8 @@ def prepare_experiment_split_bundles(
     test_interactions_path: str | Path,
     q_matrix_path: str | Path,
     concept_graph_path: str | Path | None = None,
+    prerequisite_graph_path: str | Path | None = None,
+    similarity_graph_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     train_df = read_interactions(train_interactions_path)
     valid_df = read_interactions(valid_interactions_path)
@@ -139,6 +149,10 @@ def prepare_experiment_split_bundles(
         if concept_graph_path is not None
         else build_concept_graph_from_q(q_matrix_tensor=q_matrix_tensor)
     )
+    prerequisite_graph = (
+        load_concept_graph_csv(prerequisite_graph_path) if prerequisite_graph_path is not None else None
+    )
+    similarity_graph = load_concept_graph_csv(similarity_graph_path) if similarity_graph_path is not None else None
 
     train_student_exercise_mask = build_student_exercise_mask(
         interactions=train_df,
@@ -166,6 +180,8 @@ def prepare_experiment_split_bundles(
         "q_matrix": q_matrix,
         "q_matrix_tensor": q_matrix_tensor,
         "concept_graph": concept_graph,
+        "prerequisite_graph": prerequisite_graph,
+        "similarity_graph": similarity_graph,
         "student_id_map": mappings["student_id_map"],
         "exercise_id_map": mappings["exercise_id_map"],
         "concept_id_map": mappings["concept_id_map"],
@@ -190,6 +206,8 @@ def prepare_experiment_split_bundles(
             interaction_student_ids=student_ids,
             interaction_exercise_ids=exercise_ids,
             interaction_labels=labels,
+            prerequisite_graph=prerequisite_graph,
+            similarity_graph=similarity_graph,
         )
 
     return {
