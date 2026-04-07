@@ -241,16 +241,22 @@ cd /home/xph/jwc/research/decoupled_cd
 
 优先顺序:
 
-1. 先清理或回退当前未提交的 `concept_self` 负向实验
-2. 继续结构探索时，不要再沿这条 self residual 方向深挖
-3. 更值得尝试的新方向:
-   - 将 `prerequisite_graph` 和 `similarity_graph` 分开传播，而不是提前合并成一张 `propagation_graph`
-   - 或在当前长训基线不变的前提下，做单变量的传播结构对比
+1. 保持当前单图主线不变:
+   - `propagation_graph`
+   - `conditional g/s`
+   - `TKC/UKC` 结构传播参数独立
+2. 后续实验继续采用单变量比较:
+   - 一次只改一个结构因素
+   - 默认先跑 `2-3` 个 seed 再判断是否成立
+3. 如需继续改结构:
+   - 优先考虑更轻量的传播侧改动
+   - 避免显著增加 full-batch 显存占用的主干改动
 
 当前不建议:
 
 - 回到裸 Q 共现图
 - 忽略 `300 epoch` 基线重新讨论结构优劣
+- 把 dual graph 误当成当前默认主线
 - 同时大改多处主干
 
 ## 推荐给下一个会话的开场提示
