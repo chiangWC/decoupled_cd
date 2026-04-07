@@ -293,6 +293,30 @@
 - 当前候选主线应更新为“单图 + conditional g/s + `TKC/UKC` 独立结构传播参数 + `TKC` 正误双通道”
 - 它符合 `TKC/UKC` 分离建模的理论设定
 
+### 13. `q_e` 轻量 residual 融合
+
+改动:
+
+- 保留单图 `propagation_graph`
+- 保留 `conditional g/s`
+- 保留 `TKC/UKC` 结构传播参数独立
+- 保留 `TKC` 正误双通道行为消息
+- 在 `q_repr` 里给 `Q` pooling 表示和题目独立 embedding 增加一条轻量 gated residual 融合
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.744008`
+  - `test_auc = 0.737416`
+- 对比当前主线:
+  - `best_val_auc = 0.748738`
+  - `test_auc = 0.744609`
+
+结论:
+
+- 这条 `q_e` residual 方案没有带来收益，应视为负结果
+- 当前不建议再直接把题目独立 embedding 以残差形式叠回 `q_repr`
+
 ## 当前推荐基线
 
 后续模型改动应默认建立在下面这组设置上:
