@@ -42,22 +42,23 @@
   - `gs_mode = conditional`
   - `graph_mode = single`
   - `TKC/UKC` 结构传播参数独立
+  - `TKC` 行为消息使用正误双通道 + gated fusion
   - 长训比较默认看 `300 epoch`
 
 当前推荐结果口径:
 
 - 单次最好结果:
-  - [assist_09_eval_history_fix_retrain_seed2024_300ep_gpu1.json](/home/jameschiang/work/decoupled_cd/results/assist_09_eval_history_fix_retrain_seed2024_300ep_gpu1.json)
-  - `best_val_auc = 0.744711`
+  - [assist_09_tkc_dual_channel_seed2026_300ep_gpu2.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_dual_channel_seed2026_300ep_gpu2.json)
+  - `best_val_auc = 0.754099`
   - `best_epoch = 299`
-  - `test_auc = 0.738442`
-  - `test_acc = 0.711260`
-  - `test_rmse = 0.441660`
+  - `test_auc = 0.747414`
+  - `test_acc = 0.717901`
+  - `test_rmse = 0.438787`
 - 多 seed 结果:
-  - [assist_09_eval_history_fix_retrain_seed2024_300ep_gpu1.json](/home/jameschiang/work/decoupled_cd/results/assist_09_eval_history_fix_retrain_seed2024_300ep_gpu1.json)
-  - [assist_09_eval_history_fix_retrain_seed2025_300ep_gpu1.json](/home/jameschiang/work/decoupled_cd/results/assist_09_eval_history_fix_retrain_seed2025_300ep_gpu1.json)
-  - [assist_09_eval_history_fix_retrain_seed2026_300ep_gpu2.json](/home/jameschiang/work/decoupled_cd/results/assist_09_eval_history_fix_retrain_seed2026_300ep_gpu2.json)
-  - `test_auc` 均值约 `0.7381`
+  - [assist_09_tkc_dual_channel_seed2024_300ep_gpu1.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_dual_channel_seed2024_300ep_gpu1.json)
+  - [assist_09_tkc_dual_channel_seed2025_300ep_gpu1.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_dual_channel_seed2025_300ep_gpu1.json)
+  - [assist_09_tkc_dual_channel_seed2026_300ep_gpu2.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_dual_channel_seed2026_300ep_gpu2.json)
+  - `test_auc` 均值约 `0.7458`
 
 ## 已经定下来的判断
 
@@ -66,10 +67,12 @@
 - `20 epoch` 远远不够，结构比较默认应看 `300 epoch` 量级。
 - `conditional g/s` 明显优于 `constant g/s`，应保留。
 - `TKC/UKC` 结构传播参数解耦是当前最可靠的正向结构改动。
+- `TKC` 行为消息里显式保留错题信号是有效的，当前正误双通道优于只看正确题。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
 - 更激进的 scheduler patience 没有带来更好结果。
 - `dual graph` 在 `assist_09` 上明显退化，默认不要当主线。
 - 不要回到裸 Q 共现图重新做主基线判断，除非用户明确要求。
+- 并行训练的日志文件名现在已经唯一化，不再共用同一个 `train_*.log`。
 
 ## 当前关键文件
 
@@ -129,6 +132,7 @@
 - graph_mode=single
 - TKC/UKC 结构传播参数独立
 - 结构比较默认看 300 epoch
+- TKC 行为消息默认使用正误双通道
 
 当前规则：
 - 默认一次只改一个结构因素

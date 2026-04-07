@@ -258,8 +258,40 @@
 结论:
 
 - 这是当前最可靠的正向结构改动
+
+### 12. `TKC` 正误双通道行为消息
+
+改动:
+
+- 保留单图 `propagation_graph`
+- 保留 `conditional g/s`
+- 保留 `TKC/UKC` 结构传播参数独立
+- 将 `TKC` 行为消息从“只看正确题”改成:
+  - 正确题通道
+  - 错误题通道
+  - 行为侧 gated fusion
+- 同时将按知识点聚合的实现改成更省显存的索引式写法，避免双通道在 full-batch 下 OOM
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.748738`
+  - `test_auc = 0.744609`
+- `seed=2025`:
+  - `best_val_auc = 0.749699`
+  - `test_auc = 0.745276`
+- `seed=2026`:
+  - `best_val_auc = 0.754099`
+  - `test_auc = 0.747414`
+- 新结构 `test_auc` 均值约 `0.7458`
+- 相比上一版评估修复后基线均值 `0.7381`，提升约 `+0.0077`
+
+结论:
+
+- “错题信号被丢掉”是当前实现里的真实问题，不只是理论担忧
+- `TKC` 行为消息应显式保留错误作答证据
+- 当前候选主线应更新为“单图 + conditional g/s + `TKC/UKC` 独立结构传播参数 + `TKC` 正误双通道”
 - 它符合 `TKC/UKC` 分离建模的理论设定
-- 当前候选主线应更新为“单图 + conditional g/s + `TKC/UKC` 独立结构传播参数”
 
 ## 当前推荐基线
 
@@ -272,17 +304,18 @@
 - `concept_dim = 64`
 - `gs_mode = conditional`
 - `TKC/UKC` 结构传播参数独立
+- `TKC` 行为消息正误双通道
 - 长训推荐上限: `300 epoch`
 - 训练入口: [train.py](/home/xph/jwc/research/decoupled_cd/scripts/train.py)
 
 当前推荐结果口径:
 
-- 多 seed `test_auc` 均值约 `0.7381`
+- 多 seed `test_auc` 均值约 `0.7458`
 - 单次最好结果:
-  - `best_val_auc = 0.744711`
-  - `test_auc = 0.738442`
+  - `best_val_auc = 0.754099`
+  - `test_auc = 0.747414`
   - 文件:
-    - `results/assist_09_eval_history_fix_retrain_seed2024_300ep_gpu1.json`
+    - `results/assist_09_tkc_dual_channel_seed2026_300ep_gpu2.json`
 
 ## 当前主要瓶颈
 
@@ -290,7 +323,6 @@
 
 - `128` 维无法直接用于当前 full-batch GPU 路径
 - 当前最好结果已经依赖较长训练，后续需要更正式的训练策略管理
-- 当前日志文件名按秒命名；并行训练时可能复用同一个日志文件，后续最好补唯一 run id
 - 当前 `q_e` 与认知主干的进一步改动仍需谨慎，因为已有一次显存受限的负结果
 - learning-rate scheduler 已接入，但当前这轮长训中尚未真正触发降学习率
 - 双图分开传播当前明显退化，不应再作为短期主方向
