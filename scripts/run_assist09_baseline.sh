@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+cd "${PROJECT_ROOT}"
+
+if command -v python >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+else
+  echo "Neither python nor python3 was found in PATH." >&2
+  exit 1
+fi
+
+"${PYTHON_BIN}" scripts/train.py \
+  --dataset assist_09 \
+  --graph-mode single \
+  --epochs 300 \
+  --learning-rate 1e-3 \
+  --concept-dim 64 \
+  --gs-mode conditional \
+  --seed "${SEED:-2024}" \
+  --output "${OUTPUT:-results/assist_09_tkc_ukc_separate_300ep.json}" \
+  "$@"

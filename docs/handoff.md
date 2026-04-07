@@ -85,6 +85,9 @@
 - 训练与配置:
   - [scripts/train.py](/home/jameschiang/work/decoupled_cd/scripts/train.py)
   - [scripts/evaluate.py](/home/jameschiang/work/decoupled_cd/scripts/evaluate.py)
+  - [scripts/remote_exec.sh](/home/jameschiang/work/decoupled_cd/scripts/remote_exec.sh)
+  - [scripts/run_assist09_baseline.sh](/home/jameschiang/work/decoupled_cd/scripts/run_assist09_baseline.sh)
+  - [scripts/run_assist09_multiseed.sh](/home/jameschiang/work/decoupled_cd/scripts/run_assist09_multiseed.sh)
   - [trainers/engine.py](/home/jameschiang/work/decoupled_cd/trainers/engine.py)
   - [configs/defaults.py](/home/jameschiang/work/decoupled_cd/configs/defaults.py)
 
@@ -94,6 +97,18 @@
 - 默认先跑 `2-3` 个 seed 再判断改动是否成立。
 - 优先考虑更轻量的传播侧改动。
 - 避免显著增加 full-batch 显存占用的主干改动。
+
+## 当前推荐启动方式
+
+- 单次正式基线:
+  - `bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh`
+- 多 seed 正式基线:
+  - `bash scripts/remote_exec.sh bash scripts/run_assist09_multiseed.sh`
+- 运行前仍然先:
+  - `bash scripts/sync_to_remote.sh`
+- 默认约定:
+  - 所有项目代码都在远端主机上运行，包括训练、评估、测试和 smoke test。
+  - 本地默认只做代码修改、阅读文档和同步。
 
 ## 推荐给新会话的开场提示
 
@@ -118,5 +133,5 @@
 - 默认一次只改一个结构因素
 - 不要把 dual graph 当当前主线
 - 如需比较新结构，默认先跑 2-3 个 seed
-- 如需去远端跑代码，先同步并激活 decoupled_cd 环境
+- 所有项目代码都在远端主机上运行；先同步并激活 decoupled_cd 环境
 ```
