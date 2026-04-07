@@ -2,6 +2,8 @@
 
 本文档说明 [assist_09_ordered/transition_graph](/home/xph/jwc/research/decoupled_cd/data/assist_09_ordered/transition_graph) 目录下各文件的含义，以及当前训练主线实际使用的图文件。
 
+这是一份“图构建专题说明”，不是新会话默认必读文档。只有在修改构图逻辑、核对图文件来源或解释图含义时再读。
+
 ## 目录说明
 
 目录路径:

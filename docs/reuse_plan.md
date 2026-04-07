@@ -2,6 +2,8 @@
 
 基于 [README_spec.md](/home/xph/jwc/research/decoupled_cd/README_spec.md) 与参考项目 [../ConceptSkillCDM](/home/xph/jwc/research/ConceptSkillCDM/README.md) 的结构分析，这里只判断“哪些工程部分适合迁移到新项目”，不涉及直接拷贝核心模型结构。
 
+这是一份“工程复用/迁移档案”，不是新会话默认必读文档。只有在做工程重构、目录整理或参考项目能力迁移时再读。
+
 ## 当前状态
 
 本项目已经完成的最小工程复用包括:
