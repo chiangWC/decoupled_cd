@@ -79,6 +79,11 @@ def prepare_step_data_bundle(
         concept_id_map=base["concept_id_map"],
     )
     student_ukc_mask = (1.0 - student_tkc_mask).clamp(min=0.0, max=1.0)
+    response_matrix_tensor = build_response_matrix(
+        interactions=base["interactions"],
+        student_id_map=base["student_id_map"],
+        exercise_id_map=base["exercise_id_map"],
+    )
     interaction_student_ids, interaction_exercise_ids, interaction_labels = build_interaction_tensors(
         interactions=base["interactions"],
         student_id_map=base["student_id_map"],
@@ -87,6 +92,7 @@ def prepare_step_data_bundle(
 
     return StepDataBundle(
         interactions=base["interactions"],
+        history_interactions=base["interactions"],
         q_matrix=base["q_matrix"],
         student_id_map=base["student_id_map"],
         exercise_id_map=base["exercise_id_map"],
@@ -96,6 +102,7 @@ def prepare_step_data_bundle(
         student_exercise_mask=student_exercise_mask,
         student_tkc_mask=student_tkc_mask,
         student_ukc_mask=student_ukc_mask,
+        response_matrix_tensor=response_matrix_tensor,
         interaction_student_ids=interaction_student_ids,
         interaction_exercise_ids=interaction_exercise_ids,
         interaction_labels=interaction_labels,
@@ -165,6 +172,11 @@ def prepare_experiment_split_bundles(
         concept_id_map=mappings["concept_id_map"],
     )
     train_student_ukc_mask = (1.0 - train_student_tkc_mask).clamp(min=0.0, max=1.0)
+    train_response_matrix = build_response_matrix(
+        interactions=train_df,
+        student_id_map=mappings["student_id_map"],
+        exercise_id_map=mappings["exercise_id_map"],
+    )
 
     train_ids = build_interaction_tensors_from_frame(
         train_df, mappings["student_id_map"], mappings["exercise_id_map"]
@@ -194,6 +206,7 @@ def prepare_experiment_split_bundles(
         student_ids, exercise_ids, labels = ids
         return StepDataBundle(
             interactions=frame,
+            history_interactions=train_df,
             q_matrix=q_matrix,
             student_id_map=mappings["student_id_map"],
             exercise_id_map=mappings["exercise_id_map"],
@@ -203,6 +216,7 @@ def prepare_experiment_split_bundles(
             student_exercise_mask=train_student_exercise_mask,
             student_tkc_mask=train_student_tkc_mask,
             student_ukc_mask=train_student_ukc_mask,
+            response_matrix_tensor=train_response_matrix,
             interaction_student_ids=student_ids,
             interaction_exercise_ids=exercise_ids,
             interaction_labels=labels,

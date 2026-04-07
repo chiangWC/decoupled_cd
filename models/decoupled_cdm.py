@@ -105,9 +105,10 @@ class DecoupledCDM(nn.Module):
             student_ukc_mask=student_ukc_mask,
         )
 
+        if (target_student_ids is None) != (target_exercise_ids is None):
+            raise ValueError("target_student_ids and target_exercise_ids must be provided together.")
         if target_student_ids is None or target_exercise_ids is None:
-            target_student_ids = torch.arange(student_exercise_mask.size(0), device=student_exercise_mask.device)
-            target_exercise_ids = torch.zeros_like(target_student_ids)
+            raise ValueError("target_student_ids and target_exercise_ids are required for prediction.")
 
         student_state = propagated.student_state[target_student_ids]
         q_vectors = q_matrix[target_exercise_ids]

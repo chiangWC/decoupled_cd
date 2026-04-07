@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from data import StepDataBundle, build_response_matrix
+from data import StepDataBundle
 from models import DecoupledCDM
 from utils import compute_metrics
 
@@ -31,11 +31,7 @@ def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, t
         "interaction_student_ids": bundle.interaction_student_ids.to(device),
         "interaction_exercise_ids": bundle.interaction_exercise_ids.to(device),
         "interaction_labels": bundle.interaction_labels.to(device),
-        "response_matrix": build_response_matrix(
-            interactions=bundle.interactions,
-            student_id_map=bundle.student_id_map,
-            exercise_id_map=bundle.exercise_id_map,
-        ).to(device),
+        "response_matrix": bundle.response_matrix_tensor.to(device),
     }
 
 

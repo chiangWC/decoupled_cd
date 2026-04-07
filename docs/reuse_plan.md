@@ -218,12 +218,12 @@
   - `TKC/UKC` 结构传播参数独立
 - 当前最好正式结果:
   - `300 epoch`
-  - `best_val_auc = 0.721520`
-  - `test_auc = 0.714303`
+  - `best_val_auc = 0.744711`
+  - `test_auc = 0.738442`
   - best checkpoint:
-    - `results/assist_09_tkc_ukc_separate_300ep_best.pt`
+    - `results/assist_09_eval_history_fix_retrain_seed2024_300ep_gpu1_best.pt`
   - 多 seed 结果:
-    - `test_auc` 均值约 `0.7120`
+    - `test_auc` 均值约 `0.7381`
 
 ## 推荐的新项目目录结构
 

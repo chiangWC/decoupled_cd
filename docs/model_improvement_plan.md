@@ -244,16 +244,16 @@
 实验结论:
 
 - `seed=2024`:
-  - `best_val_auc = 0.721520`
-  - `test_auc = 0.714303`
+  - `best_val_auc = 0.744711`
+  - `test_auc = 0.738442`
 - `seed=2025`:
-  - `best_val_auc = 0.718835`
-  - `test_auc = 0.711312`
+  - `best_val_auc = 0.742114`
+  - `test_auc = 0.737970`
 - `seed=2026`:
-  - `best_val_auc = 0.718648`
-  - `test_auc = 0.710273`
-- 新结构 `test_auc` 均值约 `0.7120`
-- 相比旧单图基线均值 `0.7077`，平均提升约 `+0.0043`
+  - `best_val_auc = 0.743833`
+  - `test_auc = 0.737942`
+- 新结构 `test_auc` 均值约 `0.7381`
+- 这组结果建立在“`valid/test` 复用 `train` 行为历史输入”的修复后评估口径上
 
 结论:
 
@@ -277,12 +277,12 @@
 
 当前推荐结果口径:
 
-- 多 seed `test_auc` 均值约 `0.7120`
+- 多 seed `test_auc` 均值约 `0.7381`
 - 单次最好结果:
-  - `best_val_auc = 0.721520`
-  - `test_auc = 0.714303`
+  - `best_val_auc = 0.744711`
+  - `test_auc = 0.738442`
   - 文件:
-    - `results/assist_09_tkc_ukc_separate_300ep.json`
+    - `results/assist_09_eval_history_fix_retrain_seed2024_300ep_gpu1.json`
 
 ## 当前主要瓶颈
 
@@ -290,6 +290,7 @@
 
 - `128` 维无法直接用于当前 full-batch GPU 路径
 - 当前最好结果已经依赖较长训练，后续需要更正式的训练策略管理
+- 当前日志文件名按秒命名；并行训练时可能复用同一个日志文件，后续最好补唯一 run id
 - 当前 `q_e` 与认知主干的进一步改动仍需谨慎，因为已有一次显存受限的负结果
 - learning-rate scheduler 已接入，但当前这轮长训中尚未真正触发降学习率
 - 双图分开传播当前明显退化，不应再作为短期主方向

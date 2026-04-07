@@ -13,6 +13,7 @@ from .q_matrix import normalize_concept_sequence
 @dataclass
 class StepDataBundle:
     interactions: pd.DataFrame
+    history_interactions: pd.DataFrame
     q_matrix: pd.DataFrame
     student_id_map: Dict[str, int]
     exercise_id_map: Dict[str, int]
@@ -22,6 +23,7 @@ class StepDataBundle:
     student_exercise_mask: torch.Tensor
     student_tkc_mask: torch.Tensor
     student_ukc_mask: torch.Tensor
+    response_matrix_tensor: torch.Tensor
     interaction_student_ids: torch.Tensor
     interaction_exercise_ids: torch.Tensor
     interaction_labels: torch.Tensor
