@@ -1,26 +1,34 @@
 # Handoff
 
-这份文档用于让新的 Codex 会话或新的账号快速接手当前项目。
+这份文档用于让新的会话或新的账号快速接手当前项目。
 
 ## 先读这些文件
 
 接手时按下面顺序阅读:
 
-1. [README_spec.md](/home/xph/jwc/research/decoupled_cd/README_spec.md)
-2. [docs/reuse_plan.md](/home/xph/jwc/research/decoupled_cd/docs/reuse_plan.md)
-3. [docs/model_improvement_plan.md](/home/xph/jwc/research/decoupled_cd/docs/model_improvement_plan.md)
-4. [docs/transition_graph_notes.md](/home/xph/jwc/research/decoupled_cd/docs/transition_graph_notes.md)
-5. [docs/environment.md](/home/xph/jwc/research/decoupled_cd/docs/environment.md)
+1. [README_spec.md](/home/jameschiang/work/decoupled_cd/README_spec.md)
+2. [docs/reuse_plan.md](/home/jameschiang/work/decoupled_cd/docs/reuse_plan.md)
+3. [docs/model_improvement_plan.md](/home/jameschiang/work/decoupled_cd/docs/model_improvement_plan.md)
+4. [docs/transition_graph_notes.md](/home/jameschiang/work/decoupled_cd/docs/transition_graph_notes.md)
+5. [docs/environment.md](/home/jameschiang/work/decoupled_cd/docs/environment.md)
 
 ## 环境
 
-- 项目目录: `/home/xph/jwc/research/decoupled_cd`
+- 本地项目目录: `/home/jameschiang/work/decoupled_cd`
+- 远端项目目录: `/home/xph/jwc/research/decoupled_cd`
 - conda 环境: `decoupled_cd`
-- 推荐启动方式:
+- 本地环境入口:
 
 ```bash
-cd /home/xph/jwc/research/decoupled_cd
-./scripts/start_codex.sh
+cd /home/jameschiang/work/decoupled_cd
+./scripts/enter_env.sh
+```
+
+- 远端只用于运行代码。
+- 如需在远端执行项目命令，先激活环境:
+
+```bash
+ssh xph-pc 'cd ~/jwc/research/decoupled_cd && conda activate decoupled_cd && <your-command>'
 ```
 
 ## 当前项目状态
@@ -39,26 +47,26 @@ cd /home/xph/jwc/research/decoupled_cd
 ## 已实现的工程层
 
 - 数据读取与映射:
-  - [data/readers.py](/home/xph/jwc/research/decoupled_cd/data/readers.py)
-  - [data/mappings.py](/home/xph/jwc/research/decoupled_cd/data/mappings.py)
-  - [data/pipeline.py](/home/xph/jwc/research/decoupled_cd/data/pipeline.py)
+  - [data/readers.py](/home/jameschiang/work/decoupled_cd/data/readers.py)
+  - [data/mappings.py](/home/jameschiang/work/decoupled_cd/data/mappings.py)
+  - [data/pipeline.py](/home/jameschiang/work/decoupled_cd/data/pipeline.py)
 - 图构建:
-  - [data/q_matrix.py](/home/xph/jwc/research/decoupled_cd/data/q_matrix.py)
-  - [data/concept_graph.py](/home/xph/jwc/research/decoupled_cd/data/concept_graph.py)
+  - [data/q_matrix.py](/home/jameschiang/work/decoupled_cd/data/q_matrix.py)
+  - [data/concept_graph.py](/home/jameschiang/work/decoupled_cd/data/concept_graph.py)
 - 模型:
-  - [models/hetero_propagation.py](/home/xph/jwc/research/decoupled_cd/models/hetero_propagation.py)
-  - [models/decoupled_cdm.py](/home/xph/jwc/research/decoupled_cd/models/decoupled_cdm.py)
+  - [models/hetero_propagation.py](/home/jameschiang/work/decoupled_cd/models/hetero_propagation.py)
+  - [models/decoupled_cdm.py](/home/jameschiang/work/decoupled_cd/models/decoupled_cdm.py)
 - 训练与评估:
-  - [trainers/engine.py](/home/xph/jwc/research/decoupled_cd/trainers/engine.py)
-  - [scripts/train.py](/home/xph/jwc/research/decoupled_cd/scripts/train.py)
-  - [scripts/evaluate.py](/home/xph/jwc/research/decoupled_cd/scripts/evaluate.py)
+  - [trainers/engine.py](/home/jameschiang/work/decoupled_cd/trainers/engine.py)
+  - [scripts/train.py](/home/jameschiang/work/decoupled_cd/scripts/train.py)
+  - [scripts/evaluate.py](/home/jameschiang/work/decoupled_cd/scripts/evaluate.py)
 - 配置与工具:
-  - [configs/defaults.py](/home/xph/jwc/research/decoupled_cd/configs/defaults.py)
-  - [utils/device.py](/home/xph/jwc/research/decoupled_cd/utils/device.py)
-  - [utils/logging.py](/home/xph/jwc/research/decoupled_cd/utils/logging.py)
-  - [utils/metrics.py](/home/xph/jwc/research/decoupled_cd/utils/metrics.py)
-  - [utils/io.py](/home/xph/jwc/research/decoupled_cd/utils/io.py)
-  - [utils/seed.py](/home/xph/jwc/research/decoupled_cd/utils/seed.py)
+  - [configs/defaults.py](/home/jameschiang/work/decoupled_cd/configs/defaults.py)
+  - [utils/device.py](/home/jameschiang/work/decoupled_cd/utils/device.py)
+  - [utils/logging.py](/home/jameschiang/work/decoupled_cd/utils/logging.py)
+  - [utils/metrics.py](/home/jameschiang/work/decoupled_cd/utils/metrics.py)
+  - [utils/io.py](/home/jameschiang/work/decoupled_cd/utils/io.py)
+  - [utils/seed.py](/home/jameschiang/work/decoupled_cd/utils/seed.py)
 
 ## ASSIST09 相关数据
 
@@ -72,7 +80,7 @@ cd /home/xph/jwc/research/decoupled_cd
 ### 有序版处理脚本
 
 - 脚本:
-  - [scripts/preprocess_assist09_ordered.py](/home/xph/jwc/research/decoupled_cd/scripts/preprocess_assist09_ordered.py)
+  - [scripts/preprocess_assist09_ordered.py](/home/jameschiang/work/decoupled_cd/scripts/preprocess_assist09_ordered.py)
 - 作用:
   - 先按 `user_id + order_id` 排序
   - 再保留每个学生对同一题的第一次作答
@@ -85,20 +93,20 @@ cd /home/xph/jwc/research/decoupled_cd
 
 有序版输出目录:
 
-- [data/assist_09_ordered](/home/xph/jwc/research/decoupled_cd/data/assist_09_ordered)
+- [data/assist_09_ordered](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered)
 
 ## 当前推荐基线
 
 当前推荐基线不是裸 Q 共现图，而是:
 
 - 数据:
-  - [data/assist_09_ordered/train.csv](/home/xph/jwc/research/decoupled_cd/data/assist_09_ordered/train.csv)
-  - [data/assist_09_ordered/valid.csv](/home/xph/jwc/research/decoupled_cd/data/assist_09_ordered/valid.csv)
-  - [data/assist_09_ordered/test.csv](/home/xph/jwc/research/decoupled_cd/data/assist_09_ordered/test.csv)
+  - [data/assist_09_ordered/train.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/train.csv)
+  - [data/assist_09_ordered/valid.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/valid.csv)
+  - [data/assist_09_ordered/test.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/test.csv)
 - Q 矩阵:
-  - [data/assist_09_ordered/Q_matrix.csv](/home/xph/jwc/research/decoupled_cd/data/assist_09_ordered/Q_matrix.csv)
+  - [data/assist_09_ordered/Q_matrix.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/Q_matrix.csv)
 - 图:
-  - [data/assist_09_ordered/transition_graph/propagation_graph.csv](/home/xph/jwc/research/decoupled_cd/data/assist_09_ordered/transition_graph/propagation_graph.csv)
+  - [data/assist_09_ordered/transition_graph/propagation_graph.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/transition_graph/propagation_graph.csv)
 - 默认配置:
   - `learning_rate = 1e-3`
   - `concept_dim = 64`
@@ -109,9 +117,9 @@ cd /home/xph/jwc/research/decoupled_cd
 当前推荐结果口径:
 
 - 结果文件:
-  - [assist_09_tkc_ukc_separate_300ep.json](/home/xph/jwc/research/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep.json)
+  - [assist_09_tkc_ukc_separate_300ep.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep.json)
 - 最优 checkpoint:
-  - [assist_09_tkc_ukc_separate_300ep_best.pt](/home/xph/jwc/research/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep_best.pt)
+  - [assist_09_tkc_ukc_separate_300ep_best.pt](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep_best.pt)
 - 指标:
   - `best_val_auc = 0.721520`
   - `best_epoch = 203`
@@ -119,20 +127,20 @@ cd /home/xph/jwc/research/decoupled_cd
   - `test_acc = 0.695675`
   - `test_rmse = 0.449215`
 - 多 seed:
-  - [assist_09_tkc_ukc_separate_seed2024_300ep.json](/home/xph/jwc/research/decoupled_cd/results/multiseed/assist_09_tkc_ukc_separate_seed2024_300ep.json)
-  - [assist_09_tkc_ukc_separate_seed2025_300ep.json](/home/xph/jwc/research/decoupled_cd/results/multiseed/assist_09_tkc_ukc_separate_seed2025_300ep.json)
-  - [assist_09_tkc_ukc_separate_seed2026_300ep.json](/home/xph/jwc/research/decoupled_cd/results/multiseed/assist_09_tkc_ukc_separate_seed2026_300ep.json)
+  - [assist_09_tkc_ukc_separate_seed2024_300ep.json](/home/jameschiang/work/decoupled_cd/results/multiseed/assist_09_tkc_ukc_separate_seed2024_300ep.json)
+  - [assist_09_tkc_ukc_separate_seed2025_300ep.json](/home/jameschiang/work/decoupled_cd/results/multiseed/assist_09_tkc_ukc_separate_seed2025_300ep.json)
+  - [assist_09_tkc_ukc_separate_seed2026_300ep.json](/home/jameschiang/work/decoupled_cd/results/multiseed/assist_09_tkc_ukc_separate_seed2026_300ep.json)
   - `test_auc` 均值约 `0.7120`
 
 ## 图构建说明
 
 论文式转移图脚本:
 
-- [scripts/build_assist09_transition_graph.py](/home/xph/jwc/research/decoupled_cd/scripts/build_assist09_transition_graph.py)
+- [scripts/build_assist09_transition_graph.py](/home/jameschiang/work/decoupled_cd/scripts/build_assist09_transition_graph.py)
 
 图文件说明文档:
 
-- [docs/transition_graph_notes.md](/home/xph/jwc/research/decoupled_cd/docs/transition_graph_notes.md)
+- [docs/transition_graph_notes.md](/home/jameschiang/work/decoupled_cd/docs/transition_graph_notes.md)
 
 当前构图结果:
 
@@ -166,9 +174,9 @@ cd /home/xph/jwc/research/decoupled_cd
 
 相关主文件:
 
-- [models/decoupled_cdm.py](/home/xph/jwc/research/decoupled_cd/models/decoupled_cdm.py)
-- [models/hetero_propagation.py](/home/xph/jwc/research/decoupled_cd/models/hetero_propagation.py)
-- [trainers/engine.py](/home/xph/jwc/research/decoupled_cd/trainers/engine.py)
+- [models/decoupled_cdm.py](/home/jameschiang/work/decoupled_cd/models/decoupled_cdm.py)
+- [models/hetero_propagation.py](/home/jameschiang/work/decoupled_cd/models/hetero_propagation.py)
+- [trainers/engine.py](/home/jameschiang/work/decoupled_cd/trainers/engine.py)
 
 ## 已做过的关键实验结论
 
@@ -201,12 +209,12 @@ cd /home/xph/jwc/research/decoupled_cd
 - 当前训练引擎已支持 checkpoint 与 `ReduceLROnPlateau`
 - 把 scheduler patience 调到更激进后，结果略差于原始单图 `300 epoch` 基线
 - 因此 scheduler 不是当前主提升来源
-- 当前正式主线应以 [assist_09_tkc_ukc_separate_300ep.json](/home/xph/jwc/research/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep.json) 为准
+- 当前正式主线应以 [assist_09_tkc_ukc_separate_300ep.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep.json) 为准
 
 ### 5. 自动 GPU 选择问题已修复
 
 - 之前 `--device auto` 看起来会错误选到满卡
-- 根因不是 `utils/device.py`，而是 [configs/defaults.py](/home/xph/jwc/research/decoupled_cd/configs/defaults.py) 里默认把 `gpus` 锁死成了 `"0"`
+- 根因不是 `utils/device.py`，而是 [configs/defaults.py](/home/jameschiang/work/decoupled_cd/configs/defaults.py) 里默认把 `gpus` 锁死成了 `"0"`
 - 现在默认 `gpus = None`
 - 所以 `--device auto` 会在所有可见卡里选空闲最多的设备
 
@@ -219,7 +227,7 @@ cd /home/xph/jwc/research/decoupled_cd
   - `prerequisite_graph`
   - `similarity_graph`
 - 但在 `assist_09` 上，双图 300 epoch 结果明显退化:
-  - [assist_09_dual_graph_300ep.json](/home/xph/jwc/research/decoupled_cd/results/assist_09_dual_graph_300ep.json)
+  - [assist_09_dual_graph_300ep.json](/home/jameschiang/work/decoupled_cd/results/assist_09_dual_graph_300ep.json)
   - `test_auc = 0.501716`
 - 结论:
   - 双图接口可保留作实验开关
@@ -232,7 +240,7 @@ cd /home/xph/jwc/research/decoupled_cd
   - 保持 `conditional g/s`
   - 将 `TKC` 与 `UKC` 的概念结构传播参数从共享改成独立
 - 单次最好结果:
-  - [assist_09_tkc_ukc_separate_300ep.json](/home/xph/jwc/research/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep.json)
+  - [assist_09_tkc_ukc_separate_300ep.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_ukc_separate_300ep.json)
   - `test_auc = 0.714303`
 - 多 seed 也稳定优于旧基线
 - 这条改动应视为当前新的候选主线
@@ -261,10 +269,10 @@ cd /home/xph/jwc/research/decoupled_cd
 
 ## 推荐给下一个会话的开场提示
 
-可以直接把下面这段发给新的 Codex:
+可以直接把下面这段发给新的会话:
 
 ```text
-当前项目目录是 /home/xph/jwc/research/decoupled_cd。
+当前项目目录是 /home/jameschiang/work/decoupled_cd。
 
 请先阅读：
 1. README_spec.md
@@ -273,6 +281,7 @@ cd /home/xph/jwc/research/decoupled_cd
 4. docs/transition_graph_notes.md
 5. docs/handoff.md
 6. docs/environment.md
+7. docs/workflow.md
 
 当前推荐基线是：
 - ordered ASSIST09
@@ -287,4 +296,5 @@ cd /home/xph/jwc/research/decoupled_cd
 - 在这条新主线上继续做单变量结构改动
 - 不要把 dual graph 误当成当前主线
 - 如需比较新结构，默认先跑 2-3 个 seed
+- 如需去远端跑代码，先激活 decoupled_cd 环境
 ```
