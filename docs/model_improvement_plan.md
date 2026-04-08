@@ -450,6 +450,90 @@
 - 但它目前仍低于正式主线均值 `0.7458`
 - 因此它更适合作为“最有前景的次优备选方向”保留，而不是直接替代当前主线
 
+### 18. coverage-aware global fusion: 用 coverage 同时调节全局 `TKC/UKC`
+
+改动:
+
+- 保留单图 `propagation_graph`
+- 保留 `conditional g/s`
+- 保留 `TKC/UKC` 结构传播参数独立
+- 保留 `TKC` 正误双通道行为消息
+- 保留 `TKC` 和 `UKC` 仍使用原来的全局概念汇聚
+- 只在认知分支新增一个由学生 coverage 条件化的标量 gate
+- coverage 定义为:
+  - `tested_concepts / (tested_concepts + untested_concepts)`
+- 然后用该 gate 同时调节全局 `TKC` 与全局 `UKC` 的融合强度
+- `guess/slip` 仍保留原来的全局学生向量
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.752721`
+  - `best_epoch = 300`
+  - `test_auc = 0.747068`
+  - 文件:
+    - `results/assist_09_coverage_gate_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.746704`
+  - `best_epoch = 300`
+  - `test_auc = 0.740811`
+  - 文件:
+    - `results/assist_09_coverage_gate_seed2025_300ep.json`
+- `seed=2026`:
+  - `best_val_auc = 0.752357`
+  - `best_epoch = 300`
+  - `test_auc = 0.746431`
+  - 文件:
+    - `results/assist_09_coverage_gate_seed2026_300ep.json`
+- 三个 seed 的 `test_auc` 均值约 `0.7448`
+
+结论:
+
+- 这条线明显强于前面的 item-conditioned 变体，也说明“coverage-aware 融合”本身是有信号的
+- 但它的 seed 间波动仍偏大，尤其 `seed=2025` 掉点明显
+- 按三 seed 口径，它仍略低于正式主线均值 `0.7458`
+- 因此它可以视为“接近主线的全局融合备选方向”，但当前还不应替代主线
+
+### 19. coverage-aware global fusion follow-up: 只对全局 `UKC` 做 coverage gate
+
+改动:
+
+- 延续上面的 coverage-aware 全局融合思路
+- 保持全局 `TKC` 项不变
+- 只用 coverage gate 去缩放全局 `UKC`
+- 即:
+  - `alpha * global_tkc + gate(coverage) * beta * global_ukc`
+- `guess/slip` 仍保留原来的全局学生向量
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.754431`
+  - `best_epoch = 299`
+  - `test_auc = 0.748475`
+  - 文件:
+    - `results/assist_09_coverage_beta_gate_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.748439`
+  - `best_epoch = 300`
+  - `test_auc = 0.741629`
+  - 文件:
+    - `results/assist_09_coverage_beta_gate_seed2025_300ep.json`
+- `seed=2026`:
+  - `best_val_auc = 0.751716`
+  - `best_epoch = 300`
+  - `test_auc = 0.745962`
+  - 文件:
+    - `results/assist_09_coverage_beta_gate_seed2026_300ep.json`
+- 三个 seed 的 `test_auc` 均值约 `0.7454`
+
+结论:
+
+- 只对 `UKC` 做 coverage gate 比“同时调 `TKC/UKC`”更稳，也更符合“主要抑制 `UKC` 全局噪声”的直觉
+- 它已经非常接近当前正式主线，但按三 seed 均值仍略低约 `0.0004`
+- 因此它是目前 coverage-aware 路线里最强的一条，但仍应视为“几乎追平主线的次优备选”
+- 如果后续继续沿这条线深挖，优先方向应是保留它的语义约束，同时优化实现显存，而不是再把 gate 做得更黑盒
+
 ## 当前推荐基线
 
 后续模型改动应默认建立在下面这组设置上:
