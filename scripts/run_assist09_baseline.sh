@@ -23,5 +23,5 @@ fi
   --concept-dim 64 \
   --gs-mode conditional \
   --seed "${SEED:-2024}" \
-  --output "${OUTPUT:-results/assist_09_tkc_ukc_separate_300ep.json}" \
+  --output "${OUTPUT:-results/assist_09_tkc_dual_channel_300ep.json}" \
   "$@"

@@ -317,6 +317,97 @@
 - 这条 `q_e` residual 方案没有带来收益，应视为负结果
 - 当前不建议再直接把题目独立 embedding 以残差形式叠回 `q_repr`
 
+### 14. 题目条件局部汇聚: `TKC/UKC` 同时局部 mean
+
+改动:
+
+- 保留单图 `propagation_graph`
+- 保留 `conditional g/s`
+- 保留 `TKC/UKC` 结构传播参数独立
+- 保留 `TKC` 正误双通道行为消息
+- 将认知预测从全局 `student_state` 改成题目条件局部汇聚
+- 对目标题 `q_e` 相关概念分别做:
+  - `TKC` 局部 mean
+  - `UKC` 局部 mean
+- 再用
+  - `alpha * local_tkc + beta * local_ukc`
+  进入 `P_cog`
+- `guess/slip` 仍保留原来的全局学生向量
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.737040`
+  - `test_auc = 0.731763`
+  - 文件:
+    - `results/assist_09_item_conditioned_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.736479`
+  - `test_auc = 0.731650`
+  - 文件:
+    - `results/assist_09_item_conditioned_seed2025_300ep.json`
+- 两个 seed 的 `test_auc` 均值约 `0.7317`
+
+结论:
+
+- “预测前不要直接把概念状态全部 mean 掉”这个方向本身值得研究
+- 但最简单的“`TKC/UKC` 同时局部 mean”会明显伤害当前主线效果
+- 问题不只是训练没收敛；`300 epoch` 下仍显著低于当前主线
+
+### 15. 题目条件局部汇聚: `TKC` 局部 mean + `UKC` 全局 mean
+
+改动:
+
+- 保留上面的题目条件预测思路
+- 只让 `TKC` 对目标题相关概念做局部 mean
+- `UKC` 回退为原来的全局支持项 mean
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.735676`
+  - `test_auc = 0.731123`
+  - 文件:
+    - `results/assist_09_tkc_local_ukc_global_seed2024_300ep.json`
+
+结论:
+
+- 把 `UKC` 保持为全局支持项并没有救回这条路线
+- 说明问题不只是 `UKC` 不该局部化，更可能是“局部硬 mean 汇聚”本身过强、过早
+
+### 16. 题目条件局部汇聚: `TKC` item-aware attention + `UKC` 全局 mean
+
+改动:
+
+- 继续保留:
+  - `TKC` 只在目标题相关概念内做局部选择
+  - `UKC` 作为全局支持项
+- 将 `TKC` 的局部硬 mean 改成由 `q_repr` 条件化的 item-aware attention
+- 即:
+  - 用题目表示对相关概念 `TKC` 状态打分
+  - 再做加权汇聚
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.743627`
+  - `test_auc = 0.739887`
+  - 文件:
+    - `results/assist_09_tkc_attention_ukc_global_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.741752`
+  - `test_auc = 0.736367`
+  - 文件:
+    - `results/assist_09_tkc_attention_ukc_global_seed2025_300ep.json`
+- 两个 seed 的 `test_auc` 均值约 `0.7381`
+
+结论:
+
+- 相比局部硬 mean，这条 attention 版本显著更合理，也明显救回了性能
+- 它说明“题目条件下的概念选择性”不是错误方向，问题主要在于汇聚方式过硬
+- 但当前这版仍稳定低于正式主线均值 `0.7458`
+- 因此它应被视为“稳定次优结构”，可以保留为后续参考，但当前不应替代正式主线
+
 ## 当前推荐基线
 
 后续模型改动应默认建立在下面这组设置上:
@@ -419,6 +510,6 @@
 
 建议按下面顺序推进:
 
-1. 固定当前“`TKC/UKC` 独立结构传播参数”版本为正式候选基线
+1. 固定当前“单图 + `conditional g/s` + `TKC/UKC` 独立结构传播参数 + `TKC` 正误双通道”版本为正式候选基线
 2. 在这条新主线上补更多 seed 或整理正式汇总
 3. 若继续做结构改动，优先保持单图路径不动，只做单变量比较

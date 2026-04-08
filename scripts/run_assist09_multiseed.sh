@@ -13,8 +13,8 @@ else
 fi
 
 for seed in "${seed_list[@]}"; do
-  output_path="${OUTPUT_DIR:-results/multiseed}/assist_09_tkc_ukc_separate_seed${seed}_300ep.json"
-  echo "Running ASSIST09 official baseline with seed=${seed}"
+  output_path="${OUTPUT_DIR:-results/multiseed}/assist_09_tkc_dual_channel_seed${seed}_300ep.json"
+  echo "Running ASSIST09 official dual-channel baseline with seed=${seed}"
   bash "${SCRIPT_DIR}/run_assist09_baseline.sh" \
     --seed "${seed}" \
     --output "${output_path}" \

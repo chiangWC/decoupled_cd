@@ -93,7 +93,8 @@ def materialize_subset_if_needed(interactions_path: str, max_rows: int | None) -
     if max_rows is None:
         return interactions_path
     interactions = pd.read_csv(interactions_path, nrows=max_rows)
-    output_path = Path("results") / f"subset_{max_rows}_interactions.csv"
+    source_stem = Path(interactions_path).stem
+    output_path = Path("results") / f"{source_stem}_subset_{max_rows}_interactions.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     interactions.to_csv(output_path, index=False)
     return str(output_path)
