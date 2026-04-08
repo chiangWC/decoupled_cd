@@ -408,6 +408,48 @@
 - 但当前这版仍稳定低于正式主线均值 `0.7458`
 - 因此它应被视为“稳定次优结构”，可以保留为后续参考，但当前不应替代正式主线
 
+### 17. coverage-aware `UKC` 融合: `UKC` 只在题目相关概念的一跳邻域内聚合
+
+改动:
+
+- 保留单图 `propagation_graph`
+- 保留 `conditional g/s`
+- 保留 `TKC/UKC` 结构传播参数独立
+- 保留 `TKC` 正误双通道行为消息
+- 保留 `TKC` 为原来的全局已测概念汇聚
+- 只修改认知分支中的 `UKC` 融合方式
+- 对每道题的 `q_e`:
+  - 在 `propagation_graph` 上取题目概念集合的一跳邻域
+  - 用该局部概念范围筛选 `UKC`
+  - 只对“未测试且位于题目局部邻域内”的概念做 mean
+- 再用
+  - `alpha * global_tkc + beta * local_ukc_neighbor`
+  进入 `P_cog`
+- `guess/slip` 仍保留原来的全局学生向量
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.747750`
+  - `best_epoch = 299`
+  - `test_auc = 0.742428`
+  - 文件:
+    - `results/assist_09_local_ukc_neighbor_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.744854`
+  - `best_epoch = 300`
+  - `test_auc = 0.741246`
+  - 文件:
+    - `results/assist_09_local_ukc_neighbor_seed2025_300ep.json`
+- 两个 seed 的 `test_auc` 均值约 `0.7418`
+
+结论:
+
+- 这条线明显优于前面的几种 item-conditioned mean / attention 变体
+- 它说明 `UKC` 的问题更像是“全局平均引入了与当前题无关的噪声”，而不是 `UKC` 本身没有价值
+- 但它目前仍低于正式主线均值 `0.7458`
+- 因此它更适合作为“最有前景的次优备选方向”保留，而不是直接替代当前主线
+
 ## 当前推荐基线
 
 后续模型改动应默认建立在下面这组设置上:
