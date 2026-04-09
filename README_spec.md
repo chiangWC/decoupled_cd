@@ -1,6 +1,11 @@
 # 项目目标
 实现一个 decoupled cognitive diagnosis model
 
+说明:
+
+- 本文件保留为高层模型语义说明，不追踪所有实现细节。
+- 当前正式 workflow、主线结论和运行约定以 [docs/handoff.md](/home/jameschiang/work/decoupled_cd/docs/handoff.md) 为准。
+
 # Step 1：认知空间解耦
 
 ## 背景问题
@@ -79,18 +84,29 @@
 
 学生最终认知状态定义为:
 
-`h_u = alpha * (1 / |TKC_u|) * sum_{k in TKC_u} h_k + beta * (1 / |UKC_u|) * sum_{k in UKC_u} h_k`
+`h_u = w_u * mean({ h_k^{TKC} | k in TKC_u }) + (1 - w_u) * mean({ h_k^{UKC} | k in UKC_u })`
+
+其中:
+
+- `w_u in (0, 1)`: 学生级自适应融合权重
+- `w_u` 由学生覆盖率及 `TKC / UKC` 聚合状态共同决定
+
+设计动机:
+
+- 不同学生的知识覆盖率差异较大，`TKC / UKC` 的融合不应由全局固定标量决定。
+- 覆盖率较低的学生可以更依赖 `UKC` 推断，覆盖率较高的学生可以更依赖 `TKC`。
 
 # Step 3：答题概率建模
 
 ## 3.1 纯认知答题概率
 
-`P^{cog}_{u,e} = sigma(h_u^T q_e - b_e)`
+`P^{cog}_{u,e} = sigma(f_match(h_u, q_e) - b_e)`
 
 其中:
 
 - `h_u`: 学生认知状态
 - `q_e`: 习题知识需求向量
+- `f_match`: 学生认知状态与题目需求之间的可学习匹配函数
 - `b_e`: 习题难度
 
 ## 3.2 加入非认知因素
@@ -111,7 +127,7 @@
 优化参数包括:
 
 - `TKC / UKC` 消息传递权重
-- 认知状态融合权重 `alpha, beta`
+- 学生级 `TKC / UKC` 融合 gate 参数
 - 非认知参数 `g_u, s_u`
 - 习题难度 `b_e`
 
