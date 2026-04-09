@@ -34,15 +34,38 @@ def parse_args() -> argparse.Namespace:
         help="Optional Q-matrix CSV. If omitted, it is derived from unique exer_id/cpt_seq pairs in interactions.",
     )
     parser.add_argument("--concept-graph", default=None, help="Optional external concept graph CSV.")
-    parser.add_argument("--prerequisite-graph", default=None, help="Optional prerequisite graph CSV for dual-graph mode.")
-    parser.add_argument("--similarity-graph", default=None, help="Optional similarity graph CSV for dual-graph mode.")
-    parser.add_argument("--graph-mode", choices=["single", "dual"], default="single")
+    parser.add_argument(
+        "--prerequisite-graph",
+        default=None,
+        help="Legacy dual-graph ablation input. Not used by the current single-graph mainline.",
+    )
+    parser.add_argument(
+        "--similarity-graph",
+        default=None,
+        help="Legacy dual-graph ablation input. Not used by the current single-graph mainline.",
+    )
+    parser.add_argument(
+        "--graph-mode",
+        choices=["single", "dual"],
+        default="single",
+        help="Use 'single' for the current mainline. 'dual' is kept only for historical ablations.",
+    )
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--concept-dim", type=int, default=32)
-    parser.add_argument("--alpha", type=float, default=1.0)
-    parser.add_argument("--beta", type=float, default=1.0)
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=1.0,
+        help="Legacy fusion-prior knob retained for reproducibility; the current mainline uses adaptive fusion.",
+    )
+    parser.add_argument(
+        "--beta",
+        type=float,
+        default=1.0,
+        help="Legacy fusion-prior knob retained for reproducibility; the current mainline uses adaptive fusion.",
+    )
     parser.add_argument("--gs-mode", choices=["constant", "conditional"], default="conditional")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None, help="Optional comma-separated GPU candidates when --device auto.")

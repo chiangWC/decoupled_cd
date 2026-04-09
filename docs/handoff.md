@@ -70,6 +70,7 @@
 - `TKC/UKC` 结构传播参数解耦是当前最可靠的正向结构改动。
 - `TKC` 行为消息里显式保留错题信号是有效的，当前正误双通道优于只看正确题。
 - 将全局固定 `alpha/beta` 升级为学生自适应 `TKC/UKC` 融合 gate 后，三 seed 结果已经稳定优于旧主线。
+- `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
 - 更激进的 scheduler patience 没有带来更好结果。
 - `dual graph` 在 `assist_09` 上明显退化，默认不要当主线。

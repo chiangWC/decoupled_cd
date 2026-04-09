@@ -24,12 +24,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test-interactions", default=None)
     parser.add_argument("--q-matrix", default=None)
     parser.add_argument("--concept-graph", default=None)
-    parser.add_argument("--prerequisite-graph", default=None)
-    parser.add_argument("--similarity-graph", default=None)
-    parser.add_argument("--graph-mode", choices=["single", "dual"], default="single")
+    parser.add_argument("--prerequisite-graph", default=None, help="Legacy dual-graph ablation input.")
+    parser.add_argument("--similarity-graph", default=None, help="Legacy dual-graph ablation input.")
+    parser.add_argument(
+        "--graph-mode",
+        choices=["single", "dual"],
+        default="single",
+        help="Use 'single' for the current mainline. 'dual' is retained only for historical ablations.",
+    )
     parser.add_argument("--concept-dim", type=int, default=16)
-    parser.add_argument("--alpha", type=float, default=1.0)
-    parser.add_argument("--beta", type=float, default=1.0)
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=1.0,
+        help="Legacy fusion-prior knob retained for reproducibility; the current mainline uses adaptive fusion.",
+    )
+    parser.add_argument(
+        "--beta",
+        type=float,
+        default=1.0,
+        help="Legacy fusion-prior knob retained for reproducibility; the current mainline uses adaptive fusion.",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--output", default="results/eval_summary.json")
