@@ -225,7 +225,55 @@
 
 - “错题信号被丢掉”是当前实现里的真实问题。
 - `TKC` 行为消息应显式保留错误作答证据。
-- 这一步和实验 11 一起构成了当前主线收敛到现有形态的关键节点。
+- 这一步和实验 11 一起构成了旧主线收敛到稳定形态的关键节点。
+
+#### 实验 21. `TKC/UKC` 学生自适应融合 gate
+
+改动:
+
+- 保留:
+  - 单图 `propagation_graph`
+  - `conditional g/s`
+  - `TKC/UKC` 结构传播参数独立
+  - `TKC` 正误双通道行为消息
+- 将原先全局固定的:
+  - `alpha * tkc_mean + beta * ukc_mean`
+  替换为学生级自适应融合。
+- 融合 gate 输入为:
+  - `coverage`
+  - `tkc_mean`
+  - `ukc_mean`
+- 最终形式为:
+  - `w_u * tkc_mean + (1 - w_u) * ukc_mean`
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.754493`
+  - `best_epoch = 278`
+  - `test_auc = 0.749272`
+  - 文件:
+    - `results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.757129`
+  - `best_epoch = 300`
+  - `test_auc = 0.751710`
+  - 文件:
+    - `results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2025_300ep.json`
+- `seed=2026`:
+  - `best_val_auc = 0.756685`
+  - `best_epoch = 288`
+  - `test_auc = 0.749739`
+  - 文件:
+    - `results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2026_300ep.json`
+- 三个 seed 的 `test_auc` 均值约 `0.7502`。
+- 相比实验 12 的旧主线均值 `0.7458`，提升约 `+0.0044`。
+
+结论:
+
+- 全局固定 `alpha/beta` 的融合方式过于粗糙，学生级自适应 gate 能更好利用覆盖率差异。
+- 这次提升不是单 seed 偶然值，而是三 seed 一致提升。
+- 这条线已经足够取代实验 12，成为当前正式主线。
 
 ## B. 已明确不作为主线的路线
 
@@ -564,7 +612,7 @@
 结论:
 
 - 只对 `UKC` 做 coverage gate 比“同时调 `TKC/UKC`”更稳。
-- 它已经非常接近当前正式主线，但按三 seed 均值仍略低。
+- 它在旧主线口径下几乎追平，但相对实验 21 的新主线仍有明显差距。
 - 因此它是目前 coverage-aware 路线里最强的一条，但仍应视为次优备选。
 
 ## D. 快速索引
@@ -580,6 +628,7 @@
 - 实验 9: 长训单图基线的多 seed 稳定性被确认。
 - 实验 11: `TKC/UKC` 结构传播参数解耦成立。
 - 实验 12: `TKC` 正误双通道成立。
+- 实验 21: `TKC/UKC` 学生自适应融合 gate 成立，并已取代旧主线。
 
 ### 已明确不建议默认继续的路线
 
@@ -596,4 +645,4 @@
 - 实验 16: item-aware attention 说明“题目条件选择性”有信号，但还不够强。
 - 实验 17: local neighbor `UKC` 说明 `UKC` 全局噪声是关键问题之一。
 - 实验 18: coverage-aware 全局融合有信号，但波动偏大。
-- 实验 19: coverage-aware `UKC` gate 几乎追平主线，是当前最强备选之一。
+- 实验 19: coverage-aware `UKC` gate 在旧主线下几乎追平，但相对实验 21 仍是次优备选。

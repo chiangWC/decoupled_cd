@@ -43,22 +43,23 @@
   - `graph_mode = single`
   - `TKC/UKC` 结构传播参数独立
   - `TKC` 行为消息使用正误双通道 + gated fusion
+  - `TKC/UKC` 学生级融合使用自适应 gate，不再使用全局固定 `alpha/beta`
   - 长训比较默认看 `300 epoch`
 
 当前推荐结果口径:
 
 - 单次最好结果:
-  - [assist_09_tkc_dual_channel_seed2026_300ep_gpu2.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_dual_channel_seed2026_300ep_gpu2.json)
-  - `best_val_auc = 0.754099`
-  - `best_epoch = 299`
-  - `test_auc = 0.747414`
-  - `test_acc = 0.717901`
-  - `test_rmse = 0.438787`
+  - [assist_09_tkc_dual_channel_seed2025_300ep.json](/home/jameschiang/work/decoupled_cd/results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2025_300ep.json)
+  - `best_val_auc = 0.757129`
+  - `best_epoch = 300`
+  - `test_auc = 0.751710`
+  - `test_acc = 0.723020`
+  - `test_rmse = 0.435074`
 - 多 seed 结果:
-  - [assist_09_tkc_dual_channel_seed2024_300ep_gpu1.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_dual_channel_seed2024_300ep_gpu1.json)
-  - [assist_09_tkc_dual_channel_seed2025_300ep_gpu1.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_dual_channel_seed2025_300ep_gpu1.json)
-  - [assist_09_tkc_dual_channel_seed2026_300ep_gpu2.json](/home/jameschiang/work/decoupled_cd/results/assist_09_tkc_dual_channel_seed2026_300ep_gpu2.json)
-  - `test_auc` 均值约 `0.7458`
+  - [assist_09_tkc_dual_channel_seed2024_300ep.json](/home/jameschiang/work/decoupled_cd/results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2024_300ep.json)
+  - [assist_09_tkc_dual_channel_seed2025_300ep.json](/home/jameschiang/work/decoupled_cd/results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2025_300ep.json)
+  - [assist_09_tkc_dual_channel_seed2026_300ep.json](/home/jameschiang/work/decoupled_cd/results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2026_300ep.json)
+  - `test_auc` 均值约 `0.7502`
 
 ## 已经定下来的判断
 
@@ -68,6 +69,7 @@
 - `conditional g/s` 明显优于 `constant g/s`，应保留。
 - `TKC/UKC` 结构传播参数解耦是当前最可靠的正向结构改动。
 - `TKC` 行为消息里显式保留错题信号是有效的，当前正误双通道优于只看正确题。
+- 将全局固定 `alpha/beta` 升级为学生自适应 `TKC/UKC` 融合 gate 后，三 seed 结果已经稳定优于旧主线。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
 - 更激进的 scheduler patience 没有带来更好结果。
 - `dual graph` 在 `assist_09` 上明显退化，默认不要当主线。
@@ -131,8 +133,9 @@
 - gs_mode=conditional
 - graph_mode=single
 - TKC/UKC 结构传播参数独立
-- 结构比较默认看 300 epoch
 - TKC 行为消息默认使用正误双通道
+- TKC/UKC 学生级融合默认使用自适应 gate
+- 结构比较默认看 300 epoch
 
 当前规则：
 - 默认一次只改一个结构因素

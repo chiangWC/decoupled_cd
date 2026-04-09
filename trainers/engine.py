@@ -125,8 +125,6 @@ def train_model(
         row = {
             "epoch": float(epoch),
             "train_loss": float(mean_loss),
-            "alpha": float(model.propagation.alpha.detach().cpu().item()),
-            "beta": float(model.propagation.beta.detach().cpu().item()),
             "learning_rate": float(optimizer.param_groups[0]["lr"]),
         }
 

@@ -22,8 +22,6 @@ class HeterogeneousGraphPropagation(nn.Module):
 
     def __init__(self, concept_dim: int, alpha: float = 1.0, beta: float = 1.0):
         super().__init__()
-        self.alpha = nn.Parameter(torch.tensor(float(alpha), dtype=torch.float32))
-        self.beta = nn.Parameter(torch.tensor(float(beta), dtype=torch.float32))
         self.correct_exercise_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.incorrect_exercise_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.tkc_concept_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
@@ -35,6 +33,14 @@ class HeterogeneousGraphPropagation(nn.Module):
         self.graph_fusion_gate = nn.Linear(concept_dim * 2, 1, bias=True)
         self.exercise_behavior_gate = nn.Linear(concept_dim * 2, 1, bias=True)
         self.tkc_fusion_gate = nn.Linear(concept_dim * 2, 1, bias=True)
+        self.student_fusion_gate = nn.Sequential(
+            nn.Linear(concept_dim * 2 + 1, concept_dim),
+            nn.ReLU(),
+            nn.Linear(concept_dim, 1),
+        )
+        fusion_prior = _resolve_tkc_prior(alpha=alpha, beta=beta)
+        nn.init.zeros_(self.student_fusion_gate[-1].weight)
+        nn.init.constant_(self.student_fusion_gate[-1].bias, _logit(fusion_prior))
 
     def forward(
         self,
@@ -101,7 +107,10 @@ class HeterogeneousGraphPropagation(nn.Module):
 
         tkc_mean = _masked_average(tkc_states, student_tkc_mask)
         ukc_mean = _masked_average(ukc_states, student_ukc_mask)
-        student_state = self.alpha * tkc_mean + self.beta * ukc_mean
+        coverage = student_tkc_mask.to(dtype=tkc_mean.dtype).mean(dim=1, keepdim=True)
+        fusion_inputs = torch.cat([coverage, tkc_mean, ukc_mean], dim=-1)
+        tkc_weight = torch.sigmoid(self.student_fusion_gate(fusion_inputs))
+        student_state = tkc_weight * tkc_mean + (1.0 - tkc_weight) * ukc_mean
         return PropagationOutput(tkc_states=tkc_states, ukc_states=ukc_states, student_state=student_state)
 
     def _fuse_dual_graph_messages(
@@ -125,6 +134,18 @@ def _masked_average(node_states: torch.Tensor, mask: torch.Tensor) -> torch.Tens
     total = (node_states * weights).sum(dim=1)
     denom = weights.sum(dim=1).clamp(min=1.0)
     return total / denom
+
+
+def _resolve_tkc_prior(*, alpha: float, beta: float) -> float:
+    total = float(alpha) + float(beta)
+    if total <= 0.0:
+        return 0.5
+    return min(max(float(alpha) / total, 1e-4), 1.0 - 1e-4)
+
+
+def _logit(value: float) -> float:
+    clipped = min(max(value, 1e-6), 1.0 - 1e-6)
+    return float(torch.logit(torch.tensor(clipped, dtype=torch.float32)).item())
 
 
 def _aggregate_exercise_messages_by_concept(
