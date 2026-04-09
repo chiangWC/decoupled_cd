@@ -4,7 +4,8 @@
 说明:
 
 - 本文件保留为高层模型语义说明，不追踪所有实现细节。
-- 当前正式 workflow、主线结论和运行约定以 [docs/handoff.md](/home/jameschiang/work/decoupled_cd/docs/handoff.md) 为准。
+- 新会话默认入口是 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)。
+- 当前正式 workflow、主线结论和运行约定以 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)、[docs/workflow.md](/home/jameschiang/work/decoupled_cd/docs/workflow.md) 和 [docs/handoff.md](/home/jameschiang/work/decoupled_cd/docs/handoff.md) 为准。
 
 # Step 1：认知空间解耦
 

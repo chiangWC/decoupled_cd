@@ -1,33 +1,12 @@
 # Handoff
 
-这份文档是新会话的轻量入口，目标是用最少上下文接手当前项目。
+这份文档保留“扩展交接”用途，用来说明当前主线、关键判断和关键文件。
 
-## 默认阅读顺序
-
-默认只需要先读两份:
-
-1. [docs/workflow.md](/home/jameschiang/work/decoupled_cd/docs/workflow.md)
-2. [docs/handoff.md](/home/jameschiang/work/decoupled_cd/docs/handoff.md)
-
-其余文档按需再读:
-
-- [README_spec.md](/home/jameschiang/work/decoupled_cd/README_spec.md)
-  - 需要修改模型语义、核对 Step 1-4 定义时再读
-- [docs/model_improvement_plan.md](/home/jameschiang/work/decoupled_cd/docs/model_improvement_plan.md)
-  - 需要设计新实验、确认哪些改动已经做过时再读
-- [docs/transition_graph_notes.md](/home/jameschiang/work/decoupled_cd/docs/transition_graph_notes.md)
-  - 需要修改构图逻辑或检查图文件来源时再读
-- [docs/reuse_plan.md](/home/jameschiang/work/decoupled_cd/docs/reuse_plan.md)
-  - 只有在做工程重构、目录整理或参考项目复用时再读
-- [docs/environment.md](/home/jameschiang/work/decoupled_cd/docs/environment.md)
-  - 只是命令速查页
+它不是新会话默认第一入口。新会话默认先读 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)，只有在需要更多项目上下文时再读这份文档。
 
 ## 当前主线
 
-当前不是工程闭环问题，而是在稳定基线上继续做可解释的结构改动。
-
-当前推荐基线:
-
+- 当前工作重点是在稳定基线上继续做可解释的结构改动。
 - 数据:
   - [train.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/train.csv)
   - [valid.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/valid.csv)
@@ -43,7 +22,7 @@
   - `graph_mode = single`
   - `TKC/UKC` 结构传播参数独立
   - `TKC` 行为消息使用正误双通道 + gated fusion
-  - `TKC/UKC` 学生级融合使用自适应 gate，不再使用全局固定 `alpha/beta`
+  - `TKC/UKC` 学生级融合使用自适应 gate
   - 长训比较默认看 `300 epoch`
 
 当前推荐结果口径:
@@ -104,46 +83,3 @@
 - 默认先跑 `2-3` 个 seed 再判断改动是否成立。
 - 优先考虑更轻量的传播侧改动。
 - 避免显著增加 full-batch 显存占用的主干改动。
-
-## 当前推荐启动方式
-
-- 单次正式基线:
-  - `bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh`
-- 多 seed 正式基线:
-  - `bash scripts/remote_exec.sh bash scripts/run_assist09_multiseed.sh`
-- 运行前仍然先:
-  - 本地先提交需要部署的改动
-  - `bash scripts/deploy_to_remote.sh`
-- 默认约定:
-  - 所有项目代码都在远端主机上运行，包括训练、评估、测试和 smoke test。
-  - 本地默认只做代码修改、阅读文档、提交和部署。
-  - 默认 `origin` 指向远端运行机上的项目仓库。
-
-## 推荐给新会话的开场提示
-
-```text
-当前项目目录是 /home/jameschiang/work/decoupled_cd。
-
-请先阅读：
-1. docs/workflow.md
-2. docs/handoff.md
-
-当前主线是：
-- ordered ASSIST09
-- data/assist_09_ordered/transition_graph/propagation_graph.csv
-- learning_rate=1e-3
-- concept_dim=64
-- gs_mode=conditional
-- graph_mode=single
-- TKC/UKC 结构传播参数独立
-- TKC 行为消息默认使用正误双通道
-- TKC/UKC 学生级融合默认使用自适应 gate
-- 结构比较默认看 300 epoch
-
-当前规则：
-- 默认一次只改一个结构因素
-- 不要把 dual graph 当当前主线
-- 如需比较新结构，默认先跑 2-3 个 seed
-- 远端主机只作为运行环境，不作为代码协作来源
-- 所有项目代码都在远端主机上运行；先提交、部署并激活 decoupled_cd 环境
-```

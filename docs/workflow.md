@@ -1,5 +1,9 @@
 # Workflow
 
+这份文档只描述协作、部署与运行流程，不重复项目背景和实验结论。
+
+新会话默认先读 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)；只有需要展开具体流程时再读这份文档。
+
 这个项目采用固定的“本地改代码并提交，部署到远端运行机，远端运行所有项目命令”流程。
 
 ## 路径与环境
@@ -43,28 +47,12 @@ bash scripts/deploy_to_remote.sh
 bash scripts/remote_exec.sh python scripts/train.py
 ```
 
-远端运行示例:
-
-```bash
-bash scripts/remote_exec.sh python scripts/train.py
-```
-
 部署前默认要求:
 
 - 本地工作树干净，且需要部署的修改已经 `git commit`
 - `origin` 已配置到远端运行机仓库
 - 本地与远端仓库历史兼容，可做 fast-forward / 正常 push
 
-## 新会话最小开场
+## 新会话说明
 
-新开会话时，默认先读:
-
-1. `docs/workflow.md`
-2. `docs/handoff.md`
-
-如果第一条消息要写得尽量短，可以直接说:
-
-```text
-先读 docs/workflow.md 和 docs/handoff.md，并按其中约定工作。
-所有项目代码都在远端主机上运行；先提交、部署并激活 decoupled_cd 环境。
-```
+默认入口改为 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)。
