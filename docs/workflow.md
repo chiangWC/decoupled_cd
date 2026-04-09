@@ -1,6 +1,6 @@
 # Workflow
 
-这个项目采用固定的“本地改代码，远端运行所有项目命令”流程。
+这个项目采用固定的“本地改代码并提交，部署到远端运行机，远端运行所有项目命令”流程。
 
 ## 路径与环境
 
@@ -13,10 +13,13 @@
 
 - 默认所有代码修改都先在本地完成。
 - 默认不要直接改远端代码，除非用户明确要求。
+- 远端主机只作为运行环境，不作为代码协作来源。
 - 所有项目命令都在远端执行，包括训练、评估、测试和 smoke test。
-- 本地不要直接跑项目代码；如需验证，先把本地代码同步到远端，再通过 SSH 执行命令。
+- 本地不要直接跑项目代码；如需验证，先把本地提交部署到远端，再通过 SSH 执行命令。
 - 远端执行任何项目命令前，先激活 `decoupled_cd` 环境。
-- 本地使用 `git` 管理版本；远端作为唯一运行环境。
+- 远端目录保留 `git` 工作树，仅用于接收部署后的代码并直接运行。
+- 部署只会带上已经提交的改动；本地有未提交改动时，默认不部署。
+- 默认约定是 `origin` 指向远端运行机仓库，部署时将本地当前 `HEAD` 推到 `origin` 默认分支，再在远端直接运行。
 
 ## 常用命令
 
@@ -28,10 +31,10 @@
 bash scripts/enter_env.sh
 ```
 
-推送本地代码到远端:
+将本地已提交代码部署到远端:
 
 ```bash
-bash scripts/sync_to_remote.sh
+bash scripts/deploy_to_remote.sh
 ```
 
 在远端项目环境里执行任意命令:
@@ -40,24 +43,17 @@ bash scripts/sync_to_remote.sh
 bash scripts/remote_exec.sh python scripts/train.py
 ```
 
-从远端拉回代码到本地:
-
-```bash
-bash scripts/sync_from_remote.sh
-```
-
 远端运行示例:
 
 ```bash
 bash scripts/remote_exec.sh python scripts/train.py
 ```
 
-默认同步时排除以下目录:
+部署前默认要求:
 
-- `__pycache__/`
-- `.venv/`
-- `logs/`
-- `results/`
+- 本地工作树干净，且需要部署的修改已经 `git commit`
+- `origin` 已配置到远端运行机仓库
+- 本地与远端仓库历史兼容，可做 fast-forward / 正常 push
 
 ## 新会话最小开场
 
@@ -70,5 +66,5 @@ bash scripts/remote_exec.sh python scripts/train.py
 
 ```text
 先读 docs/workflow.md 和 docs/handoff.md，并按其中约定工作。
-所有项目代码都在远端主机上运行；先同步并激活 decoupled_cd 环境。
+所有项目代码都在远端主机上运行；先提交、部署并激活 decoupled_cd 环境。
 ```

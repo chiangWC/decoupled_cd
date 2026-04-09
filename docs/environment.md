@@ -5,7 +5,10 @@
 默认约定:
 
 - 本地只改代码，不运行项目命令。
+- 本地代码改动先 `git commit`，再部署到远端。
 - 训练、评估、测试、smoke test 一律在远端 `xph-pc` 上执行。
+- 远端主机只作为运行环境，不作为代码回传来源。
+- 默认 `origin` 指向远端运行机上的项目仓库。
 
 ## 本地进入环境
 
@@ -36,10 +39,10 @@ cd /home/jameschiang/work/decoupled_cd
 
 ## 远端运行
 
-先同步:
+先部署已提交代码:
 
 ```bash
-bash scripts/sync_to_remote.sh
+bash scripts/deploy_to_remote.sh
 ```
 
 再在远端项目环境里执行:

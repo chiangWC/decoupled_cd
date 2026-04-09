@@ -112,10 +112,12 @@
 - 多 seed 正式基线:
   - `bash scripts/remote_exec.sh bash scripts/run_assist09_multiseed.sh`
 - 运行前仍然先:
-  - `bash scripts/sync_to_remote.sh`
+  - 本地先提交需要部署的改动
+  - `bash scripts/deploy_to_remote.sh`
 - 默认约定:
   - 所有项目代码都在远端主机上运行，包括训练、评估、测试和 smoke test。
-  - 本地默认只做代码修改、阅读文档和同步。
+  - 本地默认只做代码修改、阅读文档、提交和部署。
+  - 默认 `origin` 指向远端运行机上的项目仓库。
 
 ## 推荐给新会话的开场提示
 
@@ -142,5 +144,6 @@
 - 默认一次只改一个结构因素
 - 不要把 dual graph 当当前主线
 - 如需比较新结构，默认先跑 2-3 个 seed
-- 所有项目代码都在远端主机上运行；先同步并激活 decoupled_cd 环境
+- 远端主机只作为运行环境，不作为代码协作来源
+- 所有项目代码都在远端主机上运行；先提交、部署并激活 decoupled_cd 环境
 ```

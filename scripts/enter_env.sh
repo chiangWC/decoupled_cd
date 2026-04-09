@@ -9,7 +9,7 @@ LOCAL_PROJECT_ROOT="/home/jameschiang/work/decoupled_cd"
 if [[ "${PROJECT_ROOT}" != "${LOCAL_PROJECT_ROOT}" ]]; then
   echo "scripts/enter_env.sh is for the local workspace only." >&2
   echo "Current project root: ${PROJECT_ROOT}" >&2
-  echo "Use this script from ${LOCAL_PROJECT_ROOT}; on remote hosts, sync code first, activate ${CONDA_ENV_NAME}, and run project commands directly." >&2
+  echo "Use this script from ${LOCAL_PROJECT_ROOT}; on remote hosts, deploy committed code first, activate ${CONDA_ENV_NAME}, and run project commands directly." >&2
   exit 1
 fi
 
