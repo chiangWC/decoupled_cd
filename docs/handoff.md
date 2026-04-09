@@ -49,16 +49,16 @@
 当前推荐结果口径:
 
 - 单次最好结果:
-  - [assist_09_tkc_dual_channel_seed2025_300ep.json](/home/jameschiang/work/decoupled_cd/results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2025_300ep.json)
+  - 远端结果文件:
+    - `results/exp_adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2025_300ep.json`
   - `best_val_auc = 0.757129`
   - `best_epoch = 300`
   - `test_auc = 0.751710`
   - `test_acc = 0.723020`
   - `test_rmse = 0.435074`
 - 多 seed 结果:
-  - [assist_09_tkc_dual_channel_seed2024_300ep.json](/home/jameschiang/work/decoupled_cd/results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2024_300ep.json)
-  - [assist_09_tkc_dual_channel_seed2025_300ep.json](/home/jameschiang/work/decoupled_cd/results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2025_300ep.json)
-  - [assist_09_tkc_dual_channel_seed2026_300ep.json](/home/jameschiang/work/decoupled_cd/results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2026_300ep.json)
+  - 远端结果目录:
+    - `results/exp_adaptive_tkc_ukc_gate/`
   - `test_auc` 均值约 `0.7502`
 
 ## 已经定下来的判断

@@ -253,19 +253,19 @@
   - `best_epoch = 278`
   - `test_auc = 0.749272`
   - 文件:
-    - `results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2024_300ep.json`
+    - `results/exp_adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2024_300ep.json`
 - `seed=2025`:
   - `best_val_auc = 0.757129`
   - `best_epoch = 300`
   - `test_auc = 0.751710`
   - 文件:
-    - `results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2025_300ep.json`
+    - `results/exp_adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2025_300ep.json`
 - `seed=2026`:
   - `best_val_auc = 0.756685`
   - `best_epoch = 288`
   - `test_auc = 0.749739`
   - 文件:
-    - `results/adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2026_300ep.json`
+    - `results/exp_adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2026_300ep.json`
 - 三个 seed 的 `test_auc` 均值约 `0.7502`。
 - 相比实验 12 的旧主线均值 `0.7458`，提升约 `+0.0044`。
 
