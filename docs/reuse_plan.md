@@ -255,7 +255,6 @@ decoupled_cd/
 │   ├── device.py
 │   └── seed.py
 ├── scripts/
-│   ├── prepare_data.py
 │   ├── train.py
 │   └── evaluate.py
 ├── docs/
@@ -270,7 +269,6 @@ decoupled_cd/
   - [data/readers.py](/home/xph/jwc/research/decoupled_cd/data/readers.py)
   - [data/mappings.py](/home/xph/jwc/research/decoupled_cd/data/mappings.py)
   - [data/pipeline.py](/home/xph/jwc/research/decoupled_cd/data/pipeline.py)
-  - [scripts/prepare_data.py](/home/xph/jwc/research/decoupled_cd/scripts/prepare_data.py)
 
 - 优先新增:
   - `data/q_matrix.py`: 统一 `Q` 矩阵转 tensor、`TKC_u` 相关辅助函数
