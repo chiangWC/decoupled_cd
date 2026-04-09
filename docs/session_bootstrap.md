@@ -8,14 +8,15 @@
 - 所有训练、评估、测试、smoke test 都在远端 `xph-pc` 上运行。
 - 远端主机只作为运行环境，不作为人工代码编辑环境。
 - 默认 `origin` 指向远端运行机上的项目仓库。
-- 如果两台开发机轮换使用，开始工作前先执行 `git pull --ff-only origin master`。
+- 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
 - 本地改动先 `git commit`，再部署到远端运行机。
 
 ## 最常用命令
 
-开始工作前同步本地分支:
+开始工作前检查并同步本地分支:
 
 ```bash
+git status
 git pull --ff-only origin master
 ```
 
