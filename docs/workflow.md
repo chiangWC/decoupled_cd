@@ -1,10 +1,10 @@
 # Workflow
 
-这份文档只描述协作、部署与运行流程，不重复项目背景和实验结论。
+这份文档只描述协作与运行流程，不重复项目背景和实验结论。
 
 新会话默认先读 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)；只有需要展开具体流程时再读这份文档。
 
-这个项目采用固定的“本地改代码并提交，部署到远端运行机，远端运行所有项目命令”流程。
+这个项目采用固定的“本地改代码并提交，推送到远端仓库，远端运行所有项目命令”流程。
 
 ## 路径与环境
 
@@ -19,13 +19,12 @@
 - 默认不要直接改远端代码，除非用户明确要求。
 - 远端主机只作为运行环境，不作为代码协作来源。
 - 所有项目命令都在远端执行，包括训练、评估、测试和 smoke test。
-- 本地不要直接跑项目代码；如需验证，先把本地提交部署到远端，再通过 SSH 执行命令。
+- 本地不要直接跑项目代码；如需验证，先把本地提交推到远端，再通过 SSH 执行命令。
 - 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
 - `master` 只保留当前认可状态；探索性实验默认在 `exp/*` 分支进行。
 - 远端执行任何项目命令前，先激活 `decoupled_cd` 环境。
-- 远端目录保留 `git` 工作树，仅用于接收部署后的代码并直接运行。
-- 部署只会带上已经提交的改动；本地有未提交改动时，默认不部署。
-- 默认约定是 `origin` 指向远端运行机仓库；部署和远端执行都跟随当前本地分支。
+- 远端目录保留 `git` 工作树，仅用于接收已推送代码并直接运行。
+- 远端执行跟随当前本地分支；未推送的本地改动不会被远端看到。
 
 ## 常用命令
 
@@ -57,7 +56,7 @@ bash scripts/remote_exec.sh python scripts/train.py
 
 远端运行前默认要求:
 
-- 本地工作树干净，且需要部署的修改已经 `git commit`
+- 本地工作树干净，且需要运行的修改已经 `git commit`
 - `origin` 已配置到远端运行机仓库
 - 本地与远端仓库历史兼容，可做 fast-forward / 正常 push
 
@@ -69,7 +68,3 @@ bash scripts/remote_exec.sh python scripts/train.py
 - 实验效果成立后，再整理提交并合回 `master`。
 - `git push origin "$(git branch --show-current)"` 会把当前本地分支推到远端同名分支。
 - `bash scripts/remote_exec.sh ...` 会先确认远端同名分支已更新到当前本地提交，再在远端切到该分支执行命令。
-
-## 新会话说明
-
-默认入口改为 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)。

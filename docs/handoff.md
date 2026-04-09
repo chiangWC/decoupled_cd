@@ -7,7 +7,6 @@
 ## 当前主线
 
 - 当前工作重点是在稳定基线上继续做可解释的结构改动。
-- `master` 对应当前正式主线，不用于堆积探索性实验提交。
 - 数据:
   - [train.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/train.csv)
   - [valid.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/valid.csv)
@@ -61,7 +60,6 @@
 
 - 当前已有的 `exp/*` 分支都是历史上“离主线还差一点”的次优路线，不是当前正式主线。
 - 这些分支可作为复验参考，但不要直接把它们视为与当前 `master` 等价的候选主线。
-- 当前 workflow 已支持“本地在哪个分支，远端就部署并运行哪个同名分支”。
 - 现有分支:
   - `exp/adaptive-tkc-ukc-gate`
   - `exp/local-ukc-neighbor-fusion`

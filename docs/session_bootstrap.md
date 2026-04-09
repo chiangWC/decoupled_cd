@@ -1,17 +1,15 @@
 # Session Bootstrap
 
-新会话默认先只读这份文档。它只保留当前项目最小必需上下文，目标是让接手成本尽量低。
+新会话默认先只读这份文档。
 
 ## 最小规则
 
 - 所有代码默认在本地修改，不直接改远端。
-- 所有训练、评估、测试、smoke test 都在远端 `xph-pc` 上运行。
-- 远端主机只作为运行环境，不作为人工代码编辑环境。
+- 所有训练、评估、测试、smoke test 都在远端 `xph-pc` 上运行；远端只作为运行环境。
 - 默认 `origin` 指向远端运行机上的项目仓库。
 - 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
 - `master` 只保留当前认可状态；探索性实验默认在 `exp/*` 分支进行。
-- 部署和远端执行默认都跟随当前本地分支，不再固定落到远端 `master`。
-- 本地改动先 `git commit`，再 `git push origin <current-branch>`。
+- 远端执行默认跟随当前本地分支；本地改动先 `git commit`，再 `git push origin <current-branch>`。
 
 ## 最常用命令
 
@@ -67,12 +65,12 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - 一次只改一个结构因素。
 - 比较新结构时，默认先跑 `2-3` 个 seed。
 - 结果未验证前，不要把探索性实验直接推到 `master`。
-- `remote_exec.sh` 只会运行已推到远端同名分支的提交。
+- 远端只会运行已推到同名分支的提交。
 
 ## 按需再读
 
 - [docs/workflow.md](/home/jameschiang/work/decoupled_cd/docs/workflow.md)
-  - 需要看完整协作/部署/运行规则时再读
+  - 需要看完整协作与运行规则时再读
 - [docs/handoff.md](/home/jameschiang/work/decoupled_cd/docs/handoff.md)
   - 需要看当前主线细节、关键判断和关键文件时再读
 - [README_spec.md](/home/jameschiang/work/decoupled_cd/README_spec.md)
