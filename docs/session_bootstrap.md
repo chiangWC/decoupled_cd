@@ -11,7 +11,7 @@
 - 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
 - `master` 只保留当前认可状态；探索性实验默认在 `exp/*` 分支进行。
 - 部署和远端执行默认都跟随当前本地分支，不再固定落到远端 `master`。
-- 本地改动先 `git commit`，再部署到远端运行机。
+- 本地改动先 `git commit`，再 `git push origin <current-branch>`。
 
 ## 最常用命令
 
@@ -22,10 +22,10 @@ git status
 git pull --ff-only origin master
 ```
 
-本地部署已提交代码:
+将当前分支推到远端运行机仓库:
 
 ```bash
-bash scripts/deploy_to_remote.sh
+git push origin "$(git branch --show-current)"
 ```
 
 开始一个新实验分支:
@@ -67,7 +67,7 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - 一次只改一个结构因素。
 - 比较新结构时，默认先跑 `2-3` 个 seed。
 - 结果未验证前，不要把探索性实验直接推到 `master`。
-- 新实验分支部署后，`remote_exec.sh` 会在远端自动切到同名分支再运行。
+- `remote_exec.sh` 只会运行已推到远端同名分支的提交。
 
 ## 按需再读
 

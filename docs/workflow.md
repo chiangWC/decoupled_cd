@@ -37,10 +37,10 @@
 bash scripts/enter_env.sh
 ```
 
-将本地已提交代码部署到远端:
+将当前分支推到远端运行机仓库:
 
 ```bash
-bash scripts/deploy_to_remote.sh
+git push origin "$(git branch --show-current)"
 ```
 
 开始一个新实验分支:
@@ -55,7 +55,7 @@ git switch -c exp/<short-name>
 bash scripts/remote_exec.sh python scripts/train.py
 ```
 
-部署前默认要求:
+远端运行前默认要求:
 
 - 本地工作树干净，且需要部署的修改已经 `git commit`
 - `origin` 已配置到远端运行机仓库
@@ -67,8 +67,8 @@ bash scripts/remote_exec.sh python scripts/train.py
 - 新实验默认从最新 `master` 切出 `exp/<short-name>` 分支。
 - 实验效果不好时，保留或删除对应 `exp/*` 分支即可，不需要用回退提交污染 `master`。
 - 实验效果成立后，再整理提交并合回 `master`。
-- `bash scripts/deploy_to_remote.sh` 会把当前本地分支推到远端同名分支。
-- `bash scripts/remote_exec.sh ...` 会在远端自动切到当前本地分支后再执行命令。
+- `git push origin "$(git branch --show-current)"` 会把当前本地分支推到远端同名分支。
+- `bash scripts/remote_exec.sh ...` 会先确认远端同名分支已更新到当前本地提交，再在远端切到该分支执行命令。
 
 ## 新会话说明
 
