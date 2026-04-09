@@ -15,8 +15,15 @@ fi
 
 cd "${PROJECT_ROOT}"
 
+TARGET_BRANCH="$(git branch --show-current)"
+if [[ -z "${TARGET_BRANCH}" ]]; then
+  echo "Failed to determine the current local branch. Detached HEAD is not supported for remote execution." >&2
+  exit 1
+fi
+
 printf -v remote_user_cmd '%q ' "$@"
-remote_script="source '${REMOTE_CONDA_SH}' && conda activate '${CONDA_ENV_NAME}' && cd '${REMOTE_PROJECT_ROOT}' && ${remote_user_cmd}"
+printf -v target_branch_quoted '%q' "${TARGET_BRANCH}"
+remote_script="source '${REMOTE_CONDA_SH}' && conda activate '${CONDA_ENV_NAME}' && cd '${REMOTE_PROJECT_ROOT}' && if [[ -n \"\$(git status --porcelain)\" ]]; then echo \"Remote working tree is not clean. Clean tracked changes before switching branches or running commands.\" >&2; exit 1; fi && if ! git show-ref --verify --quiet refs/heads/${target_branch_quoted}; then echo \"Remote branch '${TARGET_BRANCH}' does not exist. Deploy this branch before remote execution.\" >&2; exit 1; fi && git switch --quiet ${target_branch_quoted} && ${remote_user_cmd}"
 printf -v remote_script_quoted '%q' "${remote_script}"
 
 ssh "${REMOTE_HOST}" "bash -lc ${remote_script_quoted}"

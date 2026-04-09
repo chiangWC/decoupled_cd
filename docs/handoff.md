@@ -61,6 +61,7 @@
 
 - 当前已有的 `exp/*` 分支都是历史上“离主线还差一点”的次优路线，不是当前正式主线。
 - 这些分支可作为复验参考，但不要直接把它们视为与当前 `master` 等价的候选主线。
+- 当前 workflow 已支持“本地在哪个分支，远端就部署并运行哪个同名分支”。
 - 现有分支:
   - `exp/adaptive-tkc-ukc-gate`
   - `exp/local-ukc-neighbor-fusion`

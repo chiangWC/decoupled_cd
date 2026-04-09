@@ -16,9 +16,9 @@ if ! git remote get-url origin >/dev/null 2>&1; then
   exit 1
 fi
 
-TARGET_BRANCH="$(git ls-remote --symref origin HEAD | awk '/^ref:/ {sub("refs/heads/", "", $2); print $2; exit}')"
+TARGET_BRANCH="$(git branch --show-current)"
 if [[ -z "${TARGET_BRANCH}" ]]; then
-  echo "Failed to determine the default branch of remote 'origin'." >&2
+  echo "Failed to determine the current local branch. Detached HEAD is not supported for deployment." >&2
   exit 1
 fi
 

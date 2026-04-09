@@ -25,7 +25,7 @@
 - 远端执行任何项目命令前，先激活 `decoupled_cd` 环境。
 - 远端目录保留 `git` 工作树，仅用于接收部署后的代码并直接运行。
 - 部署只会带上已经提交的改动；本地有未提交改动时，默认不部署。
-- 默认约定是 `origin` 指向远端运行机仓库，部署时将本地当前 `HEAD` 推到 `origin` 默认分支，再在远端直接运行。
+- 默认约定是 `origin` 指向远端运行机仓库；部署和远端执行都跟随当前本地分支。
 
 ## 常用命令
 
@@ -67,6 +67,8 @@ bash scripts/remote_exec.sh python scripts/train.py
 - 新实验默认从最新 `master` 切出 `exp/<short-name>` 分支。
 - 实验效果不好时，保留或删除对应 `exp/*` 分支即可，不需要用回退提交污染 `master`。
 - 实验效果成立后，再整理提交并合回 `master`。
+- `bash scripts/deploy_to_remote.sh` 会把当前本地分支推到远端同名分支。
+- `bash scripts/remote_exec.sh ...` 会在远端自动切到当前本地分支后再执行命令。
 
 ## 新会话说明
 
