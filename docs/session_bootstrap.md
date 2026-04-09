@@ -9,6 +9,7 @@
 - 远端主机只作为运行环境，不作为人工代码编辑环境。
 - 默认 `origin` 指向远端运行机上的项目仓库。
 - 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
+- `master` 只保留当前认可状态；探索性实验默认在 `exp/*` 分支进行。
 - 本地改动先 `git commit`，再部署到远端运行机。
 
 ## 最常用命令
@@ -24,6 +25,12 @@ git pull --ff-only origin master
 
 ```bash
 bash scripts/deploy_to_remote.sh
+```
+
+开始一个新实验分支:
+
+```bash
+git switch -c exp/<short-name>
 ```
 
 在远端环境执行命令:
@@ -58,6 +65,7 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - `valid/test` 复用 `train` 行为历史做传播输入。
 - 一次只改一个结构因素。
 - 比较新结构时，默认先跑 `2-3` 个 seed。
+- 结果未验证前，不要把探索性实验直接推到 `master`。
 
 ## 按需再读
 

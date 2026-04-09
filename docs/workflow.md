@@ -21,6 +21,7 @@
 - 所有项目命令都在远端执行，包括训练、评估、测试和 smoke test。
 - 本地不要直接跑项目代码；如需验证，先把本地提交部署到远端，再通过 SSH 执行命令。
 - 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
+- `master` 只保留当前认可状态；探索性实验默认在 `exp/*` 分支进行。
 - 远端执行任何项目命令前，先激活 `decoupled_cd` 环境。
 - 远端目录保留 `git` 工作树，仅用于接收部署后的代码并直接运行。
 - 部署只会带上已经提交的改动；本地有未提交改动时，默认不部署。
@@ -42,6 +43,12 @@ bash scripts/enter_env.sh
 bash scripts/deploy_to_remote.sh
 ```
 
+开始一个新实验分支:
+
+```bash
+git switch -c exp/<short-name>
+```
+
 在远端项目环境里执行任意命令:
 
 ```bash
@@ -53,6 +60,13 @@ bash scripts/remote_exec.sh python scripts/train.py
 - 本地工作树干净，且需要部署的修改已经 `git commit`
 - `origin` 已配置到远端运行机仓库
 - 本地与远端仓库历史兼容，可做 fast-forward / 正常 push
+
+## 分支约定
+
+- `master` 只保留当前认可状态，不把探索性实验直接堆到主线。
+- 新实验默认从最新 `master` 切出 `exp/<short-name>` 分支。
+- 实验效果不好时，保留或删除对应 `exp/*` 分支即可，不需要用回退提交污染 `master`。
+- 实验效果成立后，再整理提交并合回 `master`。
 
 ## 新会话说明
 

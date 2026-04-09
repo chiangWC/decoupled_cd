@@ -7,6 +7,7 @@
 ## 当前主线
 
 - 当前工作重点是在稳定基线上继续做可解释的结构改动。
+- `master` 对应当前正式主线，不用于堆积探索性实验提交。
 - 数据:
   - [train.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/train.csv)
   - [valid.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/valid.csv)
@@ -56,6 +57,17 @@
 - 不要回到裸 Q 共现图重新做主基线判断，除非用户明确要求。
 - 并行训练的日志文件名现在已经唯一化，不再共用同一个 `train_*.log`。
 
+## 当前实验分支说明
+
+- 当前已有的 `exp/*` 分支都是历史上“离主线还差一点”的次优路线，不是当前正式主线。
+- 这些分支可作为复验参考，但不要直接把它们视为与当前 `master` 等价的候选主线。
+- 现有分支:
+  - `exp/adaptive-tkc-ukc-gate`
+  - `exp/local-ukc-neighbor-fusion`
+  - `exp/tkc-item-aware-attention`
+  - `exp/ukc-coverage-beta-gate`
+- 这些路线对应的背景、定位和相对主线的关系，参考 [docs/model_improvement_plan.md](/home/jameschiang/work/decoupled_cd/docs/model_improvement_plan.md) 的 D 部分快速索引。
+
 ## 当前关键文件
 
 - 数据与映射:
@@ -83,3 +95,4 @@
 - 默认先跑 `2-3` 个 seed 再判断改动是否成立。
 - 优先考虑更轻量的传播侧改动。
 - 避免显著增加 full-batch 显存占用的主干改动。
+- 新实验默认在 `exp/*` 分支上进行，确认成立后再整理回 `master`。
