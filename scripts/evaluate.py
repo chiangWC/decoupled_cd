@@ -77,12 +77,16 @@ def resolve_student_gate_prior_arg(
     new_flag: str,
     legacy_flag: str,
 ) -> float:
-    if explicit is not None and legacy is not None and float(explicit) != float(legacy):
+    resolved_explicit = None if explicit is None else float(explicit)
+    resolved_legacy = None if legacy is None else float(legacy)
+    if resolved_legacy is not None and resolved_explicit == float(default):
+        resolved_explicit = None
+    if resolved_explicit is not None and resolved_legacy is not None and resolved_explicit != resolved_legacy:
         raise ValueError(f"Received conflicting values for {new_flag} and deprecated {legacy_flag}.")
-    if explicit is not None:
-        return float(explicit)
-    if legacy is not None:
-        return float(legacy)
+    if resolved_explicit is not None:
+        return resolved_explicit
+    if resolved_legacy is not None:
+        return resolved_legacy
     return float(default)
 
 
