@@ -18,8 +18,8 @@ class _NeverCalledModel(nn.Module):
 
 
 class _ConstantProbModel(nn.Module):
-    def forward(self, *, interaction_student_ids: torch.Tensor, **kwargs):
-        batch_size = interaction_student_ids.size(0)
+    def forward(self, *, target_student_ids: torch.Tensor, **kwargs):
+        batch_size = target_student_ids.size(0)
         probs = torch.full((batch_size,), 0.5, dtype=torch.float32)
         return SimpleNamespace(probs=probs)
 
