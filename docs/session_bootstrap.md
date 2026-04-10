@@ -63,7 +63,8 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - `dual graph` 只作为 legacy ablation，不是默认路径。
 - `valid/test` 复用 `train` 行为历史做传播输入。
 - 一次只改一个结构因素。
-- 比较新结构时，默认先跑 `2-3` 个 seed。
+- 探索性结构改动默认先从最新 `master` 切 `exp/<short-name>` 分支。
+- 新结构默认先跑单次；单次值得继续时再补 `2-3` 个 seed。
 - 结果未验证前，不要把探索性实验直接推到 `master`。
 - 远端只会运行已推到同名分支的提交。
 

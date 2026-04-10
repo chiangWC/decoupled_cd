@@ -68,3 +68,9 @@ bash scripts/remote_exec.sh python scripts/train.py
 - 实验效果成立后，再整理提交并合回 `master`。
 - `git push origin "$(git branch --show-current)"` 会把当前本地分支推到远端同名分支。
 - `bash scripts/remote_exec.sh ...` 会先确认远端同名分支已更新到当前本地提交，再在远端切到该分支执行命令。
+
+## 实验节奏
+
+- 探索性结构改动默认先开 `exp/<short-name>` 分支。
+- 新结构默认先跑单次。
+- 单次值得继续时，再补 `2-3` 个 seed。
