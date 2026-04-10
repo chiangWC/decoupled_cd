@@ -76,6 +76,7 @@
   - `exp/local-ukc-neighbor-fusion`
   - `exp/tkc-exercise-aggregation-qnorm`
   - `exp/tkc-item-aware-attention`
+  - `exp/tkc-readout-residual`
   - `exp/ukc-coverage-beta-gate`
 - 这些路线对应的背景、定位和相对主线的关系，参考 [docs/model_improvement_plan.md](/home/jameschiang/work/decoupled_cd/docs/model_improvement_plan.md) 的 D 部分快速索引。
 

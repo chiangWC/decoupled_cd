@@ -752,6 +752,41 @@
 - 但在当前主线口径下，它相对实验 23 的增量几乎可以视为持平，暂时没有足够证据把它当成必须合入的关键改动。
 - 当前更可靠的判断是: 实验 23 的收益主要来自“修掉 `TKC` 行为项的全局二次缩小”，而不是多知识点题分摊本身。
 
+#### 实验 25. 在 readout 侧补 `TKC` item-aware residual
+
+改动:
+
+- 以实验 23 当前正式主线为底座:
+  - 单图 `propagation_graph`
+  - `conditional g/s`
+  - `TKC/UKC` 结构传播参数独立
+  - `TKC` 正误双通道行为消息
+  - 学生级自适应 `TKC/UKC` 融合 gate
+- 不改 propagation 主干，只在 readout 侧新增 `readout_mode = global_tkc_residual`:
+  - 保留原有全局 `student_state` 主路径
+  - 用 `q_repr` 对当前题相关、且该生已测的 `TKC` 概念状态做 item-aware soft attention
+  - 得到 `local_tkc_readout` 后，仅以 residual 方式注入认知匹配分支
+- 同时补了两类工程护栏:
+  - 若目标题的 `Q` 行全 0，则前向直接报错，避免 `softmax` 在全 `-inf` mask 下退成错误表示
+  - 为了避免 full-batch 预测时显存爆炸，新增按 target chunk 计算 readout/prediction head 的实现
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.697799`
+  - `best_epoch = 82`
+  - `test_auc = 0.692789`
+  - `test_acc = 0.684980`
+  - `test_rmse = 0.456158`
+  - 文件:
+    - `results/exp_tkc_readout_residual/assist_09_global_tkc_residual_seed2024_300ep.json`
+
+结论:
+
+- 这条 readout residual 路线在工程上已经可稳定运行，但效果明显低于当前正式主线，不值得继续补多 seed。
+- 这说明“把题目条件局部选择性信号只加在 readout 侧”在当前实验 23 主线口径下不是有效方向。
+- 这条分支更适合作为失败实验记录保留，不应整理回 `master`。
+
 ## D. 快速索引
 
 这部分只用于快速查重，不替代上面的详细条目。
@@ -777,6 +812,7 @@
 - 实验 14: `TKC/UKC` 同时局部硬 mean 明显退化。
 - 实验 15: `TKC` 局部硬 mean + `UKC` 全局 mean 仍无改善。
 - 实验 20: 直接叠加 `local UKC neighbor` 和 `UKC-only coverage gate` 低于实验 19 单独版本。
+- 实验 25: `TKC` item-aware residual 只放在 readout 侧后，单次结果明显低于当前正式主线。
 
 ### 相对实验 12 旧主线接近、可留作后续参考的路线
 
@@ -790,3 +826,4 @@
 - 实验 22: 将实验 17 的 `local UKC neighbor` 叠到实验 21 后，三 seed 均值约 `0.7484`，低于当前正式主线 `0.7502`，当前不建议继续推进。
 - 实验 23: 修正 `TKC` 行为项全局二次缩小后，三 seed 均值约 `0.7597`，显著高于实验 21 当前正式主线 `0.7502`。
 - 实验 24: 在实验 23 基础上做多知识点题权重分摊后，三 seed 均值约 `0.7598`，相对实验 23 几乎持平。
+- 实验 25: 在实验 23 基础上将 `TKC` item-aware attention 仅作为 readout residual 注入后，单次 `test_auc = 0.692789`，明显低于当前正式主线。
