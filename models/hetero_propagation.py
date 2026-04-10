@@ -150,12 +150,12 @@ def _logit(value: float) -> float:
 
 def _aggregate_exercise_messages_by_concept(
     *,
-    normalized_exercise_weights: torch.Tensor,
+    exercise_weights: torch.Tensor,
     q_matrix: torch.Tensor,
     exercise_messages: torch.Tensor,
     concept_weights: torch.Tensor,
 ) -> torch.Tensor:
-    num_students = normalized_exercise_weights.size(0)
+    num_students = exercise_weights.size(0)
     num_concepts = q_matrix.size(1)
     dim = exercise_messages.size(1)
     output = exercise_messages.new_zeros((num_students, num_concepts, dim))
@@ -164,7 +164,7 @@ def _aggregate_exercise_messages_by_concept(
         exercise_indices = torch.nonzero(q_matrix[:, concept_index] > 0, as_tuple=False).squeeze(-1)
         if exercise_indices.numel() == 0:
             continue
-        concept_message = normalized_exercise_weights[:, exercise_indices] @ exercise_messages[exercise_indices]
+        concept_message = exercise_weights[:, exercise_indices] @ exercise_messages[exercise_indices]
         denom = concept_weights[:, concept_index].unsqueeze(-1).clamp(min=1.0)
         output[:, concept_index, :] = concept_message / denom
 
@@ -177,10 +177,9 @@ def _build_exercise_component(
     q_matrix: torch.Tensor,
     exercise_messages: torch.Tensor,
 ) -> torch.Tensor:
-    concept_weights = torch.einsum("se,ek->sk", weighted_exercises, q_matrix).clamp(min=0.0)
-    normalized_exercise_weights = weighted_exercises / weighted_exercises.sum(dim=1, keepdim=True).clamp(min=1.0)
+    concept_weights = torch.einsum("se,ek->sk", weighted_exercises, q_matrix).clamp(min=1.0)
     return _aggregate_exercise_messages_by_concept(
-        normalized_exercise_weights=normalized_exercise_weights,
+        exercise_weights=weighted_exercises,
         q_matrix=q_matrix,
         exercise_messages=exercise_messages,
         concept_weights=concept_weights,
