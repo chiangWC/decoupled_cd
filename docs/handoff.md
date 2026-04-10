@@ -40,6 +40,19 @@
     - `results/exp_adaptive_tkc_ukc_gate/`
   - `test_auc` 均值约 `0.7502`
 
+当前最强未整理回 `master` 的候选:
+
+- `exp/tkc-exercise-aggregation`
+  - 远端结果目录:
+    - `results/exp_tkc_exercise_aggregation/`
+  - 三个 seed 的 `test_auc` 均值约 `0.7597`
+  - 相比当前正式主线均值 `0.7502`，提升约 `+0.0095`
+- `exp/tkc-exercise-aggregation-qnorm`
+  - 远端结果目录:
+    - `results/exp_tkc_exercise_aggregation_qnorm/`
+  - 三个 seed 的 `test_auc` 均值约 `0.7598`
+  - 相比 `exp/tkc-exercise-aggregation` 仅增约 `+0.0001`
+
 ## 已经定下来的判断
 
 - ordered ASSIST09 + transition graph 是当前固定数据主线。
@@ -49,6 +62,9 @@
 - `TKC/UKC` 结构传播参数解耦是当前最可靠的正向结构改动。
 - `TKC` 行为消息里显式保留错题信号是有效的，当前正误双通道优于只看正确题。
 - 将全局固定 `alpha/beta` 升级为学生自适应 `TKC/UKC` 融合 gate 后，三 seed 结果已经稳定优于旧主线。
+- `_build_exercise_component` 不应先按学生全历史对 `TKC` 行为项做全局归一化；概念内聚合应避免让“历史越长，行为证据越弱”。
+- 在实验 21 当前主线上修掉这一步后，三 seed 结果显著提升，是目前最强的待整理候选。
+- 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
 - 更激进的 scheduler patience 没有带来更好结果。
@@ -63,6 +79,8 @@
 - 现有分支:
   - `exp/adaptive-tkc-ukc-gate`
   - `exp/local-ukc-neighbor-fusion`
+  - `exp/tkc-exercise-aggregation`
+  - `exp/tkc-exercise-aggregation-qnorm`
   - `exp/tkc-item-aware-attention`
   - `exp/ukc-coverage-beta-gate`
 - 这些路线对应的背景、定位和相对主线的关系，参考 [docs/model_improvement_plan.md](/home/jameschiang/work/decoupled_cd/docs/model_improvement_plan.md) 的 D 部分快速索引。
