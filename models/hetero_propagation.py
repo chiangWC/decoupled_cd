@@ -20,8 +20,19 @@ class HeterogeneousGraphPropagation(nn.Module):
     - UKC branch uses only concept-graph propagation.
     """
 
-    def __init__(self, concept_dim: int, alpha: float = 1.0, beta: float = 1.0):
+    def __init__(
+        self,
+        concept_dim: int,
+        graph_mode: str = "single",
+        student_gate_prior_alpha: float | None = None,
+        student_gate_prior_beta: float | None = None,
+        alpha: float | None = None,
+        beta: float | None = None,
+    ):
         super().__init__()
+        if graph_mode not in {"single", "dual"}:
+            raise ValueError(f"Unsupported graph_mode: {graph_mode}")
+        self.graph_mode = graph_mode
         self.correct_exercise_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.incorrect_exercise_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.tkc_concept_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
@@ -38,7 +49,24 @@ class HeterogeneousGraphPropagation(nn.Module):
             nn.ReLU(),
             nn.Linear(concept_dim, 1),
         )
-        fusion_prior = _resolve_tkc_prior(alpha=alpha, beta=beta)
+        resolved_prior_alpha = _resolve_student_gate_prior_arg(
+            explicit=student_gate_prior_alpha,
+            legacy=alpha,
+            default=1.0,
+            new_name="student_gate_prior_alpha",
+            legacy_name="alpha",
+        )
+        resolved_prior_beta = _resolve_student_gate_prior_arg(
+            explicit=student_gate_prior_beta,
+            legacy=beta,
+            default=1.0,
+            new_name="student_gate_prior_beta",
+            legacy_name="beta",
+        )
+        fusion_prior = _resolve_tkc_prior(
+            student_gate_prior_alpha=resolved_prior_alpha,
+            student_gate_prior_beta=resolved_prior_beta,
+        )
         nn.init.zeros_(self.student_fusion_gate[-1].weight)
         nn.init.constant_(self.student_fusion_gate[-1].bias, _logit(fusion_prior))
 
@@ -58,7 +86,9 @@ class HeterogeneousGraphPropagation(nn.Module):
     ) -> PropagationOutput:
         correct_exercise_messages = self.correct_exercise_to_concept(exercise_embeddings)
         incorrect_exercise_messages = self.incorrect_exercise_to_concept(exercise_embeddings)
-        if prerequisite_graph is not None and similarity_graph is not None:
+        if self.graph_mode == "dual":
+            if prerequisite_graph is None or similarity_graph is None:
+                raise ValueError("Dual graph mode requires both prerequisite_graph and similarity_graph tensors.")
             tkc_neighbor_messages = self._fuse_dual_graph_messages(
                 concept_embeddings=concept_embeddings,
                 prerequisite_graph=prerequisite_graph,
@@ -74,6 +104,10 @@ class HeterogeneousGraphPropagation(nn.Module):
                 similarity_transform=self.ukc_similarity_to_concept,
             )
         else:
+            if prerequisite_graph is not None or similarity_graph is not None:
+                raise ValueError(
+                    "Single graph mode does not accept prerequisite_graph or similarity_graph tensors."
+                )
             tkc_neighbor_messages = concept_graph @ self.tkc_concept_to_concept(concept_embeddings)
             ukc_neighbor_messages = concept_graph @ self.ukc_concept_to_concept(concept_embeddings)
 
@@ -136,11 +170,28 @@ def _masked_average(node_states: torch.Tensor, mask: torch.Tensor) -> torch.Tens
     return total / denom
 
 
-def _resolve_tkc_prior(*, alpha: float, beta: float) -> float:
-    total = float(alpha) + float(beta)
+def _resolve_student_gate_prior_arg(
+    *,
+    explicit: float | None,
+    legacy: float | None,
+    default: float,
+    new_name: str,
+    legacy_name: str,
+) -> float:
+    if explicit is not None and legacy is not None and float(explicit) != float(legacy):
+        raise ValueError(f"Received conflicting values for {new_name} and deprecated {legacy_name}.")
+    if explicit is not None:
+        return float(explicit)
+    if legacy is not None:
+        return float(legacy)
+    return float(default)
+
+
+def _resolve_tkc_prior(*, student_gate_prior_alpha: float, student_gate_prior_beta: float) -> float:
+    total = float(student_gate_prior_alpha) + float(student_gate_prior_beta)
     if total <= 0.0:
         return 0.5
-    return min(max(float(alpha) / total, 1e-4), 1.0 - 1e-4)
+    return min(max(float(student_gate_prior_alpha) / total, 1e-4), 1.0 - 1e-4)
 
 
 def _logit(value: float) -> float:

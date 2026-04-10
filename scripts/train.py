@@ -55,16 +55,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--concept-dim", type=int, default=32)
     parser.add_argument(
-        "--alpha",
+        "--student-gate-prior-alpha",
         type=float,
-        default=1.0,
-        help="Legacy fusion-prior knob retained for reproducibility; the current mainline uses adaptive fusion.",
+        default=None,
+        help="TKC prior used only to initialize the student fusion gate; training remains adaptive.",
+    )
+    parser.add_argument(
+        "--student-gate-prior-beta",
+        type=float,
+        default=None,
+        help="UKC prior used only to initialize the student fusion gate; training remains adaptive.",
+    )
+    parser.add_argument(
+        "--alpha",
+        dest="legacy_alpha",
+        type=float,
+        default=None,
+        help="Deprecated alias for --student-gate-prior-alpha.",
     )
     parser.add_argument(
         "--beta",
+        dest="legacy_beta",
         type=float,
-        default=1.0,
-        help="Legacy fusion-prior knob retained for reproducibility; the current mainline uses adaptive fusion.",
+        default=None,
+        help="Deprecated alias for --student-gate-prior-beta.",
     )
     parser.add_argument("--gs-mode", choices=["constant", "conditional"], default="conditional")
     parser.add_argument("--device", default="auto")
@@ -78,7 +92,53 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-dir", default="logs")
     parser.add_argument("--output", default="results/train_summary.json")
     args = parser.parse_args()
-    return apply_dataset_defaults(args, parser)
+    args = apply_dataset_defaults(args, parser)
+    args.student_gate_prior_alpha = resolve_student_gate_prior_arg(
+        explicit=args.student_gate_prior_alpha,
+        legacy=args.legacy_alpha,
+        default=1.0,
+        new_flag="--student-gate-prior-alpha",
+        legacy_flag="--alpha",
+    )
+    args.student_gate_prior_beta = resolve_student_gate_prior_arg(
+        explicit=args.student_gate_prior_beta,
+        legacy=args.legacy_beta,
+        default=1.0,
+        new_flag="--student-gate-prior-beta",
+        legacy_flag="--beta",
+    )
+    return args
+
+
+def resolve_student_gate_prior_arg(
+    *,
+    explicit: float | None,
+    legacy: float | None,
+    default: float,
+    new_flag: str,
+    legacy_flag: str,
+) -> float:
+    if explicit is not None and legacy is not None and float(explicit) != float(legacy):
+        raise ValueError(f"Received conflicting values for {new_flag} and deprecated {legacy_flag}.")
+    if explicit is not None:
+        return float(explicit)
+    if legacy is not None:
+        return float(legacy)
+    return float(default)
+
+
+def validate_graph_args(args: argparse.Namespace) -> None:
+    has_prerequisite_graph = args.prerequisite_graph is not None
+    has_similarity_graph = args.similarity_graph is not None
+    if args.graph_mode == "dual":
+        if not has_prerequisite_graph or not has_similarity_graph:
+            raise ValueError("Dual graph mode requires both --prerequisite-graph and --similarity-graph.")
+        return
+    if has_prerequisite_graph or has_similarity_graph:
+        raise ValueError(
+            "Single graph mode does not accept --prerequisite-graph or --similarity-graph. "
+            "Use --graph-mode dual for the legacy dual-graph ablation."
+        )
 
 
 def derive_q_matrix_if_needed(interactions_path: str, q_matrix_path: str | None) -> str:
@@ -125,8 +185,7 @@ def materialize_subset_if_needed(interactions_path: str, max_rows: int | None) -
 
 def main() -> None:
     args = parse_args()
-    if args.graph_mode == "dual" and (args.prerequisite_graph is None or args.similarity_graph is None):
-        raise ValueError("Dual graph mode requires both --prerequisite-graph and --similarity-graph.")
+    validate_graph_args(args)
     set_global_seed(args.seed)
     logger, log_path = setup_logging(args.log_dir, name="train")
     resolved_device = str(resolve_device(args.device, args.gpus))
@@ -175,8 +234,9 @@ def main() -> None:
         num_exercises=train_bundle.num_exercises,
         num_concepts=train_bundle.num_concepts,
         concept_dim=args.concept_dim,
-        alpha=args.alpha,
-        beta=args.beta,
+        graph_mode=args.graph_mode,
+        student_gate_prior_alpha=args.student_gate_prior_alpha,
+        student_gate_prior_beta=args.student_gate_prior_beta,
         gs_mode=args.gs_mode,
     )
     output_path = Path(args.output)
@@ -208,6 +268,8 @@ def main() -> None:
         "learning_rate": args.learning_rate,
         "gs_mode": args.gs_mode,
         "graph_mode": args.graph_mode,
+        "student_gate_prior_alpha": args.student_gate_prior_alpha,
+        "student_gate_prior_beta": args.student_gate_prior_beta,
         "seed": args.seed,
         "device": resolved_device,
         "max_rows": args.max_rows,
@@ -239,6 +301,8 @@ def main() -> None:
         "concept_dim": args.concept_dim,
         "gs_mode": args.gs_mode,
         "graph_mode": args.graph_mode,
+        "student_gate_prior_alpha": args.student_gate_prior_alpha,
+        "student_gate_prior_beta": args.student_gate_prior_beta,
         "seed": args.seed,
         "best_epoch": result.best_epoch,
         "best_val_auc": result.best_val_auc,

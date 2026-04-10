@@ -34,22 +34,70 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--concept-dim", type=int, default=16)
     parser.add_argument(
-        "--alpha",
+        "--student-gate-prior-alpha",
         type=float,
-        default=1.0,
-        help="Legacy fusion-prior knob retained for reproducibility; the current mainline uses adaptive fusion.",
+        default=None,
+        help="TKC prior used only to initialize the student fusion gate; training remains adaptive.",
     )
     parser.add_argument(
-        "--beta",
+        "--student-gate-prior-beta",
         type=float,
-        default=1.0,
-        help="Legacy fusion-prior knob retained for reproducibility; the current mainline uses adaptive fusion.",
+        default=None,
+        help="UKC prior used only to initialize the student fusion gate; training remains adaptive.",
     )
+    parser.add_argument("--alpha", dest="legacy_alpha", type=float, default=None, help="Deprecated alias for --student-gate-prior-alpha.")
+    parser.add_argument("--beta", dest="legacy_beta", type=float, default=None, help="Deprecated alias for --student-gate-prior-beta.")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--output", default="results/eval_summary.json")
     args = parser.parse_args()
-    return apply_dataset_defaults(args, parser)
+    args = apply_dataset_defaults(args, parser)
+    args.student_gate_prior_alpha = resolve_student_gate_prior_arg(
+        explicit=args.student_gate_prior_alpha,
+        legacy=args.legacy_alpha,
+        default=1.0,
+        new_flag="--student-gate-prior-alpha",
+        legacy_flag="--alpha",
+    )
+    args.student_gate_prior_beta = resolve_student_gate_prior_arg(
+        explicit=args.student_gate_prior_beta,
+        legacy=args.legacy_beta,
+        default=1.0,
+        new_flag="--student-gate-prior-beta",
+        legacy_flag="--beta",
+    )
+    return args
+
+
+def resolve_student_gate_prior_arg(
+    *,
+    explicit: float | None,
+    legacy: float | None,
+    default: float,
+    new_flag: str,
+    legacy_flag: str,
+) -> float:
+    if explicit is not None and legacy is not None and float(explicit) != float(legacy):
+        raise ValueError(f"Received conflicting values for {new_flag} and deprecated {legacy_flag}.")
+    if explicit is not None:
+        return float(explicit)
+    if legacy is not None:
+        return float(legacy)
+    return float(default)
+
+
+def validate_graph_args(args: argparse.Namespace) -> None:
+    has_prerequisite_graph = args.prerequisite_graph is not None
+    has_similarity_graph = args.similarity_graph is not None
+    if args.graph_mode == "dual":
+        if not has_prerequisite_graph or not has_similarity_graph:
+            raise ValueError("Dual graph mode requires both --prerequisite-graph and --similarity-graph.")
+        return
+    if has_prerequisite_graph or has_similarity_graph:
+        raise ValueError(
+            "Single graph mode does not accept --prerequisite-graph or --similarity-graph. "
+            "Use --graph-mode dual for the legacy dual-graph ablation."
+        )
 
 
 def derive_q_matrix_from_splits_if_needed(train_path: str, valid_path: str, test_path: str, q_matrix_path: str | None) -> str:
@@ -71,8 +119,7 @@ def derive_q_matrix_from_splits_if_needed(train_path: str, valid_path: str, test
 
 def main() -> None:
     args = parse_args()
-    if args.graph_mode == "dual" and (args.prerequisite_graph is None or args.similarity_graph is None):
-        raise ValueError("Dual graph mode requires both --prerequisite-graph and --similarity-graph.")
+    validate_graph_args(args)
     if not all([args.train_interactions, args.valid_interactions, args.test_interactions]):
         raise ValueError("Evaluation requires --train-interactions, --valid-interactions, and --test-interactions.")
 
@@ -97,13 +144,16 @@ def main() -> None:
         num_exercises=bundles["train"].num_exercises,
         num_concepts=bundles["train"].num_concepts,
         concept_dim=args.concept_dim,
-        alpha=args.alpha,
-        beta=args.beta,
+        graph_mode=args.graph_mode,
+        student_gate_prior_alpha=args.student_gate_prior_alpha,
+        student_gate_prior_beta=args.student_gate_prior_beta,
     )
 
     payload = {
         "device": device,
         "graph_mode": args.graph_mode,
+        "student_gate_prior_alpha": args.student_gate_prior_alpha,
+        "student_gate_prior_beta": args.student_gate_prior_beta,
         "train_metrics": evaluate_model(bundle=bundles["train"], model=model, device=device),
         "valid_metrics": evaluate_model(bundle=bundles["valid"], model=model, device=device),
         "test_metrics": evaluate_model(bundle=bundles["test"], model=model, device=device),

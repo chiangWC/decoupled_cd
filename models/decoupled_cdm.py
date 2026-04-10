@@ -35,8 +35,11 @@ class DecoupledCDM(nn.Module):
         num_exercises: int,
         num_concepts: int,
         concept_dim: int = 32,
-        alpha: float = 1.0,
-        beta: float = 1.0,
+        graph_mode: str = "single",
+        student_gate_prior_alpha: float | None = None,
+        student_gate_prior_beta: float | None = None,
+        alpha: float | None = None,
+        beta: float | None = None,
         gs_mode: str = "conditional",
     ):
         super().__init__()
@@ -74,7 +77,14 @@ class DecoupledCDM(nn.Module):
             nn.ReLU(),
             nn.Linear(concept_dim, 1),
         )
-        self.propagation = HeterogeneousGraphPropagation(concept_dim=concept_dim, alpha=alpha, beta=beta)
+        self.propagation = HeterogeneousGraphPropagation(
+            concept_dim=concept_dim,
+            graph_mode=graph_mode,
+            student_gate_prior_alpha=student_gate_prior_alpha,
+            student_gate_prior_beta=student_gate_prior_beta,
+            alpha=alpha,
+            beta=beta,
+        )
 
     def forward(
         self,
