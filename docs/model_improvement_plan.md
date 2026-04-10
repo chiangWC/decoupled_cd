@@ -4,11 +4,11 @@
 
 它不是正式规范，也不是新会话默认必读文档。只有在设计实验、核对历史结论、避免重复试错时再读。
 
-当前 workflow、正式基线、已定主线结论、下一步默认规则，统一以 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)、[docs/workflow.md](/home/jameschiang/work/decoupled_cd/docs/workflow.md) 和 [docs/handoff.md](/home/jameschiang/work/decoupled_cd/docs/handoff.md) 为准。
+当前 workflow、正式基线、已定主线结论、下一步默认规则，统一以 [docs/session_bootstrap.md](./session_bootstrap.md)、[docs/workflow.md](./workflow.md) 和 [docs/handoff.md](./handoff.md) 为准。
 
 ## 如何使用这份档案
 
-- 需要快速进入当前项目状态时，先读 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)，再按需读 [docs/workflow.md](/home/jameschiang/work/decoupled_cd/docs/workflow.md) 和 [docs/handoff.md](/home/jameschiang/work/decoupled_cd/docs/handoff.md)。
+- 需要快速进入当前项目状态时，先读 [docs/session_bootstrap.md](./session_bootstrap.md)，再按需读 [docs/workflow.md](./workflow.md) 和 [docs/handoff.md](./handoff.md)。
 - 需要确认某条路线是否已经试过、为什么没继续、是否值得复访时，再回到这份文档。
 - 下文按“用途”而不是按时间顺序组织。
 - 每条实验都保留原实验编号，方便和旧讨论记录对照。

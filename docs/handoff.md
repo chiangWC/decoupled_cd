@@ -2,19 +2,19 @@
 
 这份文档保留“扩展交接”用途，用来说明当前主线、关键判断和关键文件。
 
-它不是新会话默认第一入口。新会话默认先读 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)，只有在需要更多项目上下文时再读这份文档。
+它不是新会话默认第一入口。新会话默认先读 [docs/session_bootstrap.md](./session_bootstrap.md)，只有在需要更多项目上下文时再读这份文档。
 
 ## 当前主线
 
 - 当前工作重点是在稳定基线上继续做可解释的结构改动。
 - 数据:
-  - [train.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/train.csv)
-  - [valid.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/valid.csv)
-  - [test.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/test.csv)
+  - [train.csv](../data/assist_09_ordered/train.csv)
+  - [valid.csv](../data/assist_09_ordered/valid.csv)
+  - [test.csv](../data/assist_09_ordered/test.csv)
 - Q 矩阵:
-  - [Q_matrix.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/Q_matrix.csv)
+  - [Q_matrix.csv](../data/assist_09_ordered/Q_matrix.csv)
 - 图:
-  - [propagation_graph.csv](/home/jameschiang/work/decoupled_cd/data/assist_09_ordered/transition_graph/propagation_graph.csv)
+  - [propagation_graph.csv](../data/assist_09_ordered/transition_graph/propagation_graph.csv)
 - 默认配置:
   - `learning_rate = 1e-3`
   - `concept_dim = 64`
@@ -78,28 +78,28 @@
   - `exp/tkc-item-aware-attention`
   - `exp/tkc-readout-residual`
   - `exp/ukc-coverage-beta-gate`
-- 这些路线对应的背景、定位和相对主线的关系，参考 [docs/model_improvement_plan.md](/home/jameschiang/work/decoupled_cd/docs/model_improvement_plan.md) 的 D 部分快速索引。
+- 这些路线对应的背景、定位和相对主线的关系，参考 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的 D 部分快速索引。
 
 ## 当前关键文件
 
 - 数据与映射:
-  - [data/readers.py](/home/jameschiang/work/decoupled_cd/data/readers.py)
-  - [data/mappings.py](/home/jameschiang/work/decoupled_cd/data/mappings.py)
-  - [data/pipeline.py](/home/jameschiang/work/decoupled_cd/data/pipeline.py)
+  - [data/readers.py](../data/readers.py)
+  - [data/mappings.py](../data/mappings.py)
+  - [data/pipeline.py](../data/pipeline.py)
 - 图构建:
-  - [scripts/preprocess_assist09_ordered.py](/home/jameschiang/work/decoupled_cd/scripts/preprocess_assist09_ordered.py)
-  - [scripts/build_assist09_transition_graph.py](/home/jameschiang/work/decoupled_cd/scripts/build_assist09_transition_graph.py)
+  - [scripts/preprocess_assist09_ordered.py](../scripts/preprocess_assist09_ordered.py)
+  - [scripts/build_assist09_transition_graph.py](../scripts/build_assist09_transition_graph.py)
 - 模型:
-  - [models/decoupled_cdm.py](/home/jameschiang/work/decoupled_cd/models/decoupled_cdm.py)
-  - [models/hetero_propagation.py](/home/jameschiang/work/decoupled_cd/models/hetero_propagation.py)
+  - [models/decoupled_cdm.py](../models/decoupled_cdm.py)
+  - [models/hetero_propagation.py](../models/hetero_propagation.py)
 - 训练与配置:
-  - [scripts/train.py](/home/jameschiang/work/decoupled_cd/scripts/train.py)
-  - [scripts/evaluate.py](/home/jameschiang/work/decoupled_cd/scripts/evaluate.py)
-  - [scripts/remote_exec.sh](/home/jameschiang/work/decoupled_cd/scripts/remote_exec.sh)
-  - [scripts/run_assist09_baseline.sh](/home/jameschiang/work/decoupled_cd/scripts/run_assist09_baseline.sh)
-  - [scripts/run_assist09_multiseed.sh](/home/jameschiang/work/decoupled_cd/scripts/run_assist09_multiseed.sh)
-  - [trainers/engine.py](/home/jameschiang/work/decoupled_cd/trainers/engine.py)
-  - [configs/defaults.py](/home/jameschiang/work/decoupled_cd/configs/defaults.py)
+  - [scripts/train.py](../scripts/train.py)
+  - [scripts/evaluate.py](../scripts/evaluate.py)
+  - [scripts/remote_exec.sh](../scripts/remote_exec.sh)
+  - [scripts/run_assist09_baseline.sh](../scripts/run_assist09_baseline.sh)
+  - [scripts/run_assist09_multiseed.sh](../scripts/run_assist09_multiseed.sh)
+  - [trainers/engine.py](../trainers/engine.py)
+  - [configs/defaults.py](../configs/defaults.py)
 
 ## 后续实验规则
 

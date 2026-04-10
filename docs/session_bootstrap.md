@@ -70,17 +70,17 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 
 ## 按需再读
 
-- [docs/workflow.md](/home/jameschiang/work/decoupled_cd/docs/workflow.md)
+- [docs/workflow.md](./workflow.md)
   - 需要看完整协作与运行规则时再读
-- [docs/handoff.md](/home/jameschiang/work/decoupled_cd/docs/handoff.md)
+- [docs/handoff.md](./handoff.md)
   - 需要看当前主线细节、关键判断和关键文件时再读
-- [README_spec.md](/home/jameschiang/work/decoupled_cd/README_spec.md)
+- [README_spec.md](../README_spec.md)
   - 需要核对模型语义和 Step 1-4 定义时再读
-- [docs/model_improvement_plan.md](/home/jameschiang/work/decoupled_cd/docs/model_improvement_plan.md)
+- [docs/model_improvement_plan.md](./model_improvement_plan.md)
   - 需要查历史实验和失败路线时再读
-- [docs/transition_graph_notes.md](/home/jameschiang/work/decoupled_cd/docs/transition_graph_notes.md)
+- [docs/transition_graph_notes.md](./transition_graph_notes.md)
   - 需要修改构图逻辑时再读
-- [docs/reuse_plan.md](/home/jameschiang/work/decoupled_cd/docs/reuse_plan.md)
+- [docs/reuse_plan.md](./reuse_plan.md)
   - 只有做工程复用或重构时再读
 
 ## 推荐开场

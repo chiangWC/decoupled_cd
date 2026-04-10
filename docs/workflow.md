@@ -2,13 +2,13 @@
 
 这份文档只描述协作与运行流程，不重复项目背景和实验结论。
 
-新会话默认先读 [docs/session_bootstrap.md](/home/jameschiang/work/decoupled_cd/docs/session_bootstrap.md)；只有需要展开具体流程时再读这份文档。
+新会话默认先读 [docs/session_bootstrap.md](./session_bootstrap.md)；只有需要展开具体流程时再读这份文档。
 
 这个项目采用固定的“本地改代码并提交，推送到远端仓库，远端运行所有项目命令”流程。
 
 ## 路径与环境
 
-- 本地项目目录: `/home/jameschiang/work/decoupled_cd`
+- 本地项目目录: `/home/jameschiang/research/decoupled_cd`
 - 远端主机别名: `xph-pc`
 - 远端项目目录: `/home/xph/jwc/research/decoupled_cd`
 - conda 环境: `decoupled_cd`
