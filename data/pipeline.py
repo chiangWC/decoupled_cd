@@ -19,6 +19,37 @@ from .q_matrix import build_concept_graph_from_q, build_q_matrix_tensor
 from .readers import read_interactions, read_q_matrix
 
 
+def build_history_tensors(
+    *,
+    history_interactions: pd.DataFrame,
+    student_id_map: Dict[str, int],
+    exercise_id_map: Dict[str, int],
+    concept_id_map: Dict[str, int],
+) -> Dict[str, torch.Tensor]:
+    student_exercise_mask = build_student_exercise_mask(
+        interactions=history_interactions,
+        student_id_map=student_id_map,
+        exercise_id_map=exercise_id_map,
+    )
+    student_tkc_mask = build_student_tkc_mask(
+        interactions=history_interactions,
+        student_id_map=student_id_map,
+        concept_id_map=concept_id_map,
+    )
+    student_ukc_mask = (1.0 - student_tkc_mask).clamp(min=0.0, max=1.0)
+    response_matrix_tensor = build_response_matrix(
+        interactions=history_interactions,
+        student_id_map=student_id_map,
+        exercise_id_map=exercise_id_map,
+    )
+    return {
+        "student_exercise_mask": student_exercise_mask,
+        "student_tkc_mask": student_tkc_mask,
+        "student_ukc_mask": student_ukc_mask,
+        "response_matrix_tensor": response_matrix_tensor,
+    }
+
+
 def prepare_data_bundle(
     *,
     interactions_path: str | Path,
@@ -68,21 +99,11 @@ def prepare_step_data_bundle(
         load_concept_graph_csv(prerequisite_graph_path) if prerequisite_graph_path is not None else None
     )
     similarity_graph = load_concept_graph_csv(similarity_graph_path) if similarity_graph_path is not None else None
-    student_exercise_mask = build_student_exercise_mask(
-        interactions=base["interactions"],
+    history_tensors = build_history_tensors(
+        history_interactions=base["interactions"],
         student_id_map=base["student_id_map"],
         exercise_id_map=base["exercise_id_map"],
-    )
-    student_tkc_mask = build_student_tkc_mask(
-        interactions=base["interactions"],
-        student_id_map=base["student_id_map"],
         concept_id_map=base["concept_id_map"],
-    )
-    student_ukc_mask = (1.0 - student_tkc_mask).clamp(min=0.0, max=1.0)
-    response_matrix_tensor = build_response_matrix(
-        interactions=base["interactions"],
-        student_id_map=base["student_id_map"],
-        exercise_id_map=base["exercise_id_map"],
     )
     interaction_student_ids, interaction_exercise_ids, interaction_labels = build_interaction_tensors(
         interactions=base["interactions"],
@@ -93,16 +114,18 @@ def prepare_step_data_bundle(
     return StepDataBundle(
         interactions=base["interactions"],
         history_interactions=base["interactions"],
+        split_name="full",
+        allow_target_in_history=True,
         q_matrix=base["q_matrix"],
         student_id_map=base["student_id_map"],
         exercise_id_map=base["exercise_id_map"],
         concept_id_map=base["concept_id_map"],
         q_matrix_tensor=q_matrix_tensor,
         concept_graph=concept_graph,
-        student_exercise_mask=student_exercise_mask,
-        student_tkc_mask=student_tkc_mask,
-        student_ukc_mask=student_ukc_mask,
-        response_matrix_tensor=response_matrix_tensor,
+        student_exercise_mask=history_tensors["student_exercise_mask"],
+        student_tkc_mask=history_tensors["student_tkc_mask"],
+        student_ukc_mask=history_tensors["student_ukc_mask"],
+        response_matrix_tensor=history_tensors["response_matrix_tensor"],
         interaction_student_ids=interaction_student_ids,
         interaction_exercise_ids=interaction_exercise_ids,
         interaction_labels=interaction_labels,
@@ -161,21 +184,11 @@ def prepare_experiment_split_bundles(
     )
     similarity_graph = load_concept_graph_csv(similarity_graph_path) if similarity_graph_path is not None else None
 
-    train_student_exercise_mask = build_student_exercise_mask(
-        interactions=train_df,
+    history_tensors = build_history_tensors(
+        history_interactions=train_df,
         student_id_map=mappings["student_id_map"],
         exercise_id_map=mappings["exercise_id_map"],
-    )
-    train_student_tkc_mask = build_student_tkc_mask(
-        interactions=train_df,
-        student_id_map=mappings["student_id_map"],
         concept_id_map=mappings["concept_id_map"],
-    )
-    train_student_ukc_mask = (1.0 - train_student_tkc_mask).clamp(min=0.0, max=1.0)
-    train_response_matrix = build_response_matrix(
-        interactions=train_df,
-        student_id_map=mappings["student_id_map"],
-        exercise_id_map=mappings["exercise_id_map"],
     )
 
     train_ids = build_interaction_tensors_from_frame(
@@ -197,26 +210,34 @@ def prepare_experiment_split_bundles(
         "student_id_map": mappings["student_id_map"],
         "exercise_id_map": mappings["exercise_id_map"],
         "concept_id_map": mappings["concept_id_map"],
-        "student_exercise_mask": train_student_exercise_mask,
-        "student_tkc_mask": train_student_tkc_mask,
-        "student_ukc_mask": train_student_ukc_mask,
+        "student_exercise_mask": history_tensors["student_exercise_mask"],
+        "student_tkc_mask": history_tensors["student_tkc_mask"],
+        "student_ukc_mask": history_tensors["student_ukc_mask"],
     }
 
-    def _bundle(frame: pd.DataFrame, ids: tuple[torch.Tensor, torch.Tensor, torch.Tensor]) -> StepDataBundle:
+    def _bundle(
+        frame: pd.DataFrame,
+        ids: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        *,
+        split_name: str,
+        allow_target_in_history: bool,
+    ) -> StepDataBundle:
         student_ids, exercise_ids, labels = ids
         return StepDataBundle(
             interactions=frame,
             history_interactions=train_df,
+            split_name=split_name,
+            allow_target_in_history=allow_target_in_history,
             q_matrix=q_matrix,
             student_id_map=mappings["student_id_map"],
             exercise_id_map=mappings["exercise_id_map"],
             concept_id_map=mappings["concept_id_map"],
             q_matrix_tensor=q_matrix_tensor,
             concept_graph=concept_graph,
-            student_exercise_mask=train_student_exercise_mask,
-            student_tkc_mask=train_student_tkc_mask,
-            student_ukc_mask=train_student_ukc_mask,
-            response_matrix_tensor=train_response_matrix,
+            student_exercise_mask=history_tensors["student_exercise_mask"],
+            student_tkc_mask=history_tensors["student_tkc_mask"],
+            student_ukc_mask=history_tensors["student_ukc_mask"],
+            response_matrix_tensor=history_tensors["response_matrix_tensor"],
             interaction_student_ids=student_ids,
             interaction_exercise_ids=exercise_ids,
             interaction_labels=labels,
@@ -225,8 +246,8 @@ def prepare_experiment_split_bundles(
         )
 
     return {
-        "train": _bundle(train_df, train_ids),
-        "valid": _bundle(valid_df, valid_ids),
-        "test": _bundle(test_df, test_ids),
+        "train": _bundle(train_df, train_ids, split_name="train", allow_target_in_history=True),
+        "valid": _bundle(valid_df, valid_ids, split_name="valid", allow_target_in_history=False),
+        "test": _bundle(test_df, test_ids, split_name="test", allow_target_in_history=False),
         "shared": shared,
     }

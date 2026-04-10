@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pandas as pd
 import torch
 import torch.nn.functional as F
 
@@ -35,12 +36,34 @@ def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, t
     }
 
 
+def _hash_interaction_rows(frame: pd.DataFrame) -> set[int]:
+    if frame.empty:
+        return set()
+    normalized = frame.fillna("<NA>").astype(str)
+    row_hashes = pd.util.hash_pandas_object(normalized, index=False)
+    return {int(value) for value in row_hashes.tolist()}
+
+
+def _validate_history_visibility(bundle: StepDataBundle) -> None:
+    if bundle.allow_target_in_history:
+        return
+    target_hashes = _hash_interaction_rows(bundle.interactions)
+    history_hashes = _hash_interaction_rows(bundle.history_interactions)
+    if target_hashes.isdisjoint(history_hashes):
+        return
+    raise ValueError(
+        f"{bundle.split_name} bundle reuses target interactions inside propagation history. "
+        "Evaluation bundles must use history-only tensors built from past-visible interactions."
+    )
+
+
 def evaluate_model(
     *,
     bundle: StepDataBundle,
     model: DecoupledCDM,
     device: str = "cpu",
 ) -> dict[str, float]:
+    _validate_history_visibility(bundle)
     torch_device = torch.device(device)
     model = model.to(torch_device)
     model.eval()
