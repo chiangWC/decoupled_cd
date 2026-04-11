@@ -991,7 +991,7 @@
 - 实验 12: `TKC` 正误双通道成立。
 - 实验 21: `TKC/UKC` 学生自适应融合 gate 成立，并已取代旧主线。
 - 实验 23: 修正 `TKC` 行为项全局二次缩小后，三 seed 均值约 `0.7597`，并已吸收到当前主线。
-- 实验 26: 报告侧补 `Brier/ECE/分桶校准`，这部分不改变模型结构，建议后续实验默认保留。
+- 实验 26（报告侧部分）: 补 `Brier/ECE/分桶校准`，这部分不改变模型结构，建议后续实验默认保留。
 
 ### 已明确不建议默认继续的路线
 
@@ -1003,8 +1003,8 @@
 - 实验 15: `TKC` 局部硬 mean + `UKC` 全局 mean 仍无改善。
 - 实验 20: 直接叠加 `local UKC neighbor` 和 `UKC-only coverage gate` 低于实验 19 单独版本。
 - 实验 25: `TKC` item-aware residual 只放在 readout 侧后，单次结果明显低于当前正式主线。
-- 实验 26: `guess/slip` logit 正则暂不建议作为默认主线；`w=0.001` 有 ECE 改善但牺牲少量 AUC，`w=0.0003` 未形成更好折中。
-- 实验 27: `q_repr` 内部 item-aware Q pooling 单次 `test_auc = 0.759806`, `test_brier = 0.186961`, `test_ece = 0.065875`，弱于当前主线，当前不建议继续。
+- 实验 26（正则部分）: `guess/slip` logit 正则暂不建议作为默认主线；`w=0.001` 有 ECE 改善但牺牲少量 AUC。
+- 实验 27: `q_repr` 内部 item-aware Q pooling 单次弱于当前主线，当前不建议继续。
 
 ### 相对实验 12 旧主线接近、可留作后续参考的路线
 
@@ -1019,6 +1019,6 @@
 - 实验 23: 修正 `TKC` 行为项全局二次缩小后，三 seed 均值约 `0.7597`，显著高于实验 21 当前正式主线 `0.7502`。
 - 实验 24: 在实验 23 基础上做多知识点题权重分摊后，三 seed 均值约 `0.7598`，相对实验 23 几乎持平。
 - 实验 25: 在实验 23 基础上将 `TKC` item-aware attention 仅作为 readout residual 注入后，单次 `test_auc = 0.692789`，明显低于当前正式主线。
-- 实验 26: 在实验 23 基础上补 `guess/slip` logit 正则，`w=0.001` 单次 `test_auc = 0.759984`, `test_ece = 0.061222`；相对 `w=0` 的 `test_auc = 0.760568`, `test_ece = 0.065051`，属于校准收益换少量 AUC。
-- 实验 27: 在当前主线基础上把 `q_repr` 的 Q pooling 改成低秩 item-aware attention，单次 `test_auc = 0.759806`，低于当前主线 `0.760568`。
-- 实验 28: 在 `guess/slip` 条件输入中加入 `difficulty.detach()` 后，三 seed `test_auc` 均值约 `0.759724`，相比当前主线 `0.759690` 基本持平；`test_ece` 从同口径主线 `0.062276` 降到 `0.059879`，但 AUC 收益不稳定。
+- 实验 26: 在实验 23 基础上补 `guess/slip` logit 正则，属于校准收益换少量 AUC，暂不作为默认主线。
+- 实验 27: 在当前主线基础上把 `q_repr` 的 Q pooling 改成低秩 item-aware attention，单次低于当前主线。
+- 实验 28: 在 `guess/slip` 条件输入中加入 `difficulty.detach()` 后，AUC 基本持平，ECE 有改善，但 AUC 收益不稳定。

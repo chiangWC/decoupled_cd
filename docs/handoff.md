@@ -31,31 +31,13 @@
 - 从 `master` 提交 `868f20b` 起，训练输出会包含 `Brier/ECE/分桶校准`。
 - 更早的历史结果文件通常只含 `AUC/ACC/RMSE`，需要在新代码下复跑才有校准指标。
 
-- 单次最好结果:
-  - 远端结果文件:
-    - `results/exp_tkc_exercise_aggregation/assist_09_tkc_dual_channel_seed2024_300ep.json`
-  - `best_val_auc = 0.763858`
-  - `best_epoch = 175`
-  - `test_auc = 0.760568`
-  - `test_acc = 0.722316`
-  - `test_rmse = 0.431628`
-  - 同口径校准重跑文件:
-    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2024_300ep.json`
-  - 同口径校准指标:
-    - `test_brier = 0.186303`
-    - `test_ece = 0.065051`
-- 多 seed 结果:
-  - 远端结果目录:
-    - `results/exp_tkc_exercise_aggregation/`
+- 当前主线多 seed 结果目录:
+  - `results/exp_tkc_exercise_aggregation/`
   - `test_auc` 均值约 `0.7597`
-  - 同口径校准重跑目录:
-    - `results/exp_master_calibration_rerun/`
-  - 同口径三 seed 均值:
-    - `test_auc = 0.759690`
-    - `test_acc = 0.724784`
-    - `test_rmse = 0.431388`
-    - `test_brier = 0.186096`
-    - `test_ece = 0.062276`
+- 当前主线同口径校准重跑目录:
+  - `results/exp_master_calibration_rerun/`
+  - 三 seed 均值: `test_auc = 0.759690`, `test_ece = 0.062276`
+- 单次最好结果和完整指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 23 与实验 28。
 
 近期 follow-up:
 
@@ -67,9 +49,8 @@
 - `exp/gs-difficulty-aware`
   - 远端结果目录:
     - `results/exp_gs_difficulty_aware/`
-  - 三个 seed 的 `test_auc` 均值约 `0.759724`
-  - 三个 seed 的 `test_ece` 均值约 `0.059879`
-  - 相比当前主线同口径校准重跑，AUC 基本持平，ECE 有改善；暂记为可合入候选，不是已定新主线。
+  - 三 seed 下 AUC 基本持平，ECE 有改善；暂记为可合入候选，不是已定新主线。
+  - 详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 28。
 
 ## 已经定下来的判断
 
@@ -92,16 +73,8 @@
 
 ## 当前实验分支说明
 
-- 当前已有的 `exp/*` 分支都是历史上“离主线还差一点”的次优路线，不是当前正式主线。
-- 这些分支可作为复验参考，但不要直接把它们视为与当前 `master` 等价的候选主线。
-- 现有分支:
-  - `exp/adaptive-tkc-ukc-gate`
-  - `exp/local-ukc-neighbor-fusion`
-  - `exp/tkc-exercise-aggregation-qnorm`
-  - `exp/tkc-item-aware-attention`
-  - `exp/tkc-readout-residual`
-  - `exp/ukc-coverage-beta-gate`
-- 这些路线对应的背景、定位和相对主线的关系，参考 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的 D 部分快速索引。
+- `exp/*` 分支只作为实验代码和复验参考，不直接代表当前主线。
+- 具体分支以 `git branch -a` 为准；每条路线的定位和结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的详细条目与 D 部分快速索引为准。
 
 ## 当前关键文件
 
