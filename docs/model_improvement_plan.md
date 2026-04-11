@@ -1356,6 +1356,61 @@
 - `seed=2024/2025` 的 ACC 略低于对应主线，但三 seed 均值仍略高；且 RMSE/Brier/ECE 三个概率质量指标三 seed 均改善。
 - 当前建议合入 `master`，作为新的认知匹配主线。
 
+#### 诊断 1. 实验 33 主线的 test prediction slices
+
+目的:
+
+- 实验 33 虽然三 seed 全指标优于旧主线，但 AUC 均值只提升约 `+0.000645`，仍属于小幅稳定改进，不是预期中的点级跃迁。
+- 为后续寻找更可能产生大收益的方向，新增逐样本切片诊断脚本:
+  - `scripts/analyze_prediction_slices.py`
+- 诊断对象:
+  - `results/exp_cog_difficulty_adapter/assist_09_cog_difficulty_adapter_seed2024_300ep.json`
+  - `results/exp_cog_difficulty_adapter/assist_09_cog_difficulty_adapter_seed2025_300ep.json`
+  - `results/exp_cog_difficulty_adapter/assist_09_cog_difficulty_adapter_seed2026_300ep.json`
+- 输出:
+  - `results/diagnostics/cog_difficulty_adapter_seed2024_test_slices.json`
+  - `results/diagnostics/cog_difficulty_adapter_seed2024_test_slices.csv`
+  - `results/diagnostics/cog_difficulty_adapter_seed2025_test_slices.json`
+  - `results/diagnostics/cog_difficulty_adapter_seed2025_test_slices.csv`
+  - `results/diagnostics/cog_difficulty_adapter_seed2026_test_slices.json`
+  - `results/diagnostics/cog_difficulty_adapter_seed2026_test_slices.csv`
+
+三 seed 聚合观察:
+
+- 多知识点题明显退化，且随概念数单调变差:
+  - `concept_count=1`: `AUC = 0.766024`, `Brier = 0.182274`, `ECE = 0.051484`
+  - `concept_count=2`: `AUC = 0.733129`, `Brier = 0.195096`, `ECE = 0.065560`
+  - `concept_count=3`: `AUC = 0.673917`, `Brier = 0.229258`, `ECE = 0.091616`
+- 学生历史正确率中档样本最难分:
+  - `student_history_acc=0.4-0.6`: `AUC = 0.698830`, `Brier = 0.227584`, `ECE = 0.081261`
+  - `<0.4`: `AUC = 0.738238`, `Brier = 0.175546`, `ECE = 0.055333`
+  - `0.8-1.0`: `AUC = 0.714948`, `Brier = 0.131946`, `ECE = 0.037010`
+- 学生历史长度短/中档也偏弱:
+  - `student_history_count=6-20`: `Brier = 0.198716`, `ECE = 0.071771`
+  - `student_history_count=21-50`: `Brier = 0.201000`, `ECE = 0.067460`
+  - `student_history_count=101+`: `Brier = 0.179973`, `ECE = 0.049264`
+- `none_seen` 概念样本排序并不差，但校准很差:
+  - `student_item_concept_overlap=none_seen`: `AUC = 0.809902`, `Brier = 0.145132`, `ECE = 0.118804`
+  - `label_rate = 0.802171`, `mean_prob = 0.683368`
+  - 说明该类样本更像是被系统性低估，而不是完全排不动。
+- 低训练正确率题目校准偏差也很大:
+  - `exercise_train_acc < 0.4`: `AUC = 0.687514`, `Brier = 0.227482`, `ECE = 0.108987`
+  - `label_rate = 0.393057`, `mean_prob = 0.288113`
+
+关于 recency 的判断:
+
+- 当前 ordered ASSIST09 预处理虽然先按 `user_id/order_id` 排序，但 split 阶段对每个学生做了随机抽样:
+  - `stu_df = stu_df.sample(frac=1, random_state=seed)`
+- 因此当前 `train/valid/test` 协议不是严格时间切分。
+- 在这个协议下直接做 recency-aware student state 不够干净，可能会把随机子集中的顺序权重误当作真实近期性。
+- 若要系统测试 recency，应先设计时间切分协议；在当前主线协议下，不建议把 recency 作为下一优先模型实验。
+
+后续建议:
+
+- 优先考虑多知识点题的 `q_repr` / concept composition 方向，而不是继续做 `difficulty` 或 `UKC` 局部小修。
+- 更具体地，下一步可尝试一个只对多知识点题有空间的 zero-init `q_repr` residual/adapter，目标是改善 `concept_count=2/3` 切片，同时不伤 `concept_count=1`。
+- 对 `none_seen` 和低训练正确率题目，可单独作为校准问题记录，但它们目前不应优先于多知识点组合表达。
+
 ## D. 快速索引
 
 这部分只用于快速查重，不替代上面的详细条目。
@@ -1396,6 +1451,12 @@
 
 - 实验 24: 在实验 23 基础上做多知识点题权重分摊后，三 seed 均值约 `0.7598`，相对实验 23 几乎持平，暂不作为必须合入项。
 - 实验 28: 在 `guess/slip` 条件输入中加入 `difficulty.detach()` 后，AUC 基本持平，ECE 有改善，但 AUC 收益不稳定，暂记为可合入候选。
+
+### 当前诊断指向的下一步
+
+- 诊断 1: 实验 33 主线的 test prediction slices 显示，多知识点题从 `concept_count=1` 到 `2/3` 明显单调退化，下一步优先考虑 `q_repr` / concept composition 方向。
+- 诊断 1: 当前 split 是按学生随机抽样，不是严格时间切分；在当前协议下暂不优先做 recency-aware student state。
+- 诊断 1: `none_seen` 概念样本 AUC 高但 ECE 很差，说明可作为后续校准问题记录，但优先级低于多知识点题组合表达。
 
 ### 实验 12 旧口径的历史参考
 
