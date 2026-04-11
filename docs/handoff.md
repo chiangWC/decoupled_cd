@@ -39,10 +39,23 @@
   - `test_auc = 0.760568`
   - `test_acc = 0.722316`
   - `test_rmse = 0.431628`
+  - 同口径校准重跑文件:
+    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2024_300ep.json`
+  - 同口径校准指标:
+    - `test_brier = 0.186303`
+    - `test_ece = 0.065051`
 - 多 seed 结果:
   - 远端结果目录:
     - `results/exp_tkc_exercise_aggregation/`
   - `test_auc` 均值约 `0.7597`
+  - 同口径校准重跑目录:
+    - `results/exp_master_calibration_rerun/`
+  - 同口径三 seed 均值:
+    - `test_auc = 0.759690`
+    - `test_acc = 0.724784`
+    - `test_rmse = 0.431388`
+    - `test_brier = 0.186096`
+    - `test_ece = 0.062276`
 
 近期 follow-up:
 
@@ -51,6 +64,12 @@
     - `results/exp_tkc_exercise_aggregation_qnorm/`
   - 三个 seed 的 `test_auc` 均值约 `0.7598`
   - 相比当前主线 `results/exp_tkc_exercise_aggregation/` 仅增约 `+0.0001`
+- `exp/gs-difficulty-aware`
+  - 远端结果目录:
+    - `results/exp_gs_difficulty_aware/`
+  - 三个 seed 的 `test_auc` 均值约 `0.759724`
+  - 三个 seed 的 `test_ece` 均值约 `0.059879`
+  - 相比当前主线同口径校准重跑，AUC 基本持平，ECE 有改善；暂记为可合入候选，不是已定新主线。
 
 ## 已经定下来的判断
 

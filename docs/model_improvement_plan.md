@@ -955,10 +955,15 @@
   - `test_brier = 0.185930`
   - `test_ece = 0.059879`
 - 当前主线三 seed 对照:
+  - 文件:
+    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2024_300ep.json`
+    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2025_300ep.json`
+    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2026_300ep.json`
   - `test_auc = 0.759690`
   - `test_acc = 0.724784`
   - `test_rmse = 0.431388`
-  - 历史结果文件没有 `ECE` 字段；`Brier` 可由 `RMSE^2` 近似对应，整体略高于本实验。
+  - `test_brier = 0.186096`
+  - `test_ece = 0.062276`
 
 结论:
 
@@ -966,9 +971,10 @@
   - AUC 基本持平，约 `+0.00003`
   - ACC 提升约 `+0.00050`
   - RMSE 降低约 `-0.00019`
-  - Brier 随 RMSE 略有改善
+  - Brier 改善约 `-0.00017`
+  - ECE 改善约 `-0.00240`
 - `seed=2025` 的 AUC 明显低于主线同 seed，但 `seed=2026` 明显高于主线同 seed，说明 AUC 收益并不稳定。
-- 当前更适合把它视为“可合入候选”而不是已经定型的新主线；若要合入，建议先补一次当前 `master` 的三 seed 校准重跑，确认 ECE 相对主线确实稳定改善。
+- 当前更适合把它视为“可合入候选”而不是已经定型的新主线；同口径校准重跑确认了 ECE 有稳定均值改善，但 AUC 增量过小，合入前仍应权衡是否接受多一个 `guess/slip` 输入特征。
 
 ## D. 快速索引
 
@@ -1015,4 +1021,4 @@
 - 实验 25: 在实验 23 基础上将 `TKC` item-aware attention 仅作为 readout residual 注入后，单次 `test_auc = 0.692789`，明显低于当前正式主线。
 - 实验 26: 在实验 23 基础上补 `guess/slip` logit 正则，`w=0.001` 单次 `test_auc = 0.759984`, `test_ece = 0.061222`；相对 `w=0` 的 `test_auc = 0.760568`, `test_ece = 0.065051`，属于校准收益换少量 AUC。
 - 实验 27: 在当前主线基础上把 `q_repr` 的 Q pooling 改成低秩 item-aware attention，单次 `test_auc = 0.759806`，低于当前主线 `0.760568`。
-- 实验 28: 在 `guess/slip` 条件输入中加入 `difficulty.detach()` 后，三 seed `test_auc` 均值约 `0.759724`，相比当前主线 `0.759690` 基本持平；ACC/RMSE/Brier 有轻微正向信号，但 AUC 收益不稳定。
+- 实验 28: 在 `guess/slip` 条件输入中加入 `difficulty.detach()` 后，三 seed `test_auc` 均值约 `0.759724`，相比当前主线 `0.759690` 基本持平；`test_ece` 从同口径主线 `0.062276` 降到 `0.059879`，但 AUC 收益不稳定。
