@@ -899,6 +899,77 @@
 - 当前不建议继续补多 seed，也不建议合入 `master`。
 - 更稳妥的判断是: `q_repr` 内部 item-aware attention 在当前主线口径下不是优先方向；它没有解决主要误差，反而可能让题目 embedding 对 Q 需求表示产生额外扰动。
 
+#### 实验 28. `guess/slip` 显式引入题目难度特征
+
+改动:
+
+- 以当前 `master` 为底座:
+  - 单图 `propagation_graph`
+  - `conditional g/s`
+  - `TKC/UKC` 结构传播参数独立
+  - `TKC` 正误双通道行为消息
+  - 学生级自适应 `TKC/UKC` 融合 gate
+  - 报告包含 `Brier/ECE/分桶校准`
+- 将 `guess/slip` 的条件输入从:
+  - `cat([student_state, q_repr])`
+  改为:
+  - `cat([student_state, q_repr, difficulty.detach()])`
+- 使用 `difficulty.detach()`，让非认知分支能读到题目难度，但不通过 `guess/slip` MLP 反向改写难度 embedding，降低可辨识性耦合风险。
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.766206`
+  - `best_epoch = 185`
+  - `test_auc = 0.760417`
+  - `test_acc = 0.725685`
+  - `test_rmse = 0.431064`
+  - `test_brier = 0.185816`
+  - `test_ece = 0.061265`
+  - 文件:
+    - `results/exp_gs_difficulty_aware/assist_09_gs_difficulty_aware_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.763486`
+  - `best_epoch = 165`
+  - `test_auc = 0.757394`
+  - `test_acc = 0.724904`
+  - `test_rmse = 0.431968`
+  - `test_brier = 0.186596`
+  - `test_ece = 0.059762`
+  - 文件:
+    - `results/exp_gs_difficulty_aware/assist_09_gs_difficulty_aware_seed2025_300ep.json`
+- `seed=2026`:
+  - `best_val_auc = 0.765389`
+  - `best_epoch = 182`
+  - `test_auc = 0.761360`
+  - `test_acc = 0.725266`
+  - `test_rmse = 0.430556`
+  - `test_brier = 0.185378`
+  - `test_ece = 0.058610`
+  - 文件:
+    - `results/exp_gs_difficulty_aware/assist_09_gs_difficulty_aware_seed2026_300ep.json`
+- 三 seed 均值:
+  - `test_auc = 0.759724`
+  - `test_acc = 0.725285`
+  - `test_rmse = 0.431196`
+  - `test_brier = 0.185930`
+  - `test_ece = 0.059879`
+- 当前主线三 seed 对照:
+  - `test_auc = 0.759690`
+  - `test_acc = 0.724784`
+  - `test_rmse = 0.431388`
+  - 历史结果文件没有 `ECE` 字段；`Brier` 可由 `RMSE^2` 近似对应，整体略高于本实验。
+
+结论:
+
+- 这条改动不是大幅提升，但三 seed 均值有轻微正向信号:
+  - AUC 基本持平，约 `+0.00003`
+  - ACC 提升约 `+0.00050`
+  - RMSE 降低约 `-0.00019`
+  - Brier 随 RMSE 略有改善
+- `seed=2025` 的 AUC 明显低于主线同 seed，但 `seed=2026` 明显高于主线同 seed，说明 AUC 收益并不稳定。
+- 当前更适合把它视为“可合入候选”而不是已经定型的新主线；若要合入，建议先补一次当前 `master` 的三 seed 校准重跑，确认 ECE 相对主线确实稳定改善。
+
 ## D. 快速索引
 
 这部分只用于快速查重，不替代上面的详细条目。
@@ -944,3 +1015,4 @@
 - 实验 25: 在实验 23 基础上将 `TKC` item-aware attention 仅作为 readout residual 注入后，单次 `test_auc = 0.692789`，明显低于当前正式主线。
 - 实验 26: 在实验 23 基础上补 `guess/slip` logit 正则，`w=0.001` 单次 `test_auc = 0.759984`, `test_ece = 0.061222`；相对 `w=0` 的 `test_auc = 0.760568`, `test_ece = 0.065051`，属于校准收益换少量 AUC。
 - 实验 27: 在当前主线基础上把 `q_repr` 的 Q pooling 改成低秩 item-aware attention，单次 `test_auc = 0.759806`，低于当前主线 `0.760568`。
+- 实验 28: 在 `guess/slip` 条件输入中加入 `difficulty.detach()` 后，三 seed `test_auc` 均值约 `0.759724`，相比当前主线 `0.759690` 基本持平；ACC/RMSE/Brier 有轻微正向信号，但 AUC 收益不稳定。
