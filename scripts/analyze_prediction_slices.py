@@ -83,7 +83,7 @@ def load_model(
         student_gate_prior_beta=float(summary.get("student_gate_prior_beta", 1.0)),
         gs_mode=str(summary.get("gs_mode", "conditional")),
     )
-    state = torch.load(checkpoint_path, map_location=device)
+    state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state)
     model.to(torch.device(device))
     model.eval()
