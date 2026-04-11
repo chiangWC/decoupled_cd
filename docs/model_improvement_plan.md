@@ -978,6 +978,120 @@
 - `seed=2025` 的 AUC 明显低于主线同 seed，但 `seed=2026` 明显高于主线同 seed，说明 AUC 收益并不稳定。
 - 当前更适合把它视为“可合入候选”而不是已经定型的新主线；同口径校准重跑确认了 ECE 有稳定均值改善，但 AUC 增量过小，合入前仍应权衡是否接受多一个 `guess/slip` 输入特征。
 
+#### 实验 29. `cognitive_match` 显式引入题目难度特征
+
+改动:
+
+- 以当前 `master` 为底座:
+  - 单图 `propagation_graph`
+  - `conditional g/s`
+  - `TKC/UKC` 结构传播参数独立
+  - `TKC` 正误双通道行为消息
+  - 学生级自适应 `TKC/UKC` 融合 gate
+  - 报告包含 `Brier/ECE/分桶校准`
+- 保留外部难度残差:
+  - `cognitive_logits = cognitive_match_mlp(match_inputs) - difficulty`
+- 将 `cognitive_match_mlp` 的输入从:
+  - `cat([student_state, q_repr, student_state * q_repr, abs(student_state - q_repr)])`
+  改为:
+  - `cat([student_state, q_repr, student_state * q_repr, abs(student_state - q_repr), difficulty.detach()])`
+- `difficulty.detach()` 只作为认知匹配 MLP 的条件特征，避免 MLP 路径反向改写难度 embedding；难度 embedding 仍主要由外部 `- difficulty` 残差承担。
+
+第一版实验结论:
+
+- 分支:
+  - `exp/cog-difficulty-aware`
+- `seed=2024`:
+  - `best_val_auc = 0.766130`
+  - `best_epoch = 179`
+  - `test_auc = 0.761552`
+  - `test_acc = 0.724733`
+  - `test_rmse = 0.430240`
+  - `test_brier = 0.185106`
+  - `test_ece = 0.058319`
+  - 文件:
+    - `results/exp_cog_difficulty_aware/assist_09_cog_difficulty_aware_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.766345`
+  - `best_epoch = 181`
+  - `test_auc = 0.761568`
+  - `test_acc = 0.725266`
+  - `test_rmse = 0.430394`
+  - `test_brier = 0.185239`
+  - `test_ece = 0.058755`
+  - 文件:
+    - `results/exp_cog_difficulty_aware/assist_09_cog_difficulty_aware_seed2025_300ep.json`
+- `seed=2026`:
+  - `best_val_auc = 0.522594`
+  - `best_epoch = 20`
+  - `test_auc = 0.527464`
+  - `test_acc = 0.638261`
+  - `test_rmse = 0.488925`
+  - `test_brier = 0.239047`
+  - `test_ece = 0.098663`
+  - 文件:
+    - `results/exp_cog_difficulty_aware/assist_09_cog_difficulty_aware_seed2026_300ep.json`
+- `seed=2026` 单独复跑结果完全复现早停和低 AUC:
+  - 文件:
+    - `results/exp_cog_difficulty_aware/assist_09_cog_difficulty_aware_seed2026_300ep_rerun.json`
+- 三 seed 均值:
+  - `test_auc = 0.683528`
+  - `test_acc = 0.696087`
+  - `test_rmse = 0.449853`
+  - `test_brier = 0.203131`
+  - `test_ece = 0.071912`
+
+随后测试一个更保守的 zero-init 变体:
+
+- 分支:
+  - `exp/cog-difficulty-aware-zeroinit`
+- 在第一版基础上，将 `cognitive_match_mlp` 第一层新增的 `difficulty` 输入列权重初始化为 0:
+  - `self.cognitive_match_mlp[0].weight[:, -1].zero_()`
+- 目的: 让模型从“仅使用外部 `- difficulty` 残差”的状态开始，再学习难度交叉项，降低新增随机输入列对初始认知匹配的扰动。
+- `seed=2024`:
+  - `best_val_auc = 0.765731`
+  - `best_epoch = 167`
+  - `test_auc = 0.761883`
+  - `test_acc = 0.726998`
+  - `test_rmse = 0.429478`
+  - `test_brier = 0.184452`
+  - `test_ece = 0.053327`
+  - 文件:
+    - `results/exp_cog_difficulty_aware_zeroinit/assist_09_cog_difficulty_aware_zeroinit_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.764017`
+  - `best_epoch = 168`
+  - `test_auc = 0.760383`
+  - `test_acc = 0.722126`
+  - `test_rmse = 0.431285`
+  - `test_brier = 0.186007`
+  - `test_ece = 0.058791`
+  - 文件:
+    - `results/exp_cog_difficulty_aware_zeroinit/assist_09_cog_difficulty_aware_zeroinit_seed2025_300ep.json`
+- `seed=2026`:
+  - `best_val_auc = 0.522891`
+  - `best_epoch = 20`
+  - `test_auc = 0.527940`
+  - `test_acc = 0.639042`
+  - `test_rmse = 0.488924`
+  - `test_brier = 0.239046`
+  - `test_ece = 0.099115`
+  - 文件:
+    - `results/exp_cog_difficulty_aware_zeroinit/assist_09_cog_difficulty_aware_zeroinit_seed2026_300ep.json`
+- 三 seed 均值:
+  - `test_auc = 0.683402`
+  - `test_acc = 0.696055`
+  - `test_rmse = 0.449896`
+  - `test_brier = 0.203168`
+  - `test_ece = 0.070411`
+
+结论:
+
+- `seed=2024/2025` 在第一版上有较强正向信号，说明“认知匹配读到难度条件”本身可能有表达价值。
+- 但 `seed=2026` 在第一版与 zero-init 变体中都稳定崩到接近随机 AUC，且复跑可复现，说明当前实现存在严重 seed 稳定性问题。
+- zero-init 新增难度输入列未能解决 `seed=2026` 崩盘。
+- 当前不建议合入 `master`，也不建议在这一路线上继续补更多 seed；若以后复访，应优先设计能保持原 `cognitive_match_mlp` 初始化和主干输出的残差/adapter 形式，而不是直接扩展主匹配 MLP 的输入维度。
+
 ## D. 快速索引
 
 这部分只用于快速查重，不替代上面的详细条目。
@@ -1008,6 +1122,7 @@
 - 实验 25: `TKC` item-aware residual 只放在 readout 侧后，单次结果明显低于当前正式主线。
 - 实验 26（正则部分）: `guess/slip` logit 正则暂不建议作为默认主线；`w=0.001` 有 ECE 改善但牺牲少量 AUC。
 - 实验 27: `q_repr` 内部 item-aware Q pooling 单次弱于当前主线，当前不建议继续。
+- 实验 29: `cognitive_match` 拼入 `difficulty.detach()` 在 `seed=2024/2025` 有信号，但 `seed=2026` 稳定崩盘；zero-init 也未解决，当前不建议继续。
 
 ### 当前主线口径下的近线 follow-up
 
