@@ -855,6 +855,50 @@
 - `w=0.0003` 没有形成更好的折中: AUC 略降，`Brier/ECE` 也更差。
 - 当前不建议把 `guess/slip` logit 正则直接作为默认主线；它更适合作为“若后续明确以校准/可解释稳定性为目标”时再补多 seed 的备选。
 
+#### 实验 27. `q_repr` 内部 item-aware Q pooling
+
+改动:
+
+- 以当前 `master` 为底座:
+  - 单图 `propagation_graph`
+  - `conditional g/s`
+  - `TKC/UKC` 结构传播参数独立
+  - `TKC` 正误双通道行为消息
+  - 学生级自适应 `TKC/UKC` 融合 gate
+  - 报告包含 `Brier/ECE/分桶校准`
+- 针对 `_build_exercise_q_representation` 中 `q_pool_gate(concept_embeddings)` 只产生静态概念权重的问题，改成低秩 item-aware scoring:
+  - 保留静态概念打分 `static_scores`
+  - 新增 `exercise_query @ concept_key.T / sqrt(dim)` 作为题目条件打分
+  - 用 `static_scores + item_scores` 在目标题的 Q mask 内做 softmax
+- 没有使用 `[target, concept, 2 * dim]` 的 naive concat/expand，避免 full-batch 下显存膨胀。
+
+实验结论:
+
+- `seed=2024`:
+  - `best_val_auc = 0.762854`
+  - `best_epoch = 204`
+  - `test_auc = 0.759806`
+  - `test_acc = 0.724714`
+  - `test_rmse = 0.432390`
+  - `test_brier = 0.186961`
+  - `test_ece = 0.065875`
+  - 文件:
+    - `results/exp_qrepr_item_aware_attention/assist_09_qrepr_item_aware_seed2024_300ep.json`
+- 当前 `master` 对照 `seed=2024`:
+  - `best_val_auc = 0.763858`
+  - `test_auc = 0.760568`
+  - `test_acc = 0.722316`
+  - `test_rmse = 0.431628`
+  - `test_brier = 0.186303`
+  - `test_ece = 0.065051`
+
+结论:
+
+- 这个改动验证了“静态 Q pooling 注意力”确实可以改成 item-aware 且工程上可跑。
+- 但单次结果没有胜出: AUC、RMSE、Brier、ECE 均弱于当前主线，只有 ACC 略高。
+- 当前不建议继续补多 seed，也不建议合入 `master`。
+- 更稳妥的判断是: `q_repr` 内部 item-aware attention 在当前主线口径下不是优先方向；它没有解决主要误差，反而可能让题目 embedding 对 Q 需求表示产生额外扰动。
+
 ## D. 快速索引
 
 这部分只用于快速查重，不替代上面的详细条目。
@@ -883,6 +927,7 @@
 - 实验 20: 直接叠加 `local UKC neighbor` 和 `UKC-only coverage gate` 低于实验 19 单独版本。
 - 实验 25: `TKC` item-aware residual 只放在 readout 侧后，单次结果明显低于当前正式主线。
 - 实验 26: `guess/slip` logit 正则暂不建议作为默认主线；`w=0.001` 有 ECE 改善但牺牲少量 AUC，`w=0.0003` 未形成更好折中。
+- 实验 27: `q_repr` 内部 item-aware Q pooling 单次 `test_auc = 0.759806`, `test_brier = 0.186961`, `test_ece = 0.065875`，弱于当前主线，当前不建议继续。
 
 ### 相对实验 12 旧主线接近、可留作后续参考的路线
 
@@ -898,3 +943,4 @@
 - 实验 24: 在实验 23 基础上做多知识点题权重分摊后，三 seed 均值约 `0.7598`，相对实验 23 几乎持平。
 - 实验 25: 在实验 23 基础上将 `TKC` item-aware attention 仅作为 readout residual 注入后，单次 `test_auc = 0.692789`，明显低于当前正式主线。
 - 实验 26: 在实验 23 基础上补 `guess/slip` logit 正则，`w=0.001` 单次 `test_auc = 0.759984`, `test_ece = 0.061222`；相对 `w=0` 的 `test_auc = 0.760568`, `test_ece = 0.065051`，属于校准收益换少量 AUC。
+- 实验 27: 在当前主线基础上把 `q_repr` 的 Q pooling 改成低秩 item-aware attention，单次 `test_auc = 0.759806`，低于当前主线 `0.760568`。
