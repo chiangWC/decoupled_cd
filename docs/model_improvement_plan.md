@@ -787,6 +787,74 @@
 - 这说明“把题目条件局部选择性信号只加在 readout 侧”在当前实验 23 主线口径下不是有效方向。
 - 这条分支更适合作为失败实验记录保留，不应整理回 `master`。
 
+#### 实验 26. `guess/slip` logit 轻量先验正则与校准指标
+
+改动:
+
+- 以实验 23 当前正式主线为底座:
+  - 单图 `propagation_graph`
+  - `conditional g/s`
+  - `TKC/UKC` 结构传播参数独立
+  - `TKC` 正误双通道行为消息
+  - 学生级自适应 `TKC/UKC` 融合 gate
+- 先补实验报告指标:
+  - `Brier`
+  - `ECE`
+  - 10-bin 分桶校准表
+- 再加一个默认关闭的 `guess/slip` logit L2 prior:
+  - `gs_logit_reg_weight = 0` 时不改变训练行为
+  - 实验中使用 `guess_prior_prob = 0.2`, `slip_prior_prob = 0.2`
+- 目的是检查 `conditional g/s` 在不放弃 AUC 收益的前提下，能否减少“非认知项吸收认知误差”的可辨识性风险。
+
+实验结论:
+
+- 对照 `w=0.0`, `seed=2024`:
+  - `best_val_auc = 0.763858`
+  - `best_epoch = 175`
+  - `valid_brier = 0.184939`
+  - `valid_ece = 0.060156`
+  - `test_auc = 0.760568`
+  - `test_acc = 0.722316`
+  - `test_rmse = 0.431628`
+  - `test_brier = 0.186303`
+  - `test_ece = 0.065051`
+  - 文件:
+    - `results/exp_gs_logit_regularization/assist_09_gs_logit_reg_w000_seed2024_300ep.json`
+- `w=0.001`, `seed=2024`:
+  - `best_val_auc = 0.762603`
+  - `best_epoch = 173`
+  - `valid_brier = 0.185206`
+  - `valid_ece = 0.059298`
+  - `test_auc = 0.759984`
+  - `test_acc = 0.722031`
+  - `test_rmse = 0.431563`
+  - `test_brier = 0.186247`
+  - `test_ece = 0.061222`
+  - 文件:
+    - `results/exp_gs_logit_regularization/assist_09_gs_logit_reg_w001_seed2024_300ep.json`
+- `w=0.0003`, `seed=2024`:
+  - `best_val_auc = 0.763648`
+  - `best_epoch = 186`
+  - `valid_brier = 0.185213`
+  - `valid_ece = 0.063928`
+  - `test_auc = 0.760338`
+  - `test_acc = 0.722069`
+  - `test_rmse = 0.432035`
+  - `test_brier = 0.186654`
+  - `test_ece = 0.066060`
+  - 文件:
+    - `results/exp_gs_logit_regularization/assist_09_gs_logit_reg_w0003_seed2024_300ep.json`
+
+结论:
+
+- 校准指标本身应保留: 它不改变模型结构，却能补上 AUC 看不到的概率质量问题。
+- `w=0.001` 带来一个明确的校准权衡:
+  - `test_auc` 相比对照下降约 `-0.00058`
+  - `test_brier` 改善约 `+0.00006`
+  - `test_ece` 改善约 `+0.00383`
+- `w=0.0003` 没有形成更好的折中: AUC 略降，`Brier/ECE` 也更差。
+- 当前不建议把 `guess/slip` logit 正则直接作为默认主线；它更适合作为“若后续明确以校准/可解释稳定性为目标”时再补多 seed 的备选。
+
 ## D. 快速索引
 
 这部分只用于快速查重，不替代上面的详细条目。
@@ -802,6 +870,7 @@
 - 实验 12: `TKC` 正误双通道成立。
 - 实验 21: `TKC/UKC` 学生自适应融合 gate 成立，并已取代旧主线。
 - 实验 23: 修正 `TKC` 行为项全局二次缩小后，三 seed 均值约 `0.7597`，并已吸收到当前主线。
+- 实验 26: 报告侧补 `Brier/ECE/分桶校准`，这部分不改变模型结构，建议后续实验默认保留。
 
 ### 已明确不建议默认继续的路线
 
@@ -813,6 +882,7 @@
 - 实验 15: `TKC` 局部硬 mean + `UKC` 全局 mean 仍无改善。
 - 实验 20: 直接叠加 `local UKC neighbor` 和 `UKC-only coverage gate` 低于实验 19 单独版本。
 - 实验 25: `TKC` item-aware residual 只放在 readout 侧后，单次结果明显低于当前正式主线。
+- 实验 26: `guess/slip` logit 正则暂不建议作为默认主线；`w=0.001` 有 ECE 改善但牺牲少量 AUC，`w=0.0003` 未形成更好折中。
 
 ### 相对实验 12 旧主线接近、可留作后续参考的路线
 
@@ -827,3 +897,4 @@
 - 实验 23: 修正 `TKC` 行为项全局二次缩小后，三 seed 均值约 `0.7597`，显著高于实验 21 当前正式主线 `0.7502`。
 - 实验 24: 在实验 23 基础上做多知识点题权重分摊后，三 seed 均值约 `0.7598`，相对实验 23 几乎持平。
 - 实验 25: 在实验 23 基础上将 `TKC` item-aware attention 仅作为 readout residual 注入后，单次 `test_auc = 0.692789`，明显低于当前正式主线。
+- 实验 26: 在实验 23 基础上补 `guess/slip` logit 正则，`w=0.001` 单次 `test_auc = 0.759984`, `test_ece = 0.061222`；相对 `w=0` 的 `test_auc = 0.760568`, `test_ece = 0.065051`，属于校准收益换少量 AUC。
