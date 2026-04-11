@@ -55,6 +55,7 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - `TKC/UKC` 结构传播参数独立
 - `TKC` 行为消息默认使用正误双通道
 - `TKC/UKC` 学生级融合默认使用自适应 gate
+- 当前主线对应实验 23 口径: 已修正 `TKC` 行为项全局二次缩小问题
 - 结构比较默认看 `300 epoch`
 - 实验报告默认同时看 `AUC/ACC/RMSE` 和 `Brier/ECE/分桶校准`
 
