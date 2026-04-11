@@ -23,6 +23,9 @@
   - `TKC/UKC` 结构传播参数独立
   - `TKC` 行为消息使用正误双通道 + gated fusion
   - `TKC/UKC` 学生级融合使用自适应 gate
+  - `high_concept_logit_adapter = true`
+  - `high_concept_logit_min_count = 2`
+  - `gs_difficulty_adapter = true`
   - 长训比较默认看 `300 epoch`
   - 实验报告默认同时看 `AUC/ACC/RMSE` 和 `Brier/ECE/分桶校准`
 
@@ -31,26 +34,34 @@
 - 从 `master` 提交 `868f20b` 起，训练输出会包含 `Brier/ECE/分桶校准`。
 - 更早的历史结果文件通常只含 `AUC/ACC/RMSE`，需要在新代码下复跑才有校准指标。
 
-- 当前主线多 seed 结果目录:
+- 当前主线基座结果目录:
   - `results/exp_tkc_exercise_aggregation/`
-  - `test_auc` 均值约 `0.7597`
-- 当前主线同口径校准重跑目录:
-  - `results/exp_master_calibration_rerun/`
-  - 三 seed 均值: `test_auc = 0.759690`, `test_ece = 0.062276`
-- 单次最好结果和完整指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 23 与实验 28。
+  - 三 seed 均值约 `test_auc = 0.7597`
+- 当前正式主线结果目录:
+  - `results/exp_high_concept_logit_adapter/`
+  - 三 seed 均值:
+    - `test_auc = 0.761196`
+    - `test_acc = 0.727556`
+    - `test_rmse = 0.429170`
+    - `test_brier = 0.184187`
+    - `test_ece = 0.051142`
+- 当前正式主线相对实验 23 基座均值差:
+  - `AUC +0.001506`
+  - `ACC +0.002772`
+  - `RMSE -0.002218`
+  - `Brier -0.001909`
+  - `ECE -0.011134`
+- 详细背景见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 33、实验 34 和诊断 1。
 
-近期 follow-up:
+近期已吸收的 follow-up:
 
-- `exp/tkc-exercise-aggregation-qnorm`
-  - 远端结果目录:
-    - `results/exp_tkc_exercise_aggregation_qnorm/`
-  - 三个 seed 的 `test_auc` 均值约 `0.7598`
-  - 相比当前主线 `results/exp_tkc_exercise_aggregation/` 仅增约 `+0.0001`
-- `exp/gs-difficulty-aware`
-  - 远端结果目录:
-    - `results/exp_gs_difficulty_aware/`
-  - 三 seed 下 AUC 基本持平，ECE 有改善；暂记为可合入候选，不是已定新主线。
-  - 详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 28。
+- 实验 33:
+  - `cognitive_match` zero-init difficulty adapter
+  - 先把实验 29 的“难度条件信号”改造成稳定 sidecar 形式
+- 实验 34:
+  - 对 `concept_count >= 2` 增加 high-concept logit residual
+  - 在 conditional `guess/slip` 分支增加 difficulty residual
+  - 这一步把实验 33 的诊断 1 follow-up 正式吸收到 `master`
 
 ## 已经定下来的判断
 
@@ -63,6 +74,9 @@
 - 将全局固定 `alpha/beta` 升级为学生自适应 `TKC/UKC` 融合 gate 后，三 seed 结果已经稳定优于旧主线。
 - `_build_exercise_component` 不应先按学生全历史对 `TKC` 行为项做全局归一化；概念内聚合应避免让“历史越长，行为证据越弱”。
 - 在实验 21 当前主线上修掉这一步后，三 seed 结果显著提升，这一步已经吸收到当前 `master`。
+- 实验 33 的 zero-init cognitive difficulty adapter 在三 seed 上稳定优于实验 23 基座，且避开了实验 29 的 seed 崩盘。
+- 诊断 1 表明主线的主要剩余误差集中在多知识点题和 `none_seen` 校准。
+- 实验 34 证明“多知识点题 targeted residual + guess/slip difficulty residual”可以在三 seed 上同时改善 `AUC/ACC/RMSE/Brier/ECE`，这一步已经吸收到当前 `master`。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。

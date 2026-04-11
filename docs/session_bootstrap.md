@@ -55,7 +55,12 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - `TKC/UKC` 结构传播参数独立
 - `TKC` 行为消息默认使用正误双通道
 - `TKC/UKC` 学生级融合默认使用自适应 gate
-- 当前主线对应实验 23 口径: 已修正 `TKC` 行为项全局二次缩小问题
+- `high_concept_logit_adapter` 默认开启，且 `high_concept_logit_min_count = 2`
+- `gs_difficulty_adapter` 默认开启
+- 当前主线对应实验 34 口径:
+  - 以实验 23 为底座
+  - 吸收实验 33 的认知 difficulty sidecar adapter
+  - 再吸收“多知识点题 high-concept logit residual + guess/slip difficulty residual”
 - 结构比较默认看 `300 epoch`
 - 实验报告默认同时看 `AUC/ACC/RMSE` 和 `Brier/ECE/分桶校准`
 

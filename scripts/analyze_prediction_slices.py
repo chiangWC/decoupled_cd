@@ -82,6 +82,9 @@ def load_model(
         student_gate_prior_alpha=float(summary.get("student_gate_prior_alpha", 1.0)),
         student_gate_prior_beta=float(summary.get("student_gate_prior_beta", 1.0)),
         gs_mode=str(summary.get("gs_mode", "conditional")),
+        high_concept_logit_adapter=bool(summary.get("high_concept_logit_adapter", False)),
+        high_concept_logit_min_count=int(summary.get("high_concept_logit_min_count", 3)),
+        gs_difficulty_adapter=bool(summary.get("gs_difficulty_adapter", False)),
     )
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state)
@@ -235,8 +238,20 @@ def main() -> None:
     args = parse_args()
     with Path(args.summary).open() as handle:
         summary = json.load(handle)
+    if args.dataset is None:
+        args.dataset = summary.get("dataset")
     if args.concept_dim is None:
         args.concept_dim = summary.get("concept_dim")
+    if args.train_interactions is None:
+        args.train_interactions = summary.get("train_interactions")
+    if args.valid_interactions is None:
+        args.valid_interactions = summary.get("valid_interactions")
+    if args.test_interactions is None:
+        args.test_interactions = summary.get("test_interactions")
+    if args.q_matrix is None:
+        args.q_matrix = summary.get("q_matrix")
+    if args.concept_graph is None:
+        args.concept_graph = summary.get("concept_graph")
     if args.concept_dim is None:
         raise ValueError("Provide --concept-dim when the summary JSON does not include concept_dim.")
 

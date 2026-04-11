@@ -47,6 +47,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--alpha", dest="legacy_alpha", type=float, default=None, help="Deprecated alias for --student-gate-prior-alpha.")
     parser.add_argument("--beta", dest="legacy_beta", type=float, default=None, help="Deprecated alias for --student-gate-prior-beta.")
+    parser.add_argument(
+        "--high-concept-logit-adapter",
+        action="store_true",
+        help="Enable a zero-init logit residual applied only to higher concept-count exercises.",
+    )
+    parser.add_argument(
+        "--high-concept-logit-min-count",
+        type=int,
+        default=3,
+        help="Minimum concept count required before the high-concept logit adapter is applied.",
+    )
+    parser.add_argument(
+        "--gs-difficulty-adapter",
+        action="store_true",
+        help="Enable a zero-init difficulty residual on the conditional guess/slip branch.",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--output", default="results/eval_summary.json")
@@ -151,13 +167,28 @@ def main() -> None:
         graph_mode=args.graph_mode,
         student_gate_prior_alpha=args.student_gate_prior_alpha,
         student_gate_prior_beta=args.student_gate_prior_beta,
+        high_concept_logit_adapter=args.high_concept_logit_adapter,
+        high_concept_logit_min_count=args.high_concept_logit_min_count,
+        gs_difficulty_adapter=args.gs_difficulty_adapter,
     )
 
     payload = {
+        "dataset": args.dataset,
+        "train_interactions": args.train_interactions,
+        "valid_interactions": args.valid_interactions,
+        "test_interactions": args.test_interactions,
+        "q_matrix": args.q_matrix,
+        "concept_graph": args.concept_graph,
+        "prerequisite_graph": args.prerequisite_graph,
+        "similarity_graph": args.similarity_graph,
         "device": device,
+        "concept_dim": args.concept_dim,
         "graph_mode": args.graph_mode,
         "student_gate_prior_alpha": args.student_gate_prior_alpha,
         "student_gate_prior_beta": args.student_gate_prior_beta,
+        "high_concept_logit_adapter": args.high_concept_logit_adapter,
+        "high_concept_logit_min_count": args.high_concept_logit_min_count,
+        "gs_difficulty_adapter": args.gs_difficulty_adapter,
         "train_metrics": evaluate_model(bundle=bundles["train"], model=model, device=device),
         "valid_metrics": evaluate_model(bundle=bundles["valid"], model=model, device=device),
         "test_metrics": evaluate_model(bundle=bundles["test"], model=model, device=device),

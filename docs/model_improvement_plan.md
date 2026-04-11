@@ -1,1466 +1,268 @@
 # Model Improvement Archive
 
-这份文档只保留“实验台账”用途: 记录做过哪些改动、结果如何、哪些方向已经被证伪或暂缓。
+这份文档只保留“实验台账”用途，用来回答三件事:
 
-它不是正式规范，也不是新会话默认必读文档。只有在设计实验、核对历史结论、避免重复试错时再读。
+- 当前 `master` 的正式主线是什么
+- 哪些路线已经证明有效或无效
+- 下一步默认该优先试什么
 
-当前 workflow、正式基线、已定主线结论、下一步默认规则，统一以 [docs/session_bootstrap.md](./session_bootstrap.md)、[docs/workflow.md](./workflow.md) 和 [docs/handoff.md](./handoff.md) 为准。
+它不是新会话默认入口。新会话先读 [docs/session_bootstrap.md](./session_bootstrap.md)；只有在需要查历史实验、避免重复试错时再回来看这份档案。
 
-## 如何使用这份档案
+## 如何使用
 
-- 需要快速进入当前项目状态时，先读 [docs/session_bootstrap.md](./session_bootstrap.md)，再按需读 [docs/workflow.md](./workflow.md) 和 [docs/handoff.md](./handoff.md)。
-- 需要确认某条路线是否已经试过、为什么没继续、是否值得复访时，再回到这份文档。
-- 为节省上下文，通常先看文末 D 部分“快速索引”，再只读相关实验条目；不要把整篇当作新会话默认上下文。
-- 下文按“用途”而不是按时间顺序组织。
-- 每条实验都保留原实验编号，方便和旧讨论记录对照。
-- 文中若写“旧主线”，默认指实验 12；若写“实验 21 主线底座”，指当时用于复验的中间主线。
-- 当前 `master` 正式主线已经吸收实验 23 的修正；涉及最新主线口径时，以 [docs/session_bootstrap.md](./session_bootstrap.md) 和 [docs/handoff.md](./handoff.md) 为准。
-- 除非条目里明确写了“已在实验 21 主线底座上复验”或“以当前 `master` 为底座”，否则基于实验 12 的备选分支不能直接视为对当前正式主线的结论。
+- 先看“当前快照”，确认主线、结果口径和近线候选。
+- 需要判断某条路线是否还值得继续时，看“已验证有效”和“已验证无效/降级”。
+- 需要设计下一轮实验时，看“当前诊断与下一步”。
+- 需要精确文件路径或完整上下文时，再去看对应结果目录或 `git log`，不要把这份文档当成长篇实验报告。
 
-## A. 基线演化
+## 当前快照
 
-这部分回答的是: 当前主线是怎么一步步形成的。
-
-### A1. 从早期图与题目表示到 transition graph
-
-#### 实验 1. 原始 Q 共现图基线
-
-改动:
-
-- `N(k)` 由 Q 矩阵裸共现图构造。
-- `q_e` 使用题目所需知识点 embedding 的简单平均。
-
-实验结论:
-
-- `assist_09` 上 `20 epoch` 全量训练可稳定运行。
-- 指标略高于随机，但提升有限。
-
-结论:
-
-- 它证明了最小闭环可跑通，但不适合作为长期主线。
-
-#### 实验 2. 稀疏归一化共现图 + 可学习 `q_e`
-
-改动:
-
-- `N(k)` 改为归一化共现 + top-k 稀疏图。
-- `q_e` 改为可学习加权汇聚 + MLP。
-
-实验结论:
-
-- 训练稳定。
-- 没有形成稳定泛化收益。
-- `test_auc` 只有微小变化，`val_auc` 反而更差。
-
-结论:
-
-- 这轮改动不能作为主基线。
-
-#### 实验 3. 论文式转移图
-
-改动:
-
-- 基于有序版 ASSIST09 数据。
-- 使用论文风格的 `C / T` 关系构建方法。
-- 导出:
-  - `prerequisite_graph`
-  - `similarity_graph`
-  - `propagation_graph`
-
-实验结论:
-
-- 先修边数: `1161`
-- 相似边数: `2492`
-- 在 `assist_09` 上的早期全量训练里，效果明显优于前两版图。
-
-结论:
-
-- 这版图是后续主线的真正起点。
-
-### A2. 合理超参数与训练充分性
-
-#### 实验 6. 超参数扫描
-
-改动:
-
-- 扫描范围:
-  - `learning_rate in {1e-3, 3e-4, 1e-4}`
-  - `concept_dim in {16, 32, 64}`
-- `concept_dim = 128` 在当前 full-batch GPU 路径下稳定 OOM。
-
-实验结论:
-
-- 最优组合是 `learning_rate = 1e-3`, `concept_dim = 64`。
-- 当时最好文件:
-  - `results/hparam_sweeps/assist09_transition_lr_1e-3_dim_64.json`
-
-结论:
-
-- 之前一些“结构改动无效”的判断，部分受不合理超参数影响。
-- 后续结构比较必须固定在更合理的超参数上进行。
-
-#### 实验 7. `g / s` 公平对比
-
-改动:
-
-- 在统一超参数下比较:
-  - 学生常数 `g / s`
-  - 条件化 `g_{u,e} / s_{u,e}`
-
-实验结论:
-
-- `conditional g/s` 明显优于 `constant g/s`。
-
-结论:
-
-- `conditional g/s` 是成立的正向结构改动，应保留在主线上。
-
-#### 实验 8. 长训与训练策略
-
-改动:
-
-- 保持:
+- 当前 `master` 正式主线口径是实验 34:
   - ordered ASSIST09
-  - transition graph
+  - `transition_graph/propagation_graph.csv`
+  - `graph_mode = single`
   - `learning_rate = 1e-3`
   - `concept_dim = 64`
-  - `conditional g/s`
-- 新增:
-  - best checkpoint 保存
-  - `ReduceLROnPlateau` 调度框架
-- 依次完成:
-  - `100 epoch`
-  - `200 epoch`
-  - `300 epoch`
-
-实验结论:
-
-- `100 epoch`: `test_auc = 0.666546`
-- `200 epoch`: `test_auc = 0.704830`
-- `300 epoch`:
-  - `best_val_auc = 0.716939`
-  - `best_epoch = 243`
-  - `test_auc = 0.709411`
-  - best checkpoint:
-    - `results/assist_09_current_worktree_300ep_best.pt`
-
-结论:
-
-- 当前模型之前远未训满。
-- 结构比较默认应看 `300 epoch` 量级，而不是 `20 epoch`。
-
-#### 实验 9. 多 seed 复现
-
-改动:
-
-- 在当时的正式单图基线上加入显式 `seed` 控制。
-- 跑 `seed in {2024, 2025, 2026}` 的 `300 epoch` 对比。
-
-实验结论:
-
-- 三组 `test_auc` 分别为:
-  - `0.709478`
-  - `0.707565`
-  - `0.706154`
-- 均值约 `0.7077`。
-- 波动很小。
-
-结论:
-
-- 长训后的单图基线是稳定的，不是单次偶然值。
-
-### A3. 当前主线形成
-
-#### 实验 11. `TKC/UKC` 结构传播参数解耦
-
-改动:
-
-- 在单图 `propagation_graph` 基线上，将原先共享的概念结构传播变换拆成:
-  - `tkc_concept_to_concept`
-  - `ukc_concept_to_concept`
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.744711`
-  - `test_auc = 0.738442`
-- `seed=2025`:
-  - `best_val_auc = 0.742114`
-  - `test_auc = 0.737970`
-- `seed=2026`:
-  - `best_val_auc = 0.743833`
-  - `test_auc = 0.737942`
-- `test_auc` 均值约 `0.7381`。
-- 这组结果建立在“`valid/test` 复用 `train` 行为历史输入”的修复后评估口径上。
-
-结论:
-
-- 这是当前最可靠的正向结构改动之一。
-
-#### 实验 12. `TKC` 正误双通道行为消息
-
-改动:
-
-- 保留:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
+  - `gs_mode = conditional`
   - `TKC/UKC` 结构传播参数独立
-- 将 `TKC` 行为消息从“只看正确题”改成:
-  - 正确题通道
-  - 错误题通道
-  - 行为侧 gated fusion
-- 同时把按知识点聚合的实现改成更省显存的索引式写法，避免双通道在 full-batch 下 OOM。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.748738`
-  - `test_auc = 0.744609`
-- `seed=2025`:
-  - `best_val_auc = 0.749699`
-  - `test_auc = 0.745276`
-- `seed=2026`:
-  - `best_val_auc = 0.754099`
-  - `test_auc = 0.747414`
-- `test_auc` 均值约 `0.7458`。
-- 相比上一版评估修复后基线均值 `0.7381`，提升约 `+0.0077`。
+  - `TKC` 行为消息使用正误双通道
+  - `TKC/UKC` 学生级融合使用自适应 gate
+  - 已修正 `TKC` 行为项的全局二次缩小
+  - 吸收实验 33 的 zero-init cognitive difficulty adapter
+  - `high_concept_logit_adapter = true`
+  - `high_concept_logit_min_count = 2`
+  - `gs_difficulty_adapter = true`
+- 当前主线结果目录:
+  - `results/exp_high_concept_logit_adapter/`
+- 当前主线三 seed 参考均值:
+  - `test_auc = 0.761196`
+  - `test_acc = 0.727556`
+  - `test_rmse = 0.429170`
+  - `test_brier = 0.184187`
+  - `test_ece = 0.051142`
+- 当前结果报告默认同时看:
+  - `AUC/ACC/RMSE`
+  - `Brier/ECE/分桶校准`
 
-结论:
+主线形成的最后两步:
 
-- “错题信号被丢掉”是当前实现里的真实问题。
-- `TKC` 行为消息应显式保留错误作答证据。
-- 这一步和实验 11 一起构成了旧主线收敛到稳定形态的关键节点。
+- 实验 33:
+  - 把实验 29 中不稳定的“认知分支读难度”改成 zero-init sidecar adapter
+- 实验 34:
+  - 对多知识点题增加 high-concept logit residual
+  - 对 conditional `guess/slip` 增加 difficulty residual
+  - 相对实验 23 基座三 seed 均值:
+    - `AUC +0.001506`
+    - `ACC +0.002772`
+    - `RMSE -0.002218`
+    - `Brier -0.001909`
+    - `ECE -0.011134`
+
+## 已验证有效
+
+下面只保留真正改变主线判断的实验。
+
+### 实验 3. 论文式 transition graph
+
+- 从早期 Q 共现图切到论文式有向转移图后，效果第一次明显优于随机附近基线。
+- 结论: transition graph 是后续所有正式对比的图结构起点。
+
+### 实验 6. 超参数扫描
+
+- 在合理训练口径下固定了 `learning_rate = 1e-3`、`concept_dim = 64`。
+- 结论: 后续结构比较默认锁定这组超参数。
+
+### 实验 7. `conditional g/s`
+
+- 条件化 `guess/slip` 明显优于学生常数 `g/s`。
+- 结论: `conditional g/s` 为主线固定配置。
+
+### 实验 8. 长训与训练策略
+
+- 证明 `20 epoch` 远远不够，结构比较至少应看 `300 epoch`。
+- 结论: 长训是正式比较的默认协议。
+
+### 实验 9. 多 seed 复现
+
+- 早期单图长训基线在 `seed in {2024, 2025, 2026}` 上波动很小。
+- 结论: 主线比较不能只看单次最好值，要看多 seed 稳定性。
+
+### 实验 11. `TKC/UKC` 结构传播参数解耦
+
+- 将 `TKC/UKC` 的概念传播从共享参数改为独立参数后，形成稳定增益。
+- 结论: 这是当前主线最可靠的正向结构改动之一。
+
+### 实验 12. `TKC` 正误双通道行为消息
+
+- 显式保留错题证据后，三 seed 均值明显优于只看正确题的版本。
+- 结论: “错题信号不能丢”是主线级判断。
+
+### 实验 21. `TKC/UKC` 学生自适应融合 gate
+
+- 将固定 `alpha/beta` 升级为学生级自适应 gate 后，三 seed 稳定优于旧主线。
+- 结论: 自适应 `TKC/UKC` 融合已成为默认配置。
 
-#### 实验 21. `TKC/UKC` 学生自适应融合 gate
+### 实验 23. 修正 `TKC` 行为项全局二次缩小
 
-改动:
-
-- 保留:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-- 将原先全局固定的:
-  - `alpha * tkc_mean + beta * ukc_mean`
-  替换为学生级自适应融合。
-- 融合 gate 输入为:
-  - `coverage`
-  - `tkc_mean`
-  - `ukc_mean`
-- 最终形式为:
-  - `w_u * tkc_mean + (1 - w_u) * ukc_mean`
+- 找到 `_build_exercise_component` 中“历史越长，当前行为证据越弱”的系统性缩放偏差，并改为概念内加权平均。
+- 相对实验 21，三 seed `test_auc` 均值提升约 `+0.0095`。
+- 结论: 这是当前主线的稳定基座，但已被实验 33/34 继续向前推进。
 
-实验结论:
+### 实验 33. `cognitive_match` zero-init difficulty adapter
 
-- `seed=2024`:
-  - `best_val_auc = 0.754493`
-  - `best_epoch = 278`
-  - `test_auc = 0.749272`
-  - 文件:
-    - `results/exp_adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.757129`
-  - `best_epoch = 300`
-  - `test_auc = 0.751710`
-  - 文件:
-    - `results/exp_adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.756685`
-  - `best_epoch = 288`
-  - `test_auc = 0.749739`
-  - 文件:
-    - `results/exp_adaptive_tkc_ukc_gate/assist_09_tkc_dual_channel_seed2026_300ep.json`
-- 三个 seed 的 `test_auc` 均值约 `0.7502`。
-- 相比实验 12 的旧主线均值 `0.7458`，提升约 `+0.0044`。
+- 不直接扩展 `cognitive_match_mlp` 输入，而是在认知 logits 外加 zero-init difficulty sidecar adapter。
+- 相对实验 23 基座，三 seed 同时改善 `AUC/ACC/RMSE/Brier/ECE`，并解决了实验 29 的 seed 崩盘问题。
+- 结论: 这是实验 34 之前的关键前一跳。
 
-结论:
+### 实验 34. high-concept logit adapter + `guess/slip` difficulty adapter
 
-- 全局固定 `alpha/beta` 的融合方式过于粗糙，学生级自适应 gate 能更好利用覆盖率差异。
-- 这次提升不是单 seed 偶然值，而是三 seed 一致提升。
-- 这条线在当时足够取代实验 12，成为后续实验 22/23 的主线底座。
+- 对 `concept_count >= 2` 的题增加 zero-init high-concept logit residual。
+- 在 conditional `guess/slip` 分支增加 zero-init difficulty residual。
+- 相对实验 23 基座，三 seed 均值改善:
+  - `AUC +0.001506`
+  - `ACC +0.002772`
+  - `RMSE -0.002218`
+  - `Brier -0.001909`
+  - `ECE -0.011134`
+- 结论: 实验 34 是当前 `master` 正式主线。
 
-## B. 已明确不作为主线的路线
+## 已验证无效或已降级
 
-这部分回答的是: 哪些方向已经明显退化，或者至少不值得默认继续。
+这些路线默认不要再回到主线，除非用户明确要求复访。
 
-### B1. 早期 `TKC` 融合层微调路线
+### 明显无效
 
-#### 实验 4. `TKC` 标量融合 + `student + exercise` 偏置 `g/s`
+- 实验 1: 原始 Q 共现图基线
+  - 只证明最小闭环能跑，不适合作为长期基线
+- 实验 2: 稀疏归一化共现图 + 可学习 `q_e`
+  - 没形成稳定泛化收益
+- 实验 4: `TKC` 标量融合 + `student + exercise` 偏置 `g/s`
+  - 早期全量结果退到随机附近
+- 实验 5: 早期 `TKC` gated fusion
+  - 单改融合形式没有解决主要问题
+- 实验 10: `dual graph`
+  - 在 ASSIST09 上明显退化，保留为 legacy ablation 即可
+- 实验 13: `q_e` residual 融合
+  - 弱于当时主线，不建议继续
+- 实验 14: `TKC/UKC` 同时局部硬 mean
+  - 明显退化
+- 实验 15: `TKC` 局部 mean + `UKC` 全局 mean
+  - 没能救回局部硬汇聚路线
+- 实验 20: 直接叠加 `local UKC neighbor` 和 `UKC-only coverage gate`
+  - 没有形成 `1 + 1 > 1`
+- 实验 22: 在实验 21 主线底座上复验 `local UKC neighbor`
+  - 低于该底座，不建议继续
+- 实验 25: readout 侧 `TKC` item-aware residual
+  - 工程可跑，但效果明显低于正式主线
+- 实验 27: `q_repr` 内部 item-aware Q pooling
+  - 单次弱于当前主线，不建议扩 seed
+- 实验 29: 直接扩展 `cognitive_match` 输入以读入 `difficulty`
+  - `seed=2026` 稳定崩盘，zero-init 也没救回
+- 实验 30: 行为正误融合 gate 加 concept-specific bias
+  - AUC 持平但误差和校准变差
+- 实验 31: `UKC` no-param graph propagation
+  - AUC 仅微升，但 `ACC/RMSE/Brier/ECE` 全变差
+- 实验 32: `UKC` directed symmetric-like normalization
+  - 单 seed 已不满足继续扩 seed 的门槛
 
-改动:
+### 语义更干净，但不值得主线吸收
 
-- `TKC` 的行为消息和邻接消息加入独立可学习标量权重。
-- `g / s` 从学生常数改为 `student + exercise` 偏置。
+- 实验 24: 多知识点题按知识点数分摊
+  - 相对实验 23 三 seed 仅约 `+0.0001`
+  - 可保留为语义更干净的实现参考，但不是关键收益来源
+- 实验 26: `guess/slip` logit 正则
+  - 可改善校准，但会牺牲少量 AUC
+  - 不建议作为默认主线
 
-实验结论:
+## 旧口径的历史参考
 
-- 训练稳定。
-- 早期全量对比没有带来提升。
-- `test_auc` 下降到随机附近。
+下面这些实验主要用于说明“某类信号曾经出现过”，不能直接当作当前主线结论。
 
-结论:
+### 实验 16. `TKC` item-aware attention + `UKC` 全局 mean
 
-- 简单标量融合不够。
-- 这条早期路线不应回到主线。
+- 说明“题目条件局部选择性”在旧主线口径下曾有信号。
+- 结论: 可作为历史参考，但不能直接外推到当前主线。
 
-#### 实验 5. `TKC` gated fusion
+### 实验 17. coverage-aware `UKC` 邻域约束
 
-改动:
+- 说明 `UKC` 全局噪声在旧口径下确实是问题。
+- 结论: 这类局部化约束值得记住，但后续在新主线上的复验并未胜出。
 
-- 保留论文式转移图基线。
-- 将 `TKC` 分支的行为消息和邻接消息改为 gated fusion。
-- `g / s` 回退到学生级常数，避免和融合策略混在一起。
+### 实验 18. coverage-aware 全局融合
 
-实验结论:
+- 说明 coverage 作为融合条件在旧口径下有一定信号。
+- 结论: 与后续主线的融合语义有重叠，不单独作为当前优先方向。
 
-- 训练稳定。
-- 早期全量对比仍未超过转移图基线。
-- `test_auc` 仍在 `0.503` 左右。
+### 实验 19. 只对全局 `UKC` 做 coverage gate
 
-结论:
+- 在旧口径下接近最佳，但仍未成为当前主线的直接祖先。
+- 结论: 保留为“旧口径次优参考”即可。
 
-- 当时 `TKC` 路径的瓶颈不只是融合形式。
-- 不能把“换 gated fusion”本身当成有效方向。
+## 近线 follow-up
 
-### B2. `dual graph` 路线
+这部分只保留当前最值得记住的候选和最近的诊断。
 
-#### 实验 10. 双图分开传播
+### 实验 28. `guess/slip` 显式引入题目难度特征
 
-改动:
+- 做法: 在 `guess/slip` 条件输入中拼入 `difficulty.detach()`
+- 结果: 三 seed 下 AUC 基本持平，`ECE/Brier` 有均值改善
+- 判断: 可合入候选，但增量不够大，暂不是已定新主线
 
-- 保留单图 `propagation_graph`。
-- 新增可选 `graph_mode = dual`。
-- 在 `dual` 模式下分别读取:
-  - `prerequisite_graph`
-  - `similarity_graph`
-- 在传播层分别做两路邻接传播，再门控融合。
+### 诊断 1. 实验 33 主线的 test prediction slices
 
-实验结论:
+关键观察:
 
-- `300 epoch` 全量对比明显退化。
-- `best_val_auc = 0.508805`
-- `test_auc = 0.501716`
-- `best_epoch = 3`
+- 多知识点题明显更难，而且随 `concept_count` 增长单调退化
+- `none_seen` 样本排序不差，但校准很差，说明更像系统性低估
+- 中等历史长度、中等历史正确率样本也偏弱
 
-结论:
+关于 recency:
 
-- `dual graph` 接口可以保留，但不应作为正式主线。
+- 当前 split 是按学生随机抽样，不是严格时间切分
+- 因此在现有协议下不建议优先做 recency-aware student state
 
-### B3. `q_e` 残差增强路线
+诊断结论:
 
-#### 实验 13. `q_e` 轻量 residual 融合
+- 下一步应优先针对“多知识点题表示/读出偏弱”做 targeted 修补
+- `none_seen` 更适合作为后续单独校准问题，而不是当前第一优先结构问题
 
-改动:
+## 默认下一步
 
-- 保留:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-- 在 `q_repr` 里给 `Q` pooling 表示和题目独立 embedding 增加轻量 gated residual 融合。
+如果没有用户明确指定路线，默认按下面优先级思考:
 
-实验结论:
+1. 先从当前 `master` 主线出发，只改一个结构因素。
+2. 优先考虑轻量、zero-init、可回退的 sidecar / residual 改动。
+3. 优先修多知识点题的 targeted residual / readout 问题，而不是回到早期 `dual graph`、裸 Q 图或大幅改主干。
+4. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
+5. 判断是否值得合入时，默认同时看 `AUC/ACC/RMSE/Brier/ECE`，不要只看 AUC。
 
-- `seed=2024`:
-  - `best_val_auc = 0.744008`
-  - `test_auc = 0.737416`
-- 对比当时主线:
-  - `best_val_auc = 0.748738`
-  - `test_auc = 0.744609`
+## 快速索引
 
-结论:
+当前主线形成链路:
 
-- 这条 `q_e` residual 方案没有带来收益。
-- 当前不建议再直接把题目独立 embedding 以残差形式叠回 `q_repr`。
+- 实验 3: transition graph
+- 实验 6: 合理超参数
+- 实验 7: `conditional g/s`
+- 实验 8: 长训 `300 epoch`
+- 实验 9: 多 seed 稳定性
+- 实验 11: `TKC/UKC` 解耦
+- 实验 12: `TKC` 正误双通道
+- 实验 21: 学生自适应 `TKC/UKC` gate
+- 实验 23: 修正 `TKC` 行为项全局二次缩小
+- 实验 33: zero-init cognitive difficulty adapter
+- 实验 34: high-concept logit adapter + `gs_difficulty_adapter`
 
-### B4. 局部硬汇聚路线
+当前值得记住的候选:
 
-#### 实验 14. 题目条件局部汇聚: `TKC/UKC` 同时局部 mean
+- 实验 28: `guess/slip` 读入难度，校准改善
 
-改动:
+当前默认不建议继续的代表路线:
 
-- 保留:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-- 将认知预测从全局 `student_state` 改成题目条件局部汇聚。
-- 对目标题 `q_e` 相关概念分别做:
-  - `TKC` 局部 mean
-  - `UKC` 局部 mean
-- 再用 `alpha * local_tkc + beta * local_ukc` 进入 `P_cog`。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.737040`
-  - `test_auc = 0.731763`
-  - 文件:
-    - `results/assist_09_item_conditioned_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.736479`
-  - `test_auc = 0.731650`
-  - 文件:
-    - `results/assist_09_item_conditioned_seed2025_300ep.json`
-- 两个 seed 的 `test_auc` 均值约 `0.7317`。
-
-结论:
-
-- “题目条件下再聚合”不是错误方向，但“局部硬 mean”明显伤害效果。
-
-#### 实验 15. 题目条件局部汇聚: `TKC` 局部 mean + `UKC` 全局 mean
-
-改动:
-
-- 延续题目条件预测思路。
-- 只让 `TKC` 对目标题相关概念做局部 mean。
-- `UKC` 回退为原来的全局支持项 mean。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.735676`
-  - `test_auc = 0.731123`
-  - 文件:
-    - `results/assist_09_tkc_local_ukc_global_seed2024_300ep.json`
-
-结论:
-
-- 把 `UKC` 保持为全局支持项并没有救回这条路线。
-- 局部硬汇聚本身就是主要问题之一。
-
-### B5. 直接叠加两种 `UKC` 抑噪策略
-
-#### 实验 20. `local UKC neighbor` + `UKC-only coverage gate`
-
-改动:
-
-- 以实验 17 和实验 19 为基础。
-- 在认知分支中同时使用:
-  - 实验 17 的题目一跳邻域 `local UKC`
-  - 实验 19 的 `UKC-only coverage gate`
-- 保持 `TKC` 全局汇聚、`guess/slip` 全局学生向量不变。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.752087`
-  - `best_epoch = 299`
-  - `test_auc = 0.746921`
-- `seed=2025`:
-  - `best_val_auc = 0.744208`
-  - `best_epoch = 291`
-  - `test_auc = 0.739302`
-- `seed=2026`:
-  - `best_val_auc = 0.749998`
-  - `best_epoch = 300`
-  - `test_auc = 0.744460`
-- 三个 seed 的 `test_auc` 均值约 `0.7436`。
-
-结论:
-
-- 这条融合没有形成 `1 + 1 > 1` 的效果。
-- 它低于实验 19 单独版本，也低于实验 21 主线底座。
-- 当前不建议继续沿“直接叠加 local `UKC` 约束 + coverage gate”这条路线推进。
-
-## C. 旧口径线索与后续复验
-
-这部分回答的是: 哪些路线在实验 12 的旧主线口径下曾经有信号，以及它们在后续主线口径下如何被复验或降级。C1-C3 只作旧口径历史参考；C4-C5 记录后续复验和实验 23 当前主线的形成。
-
-### C1. 实验 12 旧口径下的题目条件局部汇聚信号
-
-这几条路线的原始对比对象都是实验 12，而不是实验 21/23。它们只能说明某些机制在旧口径下有过相对信号，不能直接称为“接近当前主线”。
-
-#### 实验 16. 题目条件局部汇聚: `TKC` item-aware attention + `UKC` 全局 mean
-
-改动:
-
-- 保留:
-  - `TKC` 只在目标题相关概念内做局部选择
-  - `UKC` 作为全局支持项
-- 将 `TKC` 的局部硬 mean 改成由 `q_repr` 条件化的 item-aware attention。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.743627`
-  - `test_auc = 0.739887`
-  - 文件:
-    - `results/assist_09_tkc_attention_ukc_global_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.741752`
-  - `test_auc = 0.736367`
-  - 文件:
-    - `results/assist_09_tkc_attention_ukc_global_seed2025_300ep.json`
-- 两个 seed 的 `test_auc` 均值约 `0.7381`。
-
-结论:
-
-- 相比局部硬 mean，这条 attention 版本更合理，也明显救回了性能。
-- 但这里的“正式主线”比较对象仍是实验 12 时代的主线口径，不应直接外推到实验 21。
-- 当前更适合把它视为“题目条件选择性曾有信号”的历史记录，而不是默认复访路线。
-
-### C2. 局部化 `UKC` 的语义约束
-
-#### 实验 17. coverage-aware `UKC` 融合: `UKC` 只在题目相关概念的一跳邻域内聚合
-
-改动:
-
-- 保留:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - `TKC` 全局已测概念汇聚
-- 只修改认知分支中的 `UKC` 融合方式。
-- 对每道题的 `q_e`:
-  - 在 `propagation_graph` 上取题目概念集合的一跳邻域
-  - 用该局部概念范围筛选 `UKC`
-  - 只对“未测试且位于题目局部邻域内”的概念做 mean
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.747750`
-  - `best_epoch = 299`
-  - `test_auc = 0.742428`
-  - 文件:
-    - `results/assist_09_local_ukc_neighbor_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.744854`
-  - `best_epoch = 300`
-  - `test_auc = 0.741246`
-  - 文件:
-    - `results/assist_09_local_ukc_neighbor_seed2025_300ep.json`
-- 两个 seed 的 `test_auc` 均值约 `0.7418`。
-
-结论:
-
-- 这条线明显优于前面的 item-conditioned mean / attention 变体。
-- 它说明 `UKC` 的主要问题更像是全局平均引入了与当前题无关的噪声。
-- 但这里仍是实验 12 口径下的结论，不能直接视为对当前主线的判断；后续实验 22 已在实验 21 主线底座上复验该方向且未胜出。
-
-### C3. coverage-aware 全局融合
-
-#### 实验 18. coverage-aware global fusion: 用 coverage 同时调节全局 `TKC/UKC`
-
-改动:
-
-- 保留:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - `TKC` 和 `UKC` 原来的全局概念汇聚
-- 在认知分支新增一个由学生 coverage 条件化的标量 gate。
-- coverage 定义为:
-  - `tested_concepts / (tested_concepts + untested_concepts)`
-- 用该 gate 同时调节全局 `TKC` 与全局 `UKC` 的融合强度。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.752721`
-  - `best_epoch = 300`
-  - `test_auc = 0.747068`
-  - 文件:
-    - `results/assist_09_coverage_gate_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.746704`
-  - `best_epoch = 300`
-  - `test_auc = 0.740811`
-  - 文件:
-    - `results/assist_09_coverage_gate_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.752357`
-  - `best_epoch = 300`
-  - `test_auc = 0.746431`
-  - 文件:
-    - `results/assist_09_coverage_gate_seed2026_300ep.json`
-- 三个 seed 的 `test_auc` 均值约 `0.7448`。
-
-结论:
-
-- 这条线说明“coverage-aware 融合”本身是有信号的。
-- 但这里的比较对象仍是实验 12；由于它与实验 21 的自适应融合机制语义重叠较多，当前更适合视为历史参考，而不是默认优先复访方向。
-
-#### 实验 19. coverage-aware global fusion follow-up: 只对全局 `UKC` 做 coverage gate
-
-改动:
-
-- 延续 coverage-aware 全局融合思路。
-- 保持全局 `TKC` 项不变。
-- 只用 coverage gate 去缩放全局 `UKC`。
-- 形式为:
-  - `alpha * global_tkc + gate(coverage) * beta * global_ukc`
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.754431`
-  - `best_epoch = 299`
-  - `test_auc = 0.748475`
-  - 文件:
-    - `results/assist_09_coverage_beta_gate_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.748439`
-  - `best_epoch = 300`
-  - `test_auc = 0.741629`
-  - 文件:
-    - `results/assist_09_coverage_beta_gate_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.751716`
-  - `best_epoch = 300`
-  - `test_auc = 0.745962`
-  - 文件:
-    - `results/assist_09_coverage_beta_gate_seed2026_300ep.json`
-- 三个 seed 的 `test_auc` 均值约 `0.7454`。
-
-结论:
-
-- 只对 `UKC` 做 coverage gate 比“同时调 `TKC/UKC`”更稳。
-- 它在旧主线口径下几乎追平，但相对实验 21 的新主线仍有明显差距。
-- 因此它是 coverage-aware 旧口径路线里最强的一条，但仍应视为历史参考，而不是当前默认候选。
-
-### C4. 已在实验 21 主线底座上复验，但未胜出
-
-#### 实验 22. 在实验 21 主线底座上复验 `local UKC neighbor`
-
-改动:
-
-- 以实验 21 主线底座为起点:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-- 在此基础上，只把 `UKC` 的全局 mean 改成题目相关概念一跳邻域内的 `local UKC neighbor`。
-- 这相当于把实验 17 的核心想法重新挂到实验 21 上做增量复验。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.752178`
-  - `best_epoch = 293`
-  - `test_auc = 0.747523`
-  - 文件:
-    - `results/exp_adaptive_local_ukc/assist_09_adaptive_local_ukc_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.755889`
-  - `best_epoch = 300`
-  - `test_auc = 0.750068`
-  - 文件:
-    - `results/exp_adaptive_local_ukc/assist_09_adaptive_local_ukc_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.754637`
-  - `best_epoch = 300`
-  - `test_auc = 0.747724`
-  - 文件:
-    - `results/exp_adaptive_local_ukc/assist_09_adaptive_local_ukc_seed2026_300ep.json`
-- 三个 seed 的 `test_auc` 均值约 `0.7484`。
-- 相比实验 21 主线底座均值 `0.7502`，下降约 `-0.0018`。
-
-结论:
-
-- 实验 17 中“`UKC` 全局平均会引入题目无关噪声”的观察，在实验 12 口径下是有信号的。
-- 但把这条思路直接叠到实验 21 主线底座后，三 seed 结果稳定略低于该底座。
-- 因此这条线现在不应再放在“接近当前主线”的候选里，而应归类为“已在实验 21 上复验但未胜出”。
-
-### C5. 实验 23 当前主线形成与后续 follow-up
-
-#### 实验 23. 修正 `TKC` 行为项的全局二次缩小
-
-改动:
-
-- 以实验 21 主线底座为起点:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-- 检查 `_build_exercise_component` 后确认当前实现会先按学生全历史对 `weighted_exercises` 做一次全局归一化，再在概念维度上再除一次 `concept_weights`。
-- 这会让学生历史越长，`TKC` 行为证据越容易被系统性压小，与 Step 2 中“`TKC` 保留行为信号”的语义不一致。
-- 将该聚合改为概念内加权平均:
-  - 不再先按学生全历史做全局归一化
-  - 直接在每个概念内按该概念实际命中的行为权重做平均
-- 同时补了最小回归测试，防止“无关历史变长会压小当前概念行为项”的问题回归。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.763858`
-  - `best_epoch = 175`
-  - `test_auc = 0.760568`
-  - 文件:
-    - `results/exp_tkc_exercise_aggregation/assist_09_tkc_dual_channel_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.764494`
-  - `best_epoch = 180`
-  - `test_auc = 0.759346`
-  - 文件:
-    - `results/exp_tkc_exercise_aggregation/assist_09_tkc_dual_channel_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.764509`
-  - `best_epoch = 185`
-  - `test_auc = 0.759156`
-  - 文件:
-    - `results/exp_tkc_exercise_aggregation/assist_09_tkc_dual_channel_seed2026_300ep.json`
-- 三个 seed 的 `test_auc` 均值约 `0.7597`。
-- 相比实验 21 主线底座均值 `0.7502`，提升约 `+0.0095`。
-
-结论:
-
-- 这不是“实现风格差异”，而是当前 `TKC` 行为聚合里的真实缩放偏差。
-- 修掉这一步后，三 seed 提升幅度明显且一致。
-- 这条改动已经吸收到当前 `master`，并取代实验 21 之前的正式主线口径。
-
-#### 实验 24. 在实验 23 基础上做多知识点题按知识点数分摊
-
-改动:
-
-- 以实验 23 为底座，继续只改一个结构因素。
-- 对多知识点题先做 `q_matrix` 行归一化，使一道题的总行为权重按知识点数分摊到各概念。
-- 分子和分母同时使用归一化后的 `q_matrix`:
-  - 概念分子只累加该题分配给当前概念的份额
-  - 概念分母也使用同样的份额
-- 同时补了回归测试，验证多知识点题的行为权重确实会被分摊，而不是整题对每个概念都完整贡献一次。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.764223`
-  - `best_epoch = 181`
-  - `test_auc = 0.760619`
-  - 文件:
-    - `results/exp_tkc_exercise_aggregation_qnorm/assist_09_tkc_dual_channel_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.764555`
-  - `best_epoch = 191`
-  - `test_auc = 0.759291`
-  - 文件:
-    - `results/exp_tkc_exercise_aggregation_qnorm/assist_09_tkc_dual_channel_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.764564`
-  - `best_epoch = 184`
-  - `test_auc = 0.759446`
-  - 文件:
-    - `results/exp_tkc_exercise_aggregation_qnorm/assist_09_tkc_dual_channel_seed2026_300ep.json`
-- 三个 seed 的 `test_auc` 均值约 `0.7598`。
-- 相比实验 23 均值 `0.7597`，仅提升约 `+0.0001`。
-
-结论:
-
-- 这一步在语义上更干净，也更符合“多知识点题总权重守恒”的直觉。
-- 但在当前主线口径下，它相对实验 23 的增量几乎可以视为持平，暂时没有足够证据把它当成必须合入的关键改动。
-- 当前更可靠的判断是: 实验 23 的收益主要来自“修掉 `TKC` 行为项的全局二次缩小”，而不是多知识点题分摊本身。
-
-#### 实验 25. 在 readout 侧补 `TKC` item-aware residual
-
-改动:
-
-- 以实验 23 当前主线口径为底座:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-- 不改 propagation 主干，只在 readout 侧新增 `readout_mode = global_tkc_residual`:
-  - 保留原有全局 `student_state` 主路径
-  - 用 `q_repr` 对当前题相关、且该生已测的 `TKC` 概念状态做 item-aware soft attention
-  - 得到 `local_tkc_readout` 后，仅以 residual 方式注入认知匹配分支
-- 同时补了两类工程护栏:
-  - 若目标题的 `Q` 行全 0，则前向直接报错，避免 `softmax` 在全 `-inf` mask 下退成错误表示
-  - 为了避免 full-batch 预测时显存爆炸，新增按 target chunk 计算 readout/prediction head 的实现
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.697799`
-  - `best_epoch = 82`
-  - `test_auc = 0.692789`
-  - `test_acc = 0.684980`
-  - `test_rmse = 0.456158`
-  - 文件:
-    - `results/exp_tkc_readout_residual/assist_09_global_tkc_residual_seed2024_300ep.json`
-
-结论:
-
-- 这条 readout residual 路线在工程上已经可稳定运行，但效果明显低于当前正式主线，不值得继续补多 seed。
-- 这说明“把题目条件局部选择性信号只加在 readout 侧”在当前实验 23 主线口径下不是有效方向。
-- 这条分支更适合作为失败实验记录保留，不应整理回 `master`。
-
-#### 实验 26. `guess/slip` logit 轻量先验正则与校准指标
-
-改动:
-
-- 以实验 23 当前主线口径为底座:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-- 先补实验报告指标:
-  - `Brier`
-  - `ECE`
-  - 10-bin 分桶校准表
-- 再加一个默认关闭的 `guess/slip` logit L2 prior:
-  - `gs_logit_reg_weight = 0` 时不改变训练行为
-  - 实验中使用 `guess_prior_prob = 0.2`, `slip_prior_prob = 0.2`
-- 目的是检查 `conditional g/s` 在不放弃 AUC 收益的前提下，能否减少“非认知项吸收认知误差”的可辨识性风险。
-
-实验结论:
-
-- 对照 `w=0.0`, `seed=2024`:
-  - `best_val_auc = 0.763858`
-  - `best_epoch = 175`
-  - `valid_brier = 0.184939`
-  - `valid_ece = 0.060156`
-  - `test_auc = 0.760568`
-  - `test_acc = 0.722316`
-  - `test_rmse = 0.431628`
-  - `test_brier = 0.186303`
-  - `test_ece = 0.065051`
-  - 文件:
-    - `results/exp_gs_logit_regularization/assist_09_gs_logit_reg_w000_seed2024_300ep.json`
-- `w=0.001`, `seed=2024`:
-  - `best_val_auc = 0.762603`
-  - `best_epoch = 173`
-  - `valid_brier = 0.185206`
-  - `valid_ece = 0.059298`
-  - `test_auc = 0.759984`
-  - `test_acc = 0.722031`
-  - `test_rmse = 0.431563`
-  - `test_brier = 0.186247`
-  - `test_ece = 0.061222`
-  - 文件:
-    - `results/exp_gs_logit_regularization/assist_09_gs_logit_reg_w001_seed2024_300ep.json`
-- `w=0.0003`, `seed=2024`:
-  - `best_val_auc = 0.763648`
-  - `best_epoch = 186`
-  - `valid_brier = 0.185213`
-  - `valid_ece = 0.063928`
-  - `test_auc = 0.760338`
-  - `test_acc = 0.722069`
-  - `test_rmse = 0.432035`
-  - `test_brier = 0.186654`
-  - `test_ece = 0.066060`
-  - 文件:
-    - `results/exp_gs_logit_regularization/assist_09_gs_logit_reg_w0003_seed2024_300ep.json`
-
-结论:
-
-- 校准指标本身应保留: 它不改变模型结构，却能补上 AUC 看不到的概率质量问题。
-- `w=0.001` 带来一个明确的校准权衡:
-  - `test_auc` 相比对照下降约 `-0.00058`
-  - `test_brier` 改善约 `+0.00006`
-  - `test_ece` 改善约 `+0.00383`
-- `w=0.0003` 没有形成更好的折中: AUC 略降，`Brier/ECE` 也更差。
-- 当前不建议把 `guess/slip` logit 正则直接作为默认主线；它更适合作为“若后续明确以校准/可解释稳定性为目标”时再补多 seed 的备选。
-
-#### 实验 27. `q_repr` 内部 item-aware Q pooling
-
-改动:
-
-- 以当前 `master` 为底座:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-  - 报告包含 `Brier/ECE/分桶校准`
-- 针对 `_build_exercise_q_representation` 中 `q_pool_gate(concept_embeddings)` 只产生静态概念权重的问题，改成低秩 item-aware scoring:
-  - 保留静态概念打分 `static_scores`
-  - 新增 `exercise_query @ concept_key.T / sqrt(dim)` 作为题目条件打分
-  - 用 `static_scores + item_scores` 在目标题的 Q mask 内做 softmax
-- 没有使用 `[target, concept, 2 * dim]` 的 naive concat/expand，避免 full-batch 下显存膨胀。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.762854`
-  - `best_epoch = 204`
-  - `test_auc = 0.759806`
-  - `test_acc = 0.724714`
-  - `test_rmse = 0.432390`
-  - `test_brier = 0.186961`
-  - `test_ece = 0.065875`
-  - 文件:
-    - `results/exp_qrepr_item_aware_attention/assist_09_qrepr_item_aware_seed2024_300ep.json`
-- 当前 `master` 对照 `seed=2024`:
-  - `best_val_auc = 0.763858`
-  - `test_auc = 0.760568`
-  - `test_acc = 0.722316`
-  - `test_rmse = 0.431628`
-  - `test_brier = 0.186303`
-  - `test_ece = 0.065051`
-
-结论:
-
-- 这个改动验证了“静态 Q pooling 注意力”确实可以改成 item-aware 且工程上可跑。
-- 但单次结果没有胜出: AUC、RMSE、Brier、ECE 均弱于当前主线，只有 ACC 略高。
-- 当前不建议继续补多 seed，也不建议合入 `master`。
-- 更稳妥的判断是: `q_repr` 内部 item-aware attention 在当前主线口径下不是优先方向；它没有解决主要误差，反而可能让题目 embedding 对 Q 需求表示产生额外扰动。
-
-#### 实验 28. `guess/slip` 显式引入题目难度特征
-
-改动:
-
-- 以当前 `master` 为底座:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-  - 报告包含 `Brier/ECE/分桶校准`
-- 将 `guess/slip` 的条件输入从:
-  - `cat([student_state, q_repr])`
-  改为:
-  - `cat([student_state, q_repr, difficulty.detach()])`
-- 使用 `difficulty.detach()`，让非认知分支能读到题目难度，但不通过 `guess/slip` MLP 反向改写难度 embedding，降低可辨识性耦合风险。
-
-实验结论:
-
-- `seed=2024`:
-  - `best_val_auc = 0.766206`
-  - `best_epoch = 185`
-  - `test_auc = 0.760417`
-  - `test_acc = 0.725685`
-  - `test_rmse = 0.431064`
-  - `test_brier = 0.185816`
-  - `test_ece = 0.061265`
-  - 文件:
-    - `results/exp_gs_difficulty_aware/assist_09_gs_difficulty_aware_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.763486`
-  - `best_epoch = 165`
-  - `test_auc = 0.757394`
-  - `test_acc = 0.724904`
-  - `test_rmse = 0.431968`
-  - `test_brier = 0.186596`
-  - `test_ece = 0.059762`
-  - 文件:
-    - `results/exp_gs_difficulty_aware/assist_09_gs_difficulty_aware_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.765389`
-  - `best_epoch = 182`
-  - `test_auc = 0.761360`
-  - `test_acc = 0.725266`
-  - `test_rmse = 0.430556`
-  - `test_brier = 0.185378`
-  - `test_ece = 0.058610`
-  - 文件:
-    - `results/exp_gs_difficulty_aware/assist_09_gs_difficulty_aware_seed2026_300ep.json`
-- 三 seed 均值:
-  - `test_auc = 0.759724`
-  - `test_acc = 0.725285`
-  - `test_rmse = 0.431196`
-  - `test_brier = 0.185930`
-  - `test_ece = 0.059879`
-- 当前主线三 seed 对照:
-  - 文件:
-    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2024_300ep.json`
-    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2025_300ep.json`
-    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2026_300ep.json`
-  - `test_auc = 0.759690`
-  - `test_acc = 0.724784`
-  - `test_rmse = 0.431388`
-  - `test_brier = 0.186096`
-  - `test_ece = 0.062276`
-
-结论:
-
-- 这条改动不是大幅提升，但三 seed 均值有轻微正向信号:
-  - AUC 基本持平，约 `+0.00003`
-  - ACC 提升约 `+0.00050`
-  - RMSE 降低约 `-0.00019`
-  - Brier 改善约 `-0.00017`
-  - ECE 改善约 `-0.00240`
-- `seed=2025` 的 AUC 明显低于主线同 seed，但 `seed=2026` 明显高于主线同 seed，说明 AUC 收益并不稳定。
-- 当前更适合把它视为“可合入候选”而不是已经定型的新主线；同口径校准重跑确认了 ECE 有稳定均值改善，但 AUC 增量过小，合入前仍应权衡是否接受多一个 `guess/slip` 输入特征。
-
-#### 实验 29. `cognitive_match` 显式引入题目难度特征
-
-改动:
-
-- 以当前 `master` 为底座:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-  - 报告包含 `Brier/ECE/分桶校准`
-- 保留外部难度残差:
-  - `cognitive_logits = cognitive_match_mlp(match_inputs) - difficulty`
-- 将 `cognitive_match_mlp` 的输入从:
-  - `cat([student_state, q_repr, student_state * q_repr, abs(student_state - q_repr)])`
-  改为:
-  - `cat([student_state, q_repr, student_state * q_repr, abs(student_state - q_repr), difficulty.detach()])`
-- `difficulty.detach()` 只作为认知匹配 MLP 的条件特征，避免 MLP 路径反向改写难度 embedding；难度 embedding 仍主要由外部 `- difficulty` 残差承担。
-
-第一版实验结论:
-
-- 分支:
-  - `exp/cog-difficulty-aware`
-- `seed=2024`:
-  - `best_val_auc = 0.766130`
-  - `best_epoch = 179`
-  - `test_auc = 0.761552`
-  - `test_acc = 0.724733`
-  - `test_rmse = 0.430240`
-  - `test_brier = 0.185106`
-  - `test_ece = 0.058319`
-  - 文件:
-    - `results/exp_cog_difficulty_aware/assist_09_cog_difficulty_aware_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.766345`
-  - `best_epoch = 181`
-  - `test_auc = 0.761568`
-  - `test_acc = 0.725266`
-  - `test_rmse = 0.430394`
-  - `test_brier = 0.185239`
-  - `test_ece = 0.058755`
-  - 文件:
-    - `results/exp_cog_difficulty_aware/assist_09_cog_difficulty_aware_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.522594`
-  - `best_epoch = 20`
-  - `test_auc = 0.527464`
-  - `test_acc = 0.638261`
-  - `test_rmse = 0.488925`
-  - `test_brier = 0.239047`
-  - `test_ece = 0.098663`
-  - 文件:
-    - `results/exp_cog_difficulty_aware/assist_09_cog_difficulty_aware_seed2026_300ep.json`
-- `seed=2026` 单独复跑结果完全复现早停和低 AUC:
-  - 文件:
-    - `results/exp_cog_difficulty_aware/assist_09_cog_difficulty_aware_seed2026_300ep_rerun.json`
-- 三 seed 均值:
-  - `test_auc = 0.683528`
-  - `test_acc = 0.696087`
-  - `test_rmse = 0.449853`
-  - `test_brier = 0.203131`
-  - `test_ece = 0.071912`
-
-随后测试一个更保守的 zero-init 变体:
-
-- 分支:
-  - `exp/cog-difficulty-aware-zeroinit`
-- 在第一版基础上，将 `cognitive_match_mlp` 第一层新增的 `difficulty` 输入列权重初始化为 0:
-  - `self.cognitive_match_mlp[0].weight[:, -1].zero_()`
-- 目的: 让模型从“仅使用外部 `- difficulty` 残差”的状态开始，再学习难度交叉项，降低新增随机输入列对初始认知匹配的扰动。
-- `seed=2024`:
-  - `best_val_auc = 0.765731`
-  - `best_epoch = 167`
-  - `test_auc = 0.761883`
-  - `test_acc = 0.726998`
-  - `test_rmse = 0.429478`
-  - `test_brier = 0.184452`
-  - `test_ece = 0.053327`
-  - 文件:
-    - `results/exp_cog_difficulty_aware_zeroinit/assist_09_cog_difficulty_aware_zeroinit_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.764017`
-  - `best_epoch = 168`
-  - `test_auc = 0.760383`
-  - `test_acc = 0.722126`
-  - `test_rmse = 0.431285`
-  - `test_brier = 0.186007`
-  - `test_ece = 0.058791`
-  - 文件:
-    - `results/exp_cog_difficulty_aware_zeroinit/assist_09_cog_difficulty_aware_zeroinit_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.522891`
-  - `best_epoch = 20`
-  - `test_auc = 0.527940`
-  - `test_acc = 0.639042`
-  - `test_rmse = 0.488924`
-  - `test_brier = 0.239046`
-  - `test_ece = 0.099115`
-  - 文件:
-    - `results/exp_cog_difficulty_aware_zeroinit/assist_09_cog_difficulty_aware_zeroinit_seed2026_300ep.json`
-- 三 seed 均值:
-  - `test_auc = 0.683402`
-  - `test_acc = 0.696055`
-  - `test_rmse = 0.449896`
-  - `test_brier = 0.203168`
-  - `test_ece = 0.070411`
-
-结论:
-
-- `seed=2024/2025` 在第一版上有较强正向信号，说明“认知匹配读到难度条件”本身可能有表达价值。
-- 但 `seed=2026` 在第一版与 zero-init 变体中都稳定崩到接近随机 AUC，且复跑可复现，说明当前实现存在严重 seed 稳定性问题。
-- zero-init 新增难度输入列未能解决 `seed=2026` 崩盘。
-- 当前不建议合入 `master`，也不建议在这一路线上继续补更多 seed；若以后复访，应优先设计能保持原 `cognitive_match_mlp` 初始化和主干输出的残差/adapter 形式，而不是直接扩展主匹配 MLP 的输入维度。
-
-#### 实验 30. `TKC` 行为正误融合 gate 加入概念语义偏置
-
-改动:
-
-- 以当前 `master` 为底座:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-  - 报告包含 `Brier/ECE/分桶校准`
-- 保留原行为 gate 主干输入不变:
-  - `cat([correct_tkc_component, incorrect_tkc_component])`
-- 新增一个 concept-specific residual logit:
-  - `exercise_behavior_concept_gate = nn.Linear(concept_dim, 1, bias=False)`
-  - `exercise_behavior_gate = sigmoid(exercise_behavior_gate(inputs) + exercise_behavior_concept_gate(concept_embeddings.detach()))`
-- 新增 concept residual gate 权重初始化为 0，使初始行为等价于当前主线，再学习不同知识点对正确/错误历史通道的偏好。
-- 使用 `concept_embeddings.detach()`，避免行为融合 gate 直接反向拉扯概念 embedding 主语义。
-
-单次实验结论:
-
-- 分支:
-  - `exp/tkc-behavior-concept-gate`
-- `seed=2024`:
-  - `best_val_auc = 0.764401`
-  - `best_epoch = 187`
-  - `test_auc = 0.760564`
-  - `test_acc = 0.722735`
-  - `test_rmse = 0.431967`
-  - `test_brier = 0.186595`
-  - `test_ece = 0.066433`
-  - 文件:
-    - `results/exp_tkc_behavior_concept_gate/assist_09_tkc_behavior_concept_gate_seed2024_300ep.json`
-- 当前 `master` 对照 `seed=2024`:
-  - `best_val_auc = 0.763858`
-  - `best_epoch = 175`
-  - `test_auc = 0.760568`
-  - `test_acc = 0.722316`
-  - `test_rmse = 0.431628`
-  - `test_brier = 0.186303`
-  - `test_ece = 0.065051`
-  - 文件:
-    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2024_300ep.json`
-
-结论:
-
-- `test_auc` 与当前主线几乎持平，差约 `-0.000004`。
-- `test_acc` 略升约 `+0.00042`。
-- 但 `RMSE/Brier/ECE` 均变差，尤其 `ECE` 从 `0.065051` 升到 `0.066433`。
-- 单次没有足够正向信号，当前不建议继续补多 seed，也不建议合入 `master`。
-- 更稳妥的判断是: 给行为正误融合 gate 加 concept-specific bias 不解决当前主要误差；它可能引入更偏的校准倾向。
-
-#### 实验 31. `UKC` 结构传播去参数化: no-param graph propagation
-
-改动:
-
-- 以当前 `master` 为底座:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-  - 报告包含 `Brier/ECE/分桶校准`
-- 只修改 `UKC` 侧概念图传播:
-  - 原实现: `concept_graph @ self.ukc_concept_to_concept(concept_embeddings)`
-  - 新实现: `concept_graph @ concept_embeddings`
-- 目的: 检查 `UKC` 侧的线性变换是否会放大全局平滑噪声；用接近 LightGCN 的无参数结构传播作为最小扰动对照。
-- 保留 `self.ukc_concept_to_concept` 模块定义不删，以尽量减少初始化结构和 checkpoint schema 之外的额外扰动。
-
-实验结果:
-
-- 分支:
-  - `exp/ukc-no-param-propagation`
-- `seed=2024`:
-  - `best_val_auc = 0.764805`
-  - `best_epoch = 187`
-  - `test_auc = 0.760853`
-  - `test_acc = 0.722450`
-  - `test_rmse = 0.431866`
-  - `test_brier = 0.186508`
-  - `test_ece = 0.064660`
-  - 文件:
-    - `results/exp_ukc_no_param_propagation/assist_09_ukc_no_param_propagation_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.764259`
-  - `best_epoch = 190`
-  - `test_auc = 0.758322`
-  - `test_acc = 0.722849`
-  - `test_rmse = 0.432408`
-  - `test_brier = 0.186976`
-  - `test_ece = 0.061853`
-  - 文件:
-    - `results/exp_ukc_no_param_propagation/assist_09_ukc_no_param_propagation_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.764830`
-  - `best_epoch = 185`
-  - `test_auc = 0.760474`
-  - `test_acc = 0.724257`
-  - `test_rmse = 0.431110`
-  - `test_brier = 0.185856`
-  - `test_ece = 0.060441`
-  - 文件:
-    - `results/exp_ukc_no_param_propagation/assist_09_ukc_no_param_propagation_seed2026_300ep.json`
-- 三 seed 均值:
-  - `test_auc = 0.759883`
-  - `test_acc = 0.723185`
-  - `test_rmse = 0.431794`
-  - `test_brier = 0.186447`
-  - `test_ece = 0.062318`
-- 当前 `master` 三 seed 均值:
-  - `test_auc = 0.759690`
-  - `test_acc = 0.724784`
-  - `test_rmse = 0.431388`
-  - `test_brier = 0.186096`
-  - `test_ece = 0.062276`
-- 相对当前 `master` 的三 seed 均值差:
-  - `test_auc = +0.000193`
-  - `test_acc = -0.001599`
-  - `test_rmse = +0.000406`
-  - `test_brier = +0.000351`
-  - `test_ece = +0.000043`
-
-结论:
-
-- no-param `UKC` 传播只带来非常小的 AUC 均值提升，但 `ACC/RMSE/Brier/ECE` 均值全部变差。
-- `seed=2024/2026` 的 AUC 有正向信号，`seed=2025` 明显退化，说明该改动并不稳定。
-- 当前不建议合入 `master`。
-- 这个结果更像是在提示: `UKC` 的图侧变换可能确实影响排序，但完全去掉线性变换会损害误差和校准；如果未来复访，更适合尝试 zero-init residual / interpolation，而不是直接替换成纯无参数传播。
-
-#### 实验 32. `UKC` 使用 directed symmetric-like graph normalization
-
-改动:
-
-- 以当前 `master` 为底座:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-  - 报告包含 `Brier/ECE/分桶校准`
-- 只修改 single graph 模式下 `UKC` 使用的传播矩阵:
-  - `TKC` 保持 `concept_graph @ self.tkc_concept_to_concept(concept_embeddings)`
-  - `UKC` 改为 `ukc_graph @ self.ukc_concept_to_concept(concept_embeddings)`
-- 因当前 `propagation_graph.csv` 已经是带 self-loop 的 row-normalized 图，实验中用非零 pattern 还原二值 support:
-  - `support = (concept_graph > 0).float()`
-  - `ukc_graph = D_out^-1/2 @ support @ D_in^-1/2`
-- 目的: 在保留 directed prerequisite 边方向性的前提下，减弱高出度/高入度知识点对 `UKC` 平滑的支配，单独检查“图归一化方式”是否是过度平滑来源。
-
-单次实验结论:
-
-- 分支:
-  - `exp/ukc-directed-sym-norm`
-- `seed=2024`:
-  - `best_val_auc = 0.764946`
-  - `best_epoch = 191`
-  - `test_auc = 0.760594`
-  - `test_acc = 0.722164`
-  - `test_rmse = 0.432111`
-  - `test_brier = 0.186720`
-  - `test_ece = 0.066479`
-  - 文件:
-    - `results/exp_ukc_directed_sym_norm/assist_09_ukc_directed_sym_norm_seed2024_300ep.json`
-- 当前 `master` 对照 `seed=2024`:
-  - `best_val_auc = 0.763858`
-  - `best_epoch = 175`
-  - `test_auc = 0.760568`
-  - `test_acc = 0.722316`
-  - `test_rmse = 0.431628`
-  - `test_brier = 0.186303`
-  - `test_ece = 0.065051`
-- 相对当前 `master` 的 `seed=2024` 差:
-  - `test_auc = +0.000026`
-  - `test_acc = -0.000152`
-  - `test_rmse = +0.000483`
-  - `test_brier = +0.000417`
-  - `test_ece = +0.001427`
-
-结论:
-
-- `best_val_auc` 提升，但最终 `test_auc` 只有极小提升，且 `ACC/RMSE/Brier/ECE` 全部变差。
-- `ECE` 退化幅度比 AUC 微升更大，说明该归一化方式可能让 `UKC` 支持项的校准更偏。
-- 单 seed 已不满足“至少不伤误差和校准”的扩 seed 门槛，当前不建议继续补三 seed，也不建议合入 `master`。
-
-#### 实验 33. `cognitive_match` 的 zero-init difficulty adapter
-
-改动:
-
-- 以当前 `master` 为底座:
-  - 单图 `propagation_graph`
-  - `conditional g/s`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 正误双通道行为消息
-  - 学生级自适应 `TKC/UKC` 融合 gate
-  - 报告包含 `Brier/ECE/分桶校准`
-- 保留主线认知 logits:
-  - `self.cognitive_match_mlp(match_inputs).squeeze(-1) - difficulty`
-- 在所有现有模块之后新增 sidecar adapter:
-  - `cognitive_difficulty_adapter = MLP(concept_dim * 4 + 1 -> concept_dim -> 1)`
-  - 输入为 `cat([match_inputs.detach(), difficulty.detach()])`
-  - 输出层权重和 bias 均初始化为 0
-- 最终认知 logits:
-  - `base_cognitive_logits - difficulty + cognitive_difficulty_adapter(adapter_inputs)`
-- 目的: 复访实验 29 中“认知匹配读到难度条件”的正向信号，同时避免直接扩展 `cognitive_match_mlp` 输入维度导致的初始化扰动和 `seed=2026` 稳定崩盘。
-
-实验结果:
-
-- 分支:
-  - `exp/cog-difficulty-adapter`
-- `seed=2024`:
-  - `best_val_auc = 0.763090`
-  - `best_epoch = 178`
-  - `test_auc = 0.760849`
-  - `test_acc = 0.721783`
-  - `test_rmse = 0.431065`
-  - `test_brier = 0.185817`
-  - `test_ece = 0.057483`
-  - 文件:
-    - `results/exp_cog_difficulty_adapter/assist_09_cog_difficulty_adapter_seed2024_300ep.json`
-- `seed=2025`:
-  - `best_val_auc = 0.764293`
-  - `best_epoch = 186`
-  - `test_auc = 0.759360`
-  - `test_acc = 0.725323`
-  - `test_rmse = 0.430594`
-  - `test_brier = 0.185411`
-  - `test_ece = 0.054023`
-  - 文件:
-    - `results/exp_cog_difficulty_adapter/assist_09_cog_difficulty_adapter_seed2025_300ep.json`
-- `seed=2026`:
-  - `best_val_auc = 0.765794`
-  - `best_epoch = 172`
-  - `test_auc = 0.760797`
-  - `test_acc = 0.727816`
-  - `test_rmse = 0.429176`
-  - `test_brier = 0.184192`
-  - `test_ece = 0.050316`
-  - 文件:
-    - `results/exp_cog_difficulty_adapter/assist_09_cog_difficulty_adapter_seed2026_300ep.json`
-- 三 seed 均值:
-  - `test_auc = 0.760335`
-  - `test_acc = 0.724974`
-  - `test_rmse = 0.430278`
-  - `test_brier = 0.185140`
-  - `test_ece = 0.053941`
-- 当前 `master` 三 seed 均值:
-  - `test_auc = 0.759690`
-  - `test_acc = 0.724784`
-  - `test_rmse = 0.431388`
-  - `test_brier = 0.186096`
-  - `test_ece = 0.062276`
-- 相对当前 `master` 的三 seed 均值差:
-  - `test_auc = +0.000645`
-  - `test_acc = +0.000190`
-  - `test_rmse = -0.001109`
-  - `test_brier = -0.000955`
-  - `test_ece = -0.008335`
-
-结论:
-
-- 该 adapter 避开了实验 29 的 `seed=2026` 崩盘；`seed=2026` 反而是三组里提升最大的 seed。
-- 三 seed 均值在 `AUC/ACC/RMSE/Brier/ECE` 上全部优于当前 `master`，其中 `ECE` 改善最明显。
-- `seed=2024/2025` 的 ACC 略低于对应主线，但三 seed 均值仍略高；且 RMSE/Brier/ECE 三个概率质量指标三 seed 均改善。
-- 当前建议合入 `master`，作为新的认知匹配主线。
-
-#### 诊断 1. 实验 33 主线的 test prediction slices
-
-目的:
-
-- 实验 33 虽然三 seed 全指标优于旧主线，但 AUC 均值只提升约 `+0.000645`，仍属于小幅稳定改进，不是预期中的点级跃迁。
-- 为后续寻找更可能产生大收益的方向，新增逐样本切片诊断脚本:
-  - `scripts/analyze_prediction_slices.py`
-- 诊断对象:
-  - `results/exp_cog_difficulty_adapter/assist_09_cog_difficulty_adapter_seed2024_300ep.json`
-  - `results/exp_cog_difficulty_adapter/assist_09_cog_difficulty_adapter_seed2025_300ep.json`
-  - `results/exp_cog_difficulty_adapter/assist_09_cog_difficulty_adapter_seed2026_300ep.json`
-- 输出:
-  - `results/diagnostics/cog_difficulty_adapter_seed2024_test_slices.json`
-  - `results/diagnostics/cog_difficulty_adapter_seed2024_test_slices.csv`
-  - `results/diagnostics/cog_difficulty_adapter_seed2025_test_slices.json`
-  - `results/diagnostics/cog_difficulty_adapter_seed2025_test_slices.csv`
-  - `results/diagnostics/cog_difficulty_adapter_seed2026_test_slices.json`
-  - `results/diagnostics/cog_difficulty_adapter_seed2026_test_slices.csv`
-
-三 seed 聚合观察:
-
-- 多知识点题明显退化，且随概念数单调变差:
-  - `concept_count=1`: `AUC = 0.766024`, `Brier = 0.182274`, `ECE = 0.051484`
-  - `concept_count=2`: `AUC = 0.733129`, `Brier = 0.195096`, `ECE = 0.065560`
-  - `concept_count=3`: `AUC = 0.673917`, `Brier = 0.229258`, `ECE = 0.091616`
-- 学生历史正确率中档样本最难分:
-  - `student_history_acc=0.4-0.6`: `AUC = 0.698830`, `Brier = 0.227584`, `ECE = 0.081261`
-  - `<0.4`: `AUC = 0.738238`, `Brier = 0.175546`, `ECE = 0.055333`
-  - `0.8-1.0`: `AUC = 0.714948`, `Brier = 0.131946`, `ECE = 0.037010`
-- 学生历史长度短/中档也偏弱:
-  - `student_history_count=6-20`: `Brier = 0.198716`, `ECE = 0.071771`
-  - `student_history_count=21-50`: `Brier = 0.201000`, `ECE = 0.067460`
-  - `student_history_count=101+`: `Brier = 0.179973`, `ECE = 0.049264`
-- `none_seen` 概念样本排序并不差，但校准很差:
-  - `student_item_concept_overlap=none_seen`: `AUC = 0.809902`, `Brier = 0.145132`, `ECE = 0.118804`
-  - `label_rate = 0.802171`, `mean_prob = 0.683368`
-  - 说明该类样本更像是被系统性低估，而不是完全排不动。
-- 低训练正确率题目校准偏差也很大:
-  - `exercise_train_acc < 0.4`: `AUC = 0.687514`, `Brier = 0.227482`, `ECE = 0.108987`
-  - `label_rate = 0.393057`, `mean_prob = 0.288113`
-
-关于 recency 的判断:
-
-- 当前 ordered ASSIST09 预处理虽然先按 `user_id/order_id` 排序，但 split 阶段对每个学生做了随机抽样:
-  - `stu_df = stu_df.sample(frac=1, random_state=seed)`
-- 因此当前 `train/valid/test` 协议不是严格时间切分。
-- 在这个协议下直接做 recency-aware student state 不够干净，可能会把随机子集中的顺序权重误当作真实近期性。
-- 若要系统测试 recency，应先设计时间切分协议；在当前主线协议下，不建议把 recency 作为下一优先模型实验。
-
-后续建议:
-
-- 优先考虑多知识点题的 `q_repr` / concept composition 方向，而不是继续做 `difficulty` 或 `UKC` 局部小修。
-- 更具体地，下一步可尝试一个只对多知识点题有空间的 zero-init `q_repr` residual/adapter，目标是改善 `concept_count=2/3` 切片，同时不伤 `concept_count=1`。
-- 对 `none_seen` 和低训练正确率题目，可单独作为校准问题记录，但它们目前不应优先于多知识点组合表达。
-
-## D. 快速索引
-
-这部分只用于快速查重，不替代上面的详细条目。
-
-### 已经形成当前主线的关键实验
-
-- 实验 3: transition graph 成为后续图结构起点。
-- 实验 6: 锁定 `learning_rate = 1e-3`, `concept_dim = 64`。
-- 实验 7: `conditional g/s` 成立。
-- 实验 8: `300 epoch` 训练充分性被确认。
-- 实验 9: 长训单图基线的多 seed 稳定性被确认。
-- 实验 11: `TKC/UKC` 结构传播参数解耦成立。
-- 实验 12: `TKC` 正误双通道成立。
-- 实验 21: `TKC/UKC` 学生自适应融合 gate 成立，并已取代旧主线。
-- 实验 23: 修正 `TKC` 行为项全局二次缩小后，三 seed 均值约 `0.7597`，并已吸收到当前主线。
-- 实验 26（报告侧部分）: 补 `Brier/ECE/分桶校准`，这部分不改变模型结构，建议后续实验默认保留。
-- 实验 33: `cognitive_match` 的 zero-init difficulty adapter 三 seed 均值在 AUC/ACC/RMSE/Brier/ECE 全部优于旧主线，并已取代旧认知匹配口径。
-
-### 已明确不建议默认继续的路线
-
-- 实验 4: `TKC` 标量融合无效。
-- 实验 5: 早期 `TKC` gated fusion 无效。
-- 实验 10: `dual graph` 明显退化。
-- 实验 13: `q_e` residual 融合无收益。
-- 实验 14: `TKC/UKC` 同时局部硬 mean 明显退化。
-- 实验 15: `TKC` 局部硬 mean + `UKC` 全局 mean 仍无改善。
-- 实验 20: 直接叠加 `local UKC neighbor` 和 `UKC-only coverage gate` 低于实验 19 单独版本。
-- 实验 22: 将 `local UKC neighbor` 叠到实验 21 主线底座后，三 seed 均值低于该底座，当前不建议继续推进。
-- 实验 25: `TKC` item-aware residual 只放在 readout 侧后，单次结果明显低于当前正式主线。
-- 实验 26（正则部分）: `guess/slip` logit 正则暂不建议作为默认主线；`w=0.001` 有 ECE 改善但牺牲少量 AUC。
-- 实验 27: `q_repr` 内部 item-aware Q pooling 单次弱于当前主线，当前不建议继续。
-- 实验 29: `cognitive_match` 拼入 `difficulty.detach()` 在 `seed=2024/2025` 有信号，但 `seed=2026` 稳定崩盘；zero-init 也未解决，当前不建议继续。
-- 实验 30: `TKC` 行为正误融合 gate 加 concept-specific residual bias 后，单次 AUC 持平但 RMSE/Brier/ECE 变差，当前不建议继续。
-- 实验 31: `UKC` no-param graph propagation 三 seed 平均 AUC 仅微升，但 ACC/RMSE/Brier/ECE 均变差，当前不建议合入。
-- 实验 32: `UKC` directed symmetric-like normalization 单次 AUC 仅微升，但 ACC/RMSE/Brier/ECE 均变差，当前不建议继续。
-
-### 当前主线口径下的近线 follow-up
-
-- 实验 24: 在实验 23 基础上做多知识点题权重分摊后，三 seed 均值约 `0.7598`，相对实验 23 几乎持平，暂不作为必须合入项。
-- 实验 28: 在 `guess/slip` 条件输入中加入 `difficulty.detach()` 后，AUC 基本持平，ECE 有改善，但 AUC 收益不稳定，暂记为可合入候选。
-
-### 当前诊断指向的下一步
-
-- 诊断 1: 实验 33 主线的 test prediction slices 显示，多知识点题从 `concept_count=1` 到 `2/3` 明显单调退化，下一步优先考虑 `q_repr` / concept composition 方向。
-- 诊断 1: 当前 split 是按学生随机抽样，不是严格时间切分；在当前协议下暂不优先做 recency-aware student state。
-- 诊断 1: `none_seen` 概念样本 AUC 高但 ECE 很差，说明可作为后续校准问题记录，但优先级低于多知识点题组合表达。
-
-### 实验 12 旧口径的历史参考
-
-- 实验 16: item-aware attention 说明“题目条件选择性”在旧口径下曾有信号，但不作为当前默认复访路线。
-- 实验 17: local neighbor `UKC` 说明 `UKC` 全局噪声在旧口径下是问题；后续实验 22 已复验且未胜出。
-- 实验 18: coverage-aware 全局融合有信号，但与实验 21 的融合机制语义重叠，且旧口径结果不能外推到当前主线。
-- 实验 19: coverage-aware `UKC` gate 在旧主线下几乎追平，但相对实验 21 仍是次优历史参考。
+- 实验 10: `dual graph`
+- 实验 13: `q_e` residual
+- 实验 14/15: 局部硬汇聚
+- 实验 22: 在新主线底座上复验 `local UKC neighbor`
+- 实验 25: readout 侧 `TKC` residual
+- 实验 27: `q_repr` item-aware Q pooling
+- 实验 29: 直接扩展 `cognitive_match` 输入
+- 实验 31/32: `UKC` 图传播轻量替换
