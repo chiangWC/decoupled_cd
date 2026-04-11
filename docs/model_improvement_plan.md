@@ -164,6 +164,17 @@
   - AUC 仅微升，但 `ACC/RMSE/Brier/ECE` 全变差
 - 实验 32: `UKC` directed symmetric-like normalization
   - 单 seed 已不满足继续扩 seed 的门槛
+- 实验 35: local readout adapter
+  - 做法: zero-init cognitive logit sidecar 读取当前题目 Q mask 对应的 `TKC+UKC` 局部概念状态均值
+  - 工程备注: 朴素 `[N, K, dim]` target gather 会 OOM，实验分支改为 sparse Q `index_add` 聚合
+  - `seed=2024` 相对实验 34 同 seed:
+    - `test_auc -0.004031`
+    - `test_acc -0.000856`
+    - `test_rmse +0.001213`
+    - `test_brier +0.001043`
+    - `test_ece +0.000762`
+  - `concept_count=2/3` 切片也退化；`4+` 仅在 `RMSE/Brier` 小幅改善但样本少且 `ECE` 明显变差
+  - 结论: 不扩 seed，不建议合入主线
 
 ### 语义更干净，但不值得主线吸收
 
@@ -266,3 +277,4 @@
 - 实验 27: `q_repr` item-aware Q pooling
 - 实验 29: 直接扩展 `cognitive_match` 输入
 - 实验 31/32: `UKC` 图传播轻量替换
+- 实验 35: local readout adapter
