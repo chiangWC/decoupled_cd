@@ -1,0 +1,34 @@
+import unittest
+
+import torch
+
+from models.decoupled_cdm import DecoupledCDM
+
+
+class CognitiveDifficultyAdapterTest(unittest.TestCase):
+    def test_adapter_output_layer_starts_at_zero(self) -> None:
+        model = DecoupledCDM(num_students=2, num_exercises=3, num_concepts=2, concept_dim=4)
+
+        final_layer = model.cognitive_difficulty_adapter[-1]
+        torch.testing.assert_close(final_layer.weight, torch.zeros_like(final_layer.weight))
+        torch.testing.assert_close(final_layer.bias, torch.zeros_like(final_layer.bias))
+
+    def test_adapter_does_not_backpropagate_into_difficulty_input(self) -> None:
+        model = DecoupledCDM(num_students=2, num_exercises=3, num_concepts=2, concept_dim=4)
+        with torch.no_grad():
+            model.cognitive_difficulty_adapter[-1].weight.fill_(1.0)
+            model.cognitive_difficulty_adapter[-1].bias.fill_(0.0)
+
+        match_inputs = torch.randn(5, 16, requires_grad=True)
+        difficulty = torch.randn(5, requires_grad=True)
+        adapter_inputs = torch.cat([match_inputs.detach(), difficulty.detach().unsqueeze(-1)], dim=-1)
+        output = model.cognitive_difficulty_adapter(adapter_inputs).sum()
+
+        output.backward()
+
+        self.assertIsNone(match_inputs.grad)
+        self.assertIsNone(difficulty.grad)
+
+
+if __name__ == "__main__":
+    unittest.main()

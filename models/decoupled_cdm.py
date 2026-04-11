@@ -85,6 +85,13 @@ class DecoupledCDM(nn.Module):
             alpha=alpha,
             beta=beta,
         )
+        self.cognitive_difficulty_adapter = nn.Sequential(
+            nn.Linear(concept_dim * 4 + 1, concept_dim),
+            nn.ReLU(),
+            nn.Linear(concept_dim, 1),
+        )
+        nn.init.zeros_(self.cognitive_difficulty_adapter[-1].weight)
+        nn.init.zeros_(self.cognitive_difficulty_adapter[-1].bias)
 
     def forward(
         self,
@@ -133,7 +140,12 @@ class DecoupledCDM(nn.Module):
             [student_state, q_repr, student_state * q_repr, torch.abs(student_state - q_repr)],
             dim=-1,
         )
-        cognitive_logits = self.cognitive_match_mlp(match_inputs).squeeze(-1) - difficulty
+        adapter_inputs = torch.cat([match_inputs.detach(), difficulty.detach().unsqueeze(-1)], dim=-1)
+        cognitive_logits = (
+            self.cognitive_match_mlp(match_inputs).squeeze(-1)
+            - difficulty
+            + self.cognitive_difficulty_adapter(adapter_inputs).squeeze(-1)
+        )
         cognitive_probs = torch.sigmoid(cognitive_logits)
 
         guess_logits = self.guess_logit(target_student_ids).squeeze(-1)
