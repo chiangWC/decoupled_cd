@@ -313,17 +313,24 @@ def main() -> None:
         "test_auc": test_metrics["auc"],
         "test_acc": test_metrics["acc"],
         "test_rmse": test_metrics["rmse"],
+        "test_brier": test_metrics["brier"],
+        "test_ece": test_metrics["ece"],
         "best_checkpoint_path": str(Path(checkpoint_path).resolve()),
         "output_json": str(output_path.resolve()),
         "history_csv": str(Path(history_path).resolve()),
     }
+    if valid_metrics is not None:
+        summary_row["valid_brier"] = valid_metrics["brier"]
+        summary_row["valid_ece"] = valid_metrics["ece"]
     append_summary_csv(summary_row, "results/experiment_results.csv")
     logger.info(
-        "Finished run: best_val_auc=%s test_auc=%.6f test_acc=%.6f test_rmse=%.6f",
+        "Finished run: best_val_auc=%s test_auc=%.6f test_acc=%.6f test_rmse=%.6f test_brier=%.6f test_ece=%.6f",
         result.best_val_auc,
         test_metrics["auc"],
         test_metrics["acc"],
         test_metrics["rmse"],
+        test_metrics["brier"],
+        test_metrics["ece"],
     )
 
     print(json.dumps(output, indent=2, ensure_ascii=False))

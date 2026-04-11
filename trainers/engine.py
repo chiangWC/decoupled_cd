@@ -157,6 +157,8 @@ def train_model(
             row["val_auc"] = float(val_metrics["auc"])
             row["val_acc"] = float(val_metrics["acc"])
             row["val_rmse"] = float(val_metrics["rmse"])
+            row["val_brier"] = float(val_metrics["brier"])
+            row["val_ece"] = float(val_metrics["ece"])
             scheduler.step(row["val_auc"])
 
             if row["val_auc"] > best_val_auc:
