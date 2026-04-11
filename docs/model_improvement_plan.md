@@ -1092,6 +1092,58 @@
 - zero-init 新增难度输入列未能解决 `seed=2026` 崩盘。
 - 当前不建议合入 `master`，也不建议在这一路线上继续补更多 seed；若以后复访，应优先设计能保持原 `cognitive_match_mlp` 初始化和主干输出的残差/adapter 形式，而不是直接扩展主匹配 MLP 的输入维度。
 
+#### 实验 30. `TKC` 行为正误融合 gate 加入概念语义偏置
+
+改动:
+
+- 以当前 `master` 为底座:
+  - 单图 `propagation_graph`
+  - `conditional g/s`
+  - `TKC/UKC` 结构传播参数独立
+  - `TKC` 正误双通道行为消息
+  - 学生级自适应 `TKC/UKC` 融合 gate
+  - 报告包含 `Brier/ECE/分桶校准`
+- 保留原行为 gate 主干输入不变:
+  - `cat([correct_tkc_component, incorrect_tkc_component])`
+- 新增一个 concept-specific residual logit:
+  - `exercise_behavior_concept_gate = nn.Linear(concept_dim, 1, bias=False)`
+  - `exercise_behavior_gate = sigmoid(exercise_behavior_gate(inputs) + exercise_behavior_concept_gate(concept_embeddings.detach()))`
+- 新增 concept residual gate 权重初始化为 0，使初始行为等价于当前主线，再学习不同知识点对正确/错误历史通道的偏好。
+- 使用 `concept_embeddings.detach()`，避免行为融合 gate 直接反向拉扯概念 embedding 主语义。
+
+单次实验结论:
+
+- 分支:
+  - `exp/tkc-behavior-concept-gate`
+- `seed=2024`:
+  - `best_val_auc = 0.764401`
+  - `best_epoch = 187`
+  - `test_auc = 0.760564`
+  - `test_acc = 0.722735`
+  - `test_rmse = 0.431967`
+  - `test_brier = 0.186595`
+  - `test_ece = 0.066433`
+  - 文件:
+    - `results/exp_tkc_behavior_concept_gate/assist_09_tkc_behavior_concept_gate_seed2024_300ep.json`
+- 当前 `master` 对照 `seed=2024`:
+  - `best_val_auc = 0.763858`
+  - `best_epoch = 175`
+  - `test_auc = 0.760568`
+  - `test_acc = 0.722316`
+  - `test_rmse = 0.431628`
+  - `test_brier = 0.186303`
+  - `test_ece = 0.065051`
+  - 文件:
+    - `results/exp_master_calibration_rerun/assist_09_master_calibration_seed2024_300ep.json`
+
+结论:
+
+- `test_auc` 与当前主线几乎持平，差约 `-0.000004`。
+- `test_acc` 略升约 `+0.00042`。
+- 但 `RMSE/Brier/ECE` 均变差，尤其 `ECE` 从 `0.065051` 升到 `0.066433`。
+- 单次没有足够正向信号，当前不建议继续补多 seed，也不建议合入 `master`。
+- 更稳妥的判断是: 给行为正误融合 gate 加 concept-specific bias 不解决当前主要误差；它可能引入更偏的校准倾向。
+
 ## D. 快速索引
 
 这部分只用于快速查重，不替代上面的详细条目。
@@ -1123,6 +1175,7 @@
 - 实验 26（正则部分）: `guess/slip` logit 正则暂不建议作为默认主线；`w=0.001` 有 ECE 改善但牺牲少量 AUC。
 - 实验 27: `q_repr` 内部 item-aware Q pooling 单次弱于当前主线，当前不建议继续。
 - 实验 29: `cognitive_match` 拼入 `difficulty.detach()` 在 `seed=2024/2025` 有信号，但 `seed=2026` 稳定崩盘；zero-init 也未解决，当前不建议继续。
+- 实验 30: `TKC` 行为正误融合 gate 加 concept-specific residual bias 后，单次 AUC 持平但 RMSE/Brier/ECE 变差，当前不建议继续。
 
 ### 当前主线口径下的近线 follow-up
 
