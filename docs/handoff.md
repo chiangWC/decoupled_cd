@@ -53,6 +53,31 @@
   - `ECE -0.011134`
 - 详细背景见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 33、实验 34 和诊断 1。
 
+当前正向训练策略支线:
+
+- 分支:
+  - `exp/training-modes`
+- 关键配置:
+  - `training_mode = recompute_minibatch`
+  - `batch_size = 8192`
+  - `learning_rate = 1e-4`
+- 三 seed 均值:
+  - `test_auc = 0.762141`
+  - `test_acc = 0.727879`
+  - `test_rmse = 0.427675`
+  - `test_brier = 0.182906`
+  - `test_ece = 0.044514`
+- 相对实验 34 三 seed 均值:
+  - `AUC +0.000945`
+  - `ACC +0.000324`
+  - `RMSE -0.001494`
+  - `Brier -0.001280`
+  - `ECE -0.006628`
+- 判断:
+  - 这是当前最强正向支线候选，但尚未合入 `master`。
+  - 收益主要来自真正 mini-batch SGD 的整体校准/泛化改善，不是彻底解决 `concept_count=4+` 或 `none_seen` 校准问题。
+  - 后续若继续优化训练策略，默认从 `exp/training-modes` 出发。
+
 近期已吸收的 follow-up:
 
 - 实验 33:
@@ -77,6 +102,7 @@
 - 实验 33 的 zero-init cognitive difficulty adapter 在三 seed 上稳定优于实验 23 基座，且避开了实验 29 的 seed 崩盘。
 - 诊断 1 表明主线的主要剩余误差集中在多知识点题和 `none_seen` 校准。
 - 实验 34 证明“多知识点题 targeted residual + guess/slip difficulty residual”可以在三 seed 上同时改善 `AUC/ACC/RMSE/Brier/ECE`，这一步已经吸收到当前 `master`。
+- 实验 37 证明在当前主线结构不变的前提下，`recompute_minibatch bs=8192 lr=1e-4` 三 seed 同时改善 `AUC/ACC/RMSE/Brier/ECE`；但代码仍留在 `exp/training-modes`，尚未推广为 `master` 默认训练协议。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
@@ -89,6 +115,11 @@
 
 - `exp/*` 分支只作为实验代码和复验参考，不直接代表当前主线。
 - 具体分支以 `git branch -a` 为准；每条路线的定位和结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的详细条目与 D 部分快速索引为准。
+- `exp/training-modes` 是当前优先继续的训练策略支线:
+  - 已实现 `full_batch`、`target_accumulation`、`frozen_readout`、`alternating_frozen_readout`、`recompute_minibatch`
+  - 已验证正向配置是 `recompute_minibatch bs=8192 lr=1e-4`
+  - 已验证负向配置包括 `frozen_readout`、`alternating_frozen_readout`、`recompute_minibatch lr=1e-3`、`recompute_minibatch bs=4096 lr=3e-4`
+  - 后续优化可优先试更细的学习率、调度器、早停策略或 weight decay，而不是再回到 frozen readout
 
 ## 当前关键文件
 
@@ -120,3 +151,7 @@
 - 避免显著增加 full-batch 显存占用的主干改动。
 - 新实验默认在 `exp/*` 分支上进行，确认成立后再整理回 `master`。
 - 远端运行前，先把当前分支 `git push` 到 `origin`，再执行 `remote_exec.sh`。
+- 继续训练策略支线时，优先从 `exp/training-modes` 当前实现小步试:
+  - `recompute_minibatch bs=8192 lr=1e-4` 周围的 scheduler / patience / weight decay
+  - 对比是否能保住三 seed AUC 的同时进一步降低 `ECE`
+  - 单 seed 有信号后再补 `2024/2025/2026` 三 seed
