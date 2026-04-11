@@ -40,6 +40,18 @@
   - `test_rmse = 0.429170`
   - `test_brier = 0.184187`
   - `test_ece = 0.051142`
+- 当前正向支线候选是实验 37:
+  - branch: `exp/training-modes`
+  - `training_mode = recompute_minibatch`
+  - `batch_size = 8192`
+  - `learning_rate = 1e-4`
+  - 三 seed 相对实验 34 均值:
+    - `AUC +0.000945`
+    - `ACC +0.000324`
+    - `RMSE -0.001494`
+    - `Brier -0.001280`
+    - `ECE -0.006628`
+  - 结论: 值得作为下一次主线推广候选，但尚未合入 `master`
 - 当前结果报告默认同时看:
   - `AUC/ACC/RMSE`
   - `Brier/ECE/分桶校准`
@@ -125,6 +137,52 @@
   - `Brier -0.001909`
   - `ECE -0.011134`
 - 结论: 实验 34 是当前 `master` 正式主线。
+
+### 实验 37. true mini-batch recompute training
+
+- 动机:
+  - `train.py` 虽然暴露了 `--batch-size`，但实验 34 的训练口径实际是 full-batch。
+  - 直接把 `student_state` 等传播结果按 epoch 固定再 mini-batch 训练，会把传播梯度断掉或退化成梯度累积；因此真正可验证的版本需要每个 mini-batch 重跑完整传播并更新参数。
+- 分支: `exp/training-modes`
+- 工程改动:
+  - 将 `DecoupledCDM.forward` 拆出 `propagate(...)` 和 `predict_from_propagated(...)`，保留原 `forward(...)` 行为。
+  - `train_model` 增加 `training_mode`:
+    - `full_batch`: 原主线行为
+    - `target_accumulation`: 单次传播 + target mini-batch 梯度累积，实验证明基本等价于 full-batch
+    - `frozen_readout`: 单次 no-grad 传播 + mini-batch 读出训练
+    - `alternating_frozen_readout`: 周期性 full-batch + frozen readout
+    - `recompute_minibatch`: 每个 mini-batch 重跑完整传播，真正引入 SGD 噪声
+- 负结果:
+  - `frozen_readout bs=2048 lr=1e-3 seed=2024`: `test_auc = 0.747830`，明显退化
+  - `alternating_frozen_readout interval=5 bs=2048 lr=1e-3 seed=2024`: `test_auc = 0.749458`，明显退化
+  - `recompute_minibatch bs=8192 lr=1e-3 seed=2024`: `test_auc = 0.759134`，弱于实验 34
+  - `recompute_minibatch bs=4096 lr=3e-4 seed=2024`: `test_auc = 0.757055`，强噪声损伤排序
+- 正向配置:
+  - `recompute_minibatch bs=8192 lr=1e-4`
+  - 三 seed 结果:
+    - `seed=2024`: `AUC 0.760737`, `ACC 0.727873`, `RMSE 0.428030`, `Brier 0.183210`, `ECE 0.042740`
+    - `seed=2025`: `AUC 0.764064`, `ACC 0.728216`, `RMSE 0.426850`, `Brier 0.182201`, `ECE 0.045369`
+    - `seed=2026`: `AUC 0.761622`, `ACC 0.727550`, `RMSE 0.428146`, `Brier 0.183309`, `ECE 0.045434`
+  - 三 seed 均值:
+    - `test_auc = 0.762141`
+    - `test_acc = 0.727879`
+    - `test_rmse = 0.427675`
+    - `test_brier = 0.182906`
+    - `test_ece = 0.044514`
+  - 相对实验 34 三 seed 均值:
+    - `AUC +0.000945`
+    - `ACC +0.000324`
+    - `RMSE -0.001494`
+    - `Brier -0.001280`
+    - `ECE -0.006628`
+- 切片结论:
+  - `concept_count=1/2/3` 的 `RMSE/Brier/ECE` 均改善，其中 `concept_count=3` 的 `AUC +0.015340`
+  - `concept_count=4+` 仍退化: `AUC -0.010693`, `RMSE +0.003337`, `ECE +0.001965`
+  - `none_seen` 的 `RMSE/Brier` 改善，但 `ECE +0.001255`，所以它不是 none-seen 校准的最终解
+  - 各学生历史长度切片的 `RMSE/Brier/ECE` 均改善，说明收益更像训练噪声带来的整体校准/泛化改善
+- 结论:
+  - 这是当前最强正向支线候选，值得下一步推广到主线或至少作为正式训练协议候选。
+  - 推广前要接受训练成本增加；`lr=1e-4` 的最佳 epoch 在 `135/151/144`，明显比高学习率 mini-batch 配置慢。
 
 ## 已验证无效或已降级
 
@@ -279,6 +337,7 @@
 当前值得记住的候选:
 
 - 实验 28: `guess/slip` 读入难度，校准改善
+- 实验 37: `recompute_minibatch bs=8192 lr=1e-4`，三 seed 同时改善 `AUC/ACC/RMSE/Brier/ECE`，但尚未合入 `master`
 
 当前默认不建议继续的代表路线:
 
