@@ -1221,6 +1221,60 @@
 - 当前不建议合入 `master`。
 - 这个结果更像是在提示: `UKC` 的图侧变换可能确实影响排序，但完全去掉线性变换会损害误差和校准；如果未来复访，更适合尝试 zero-init residual / interpolation，而不是直接替换成纯无参数传播。
 
+#### 实验 32. `UKC` 使用 directed symmetric-like graph normalization
+
+改动:
+
+- 以当前 `master` 为底座:
+  - 单图 `propagation_graph`
+  - `conditional g/s`
+  - `TKC/UKC` 结构传播参数独立
+  - `TKC` 正误双通道行为消息
+  - 学生级自适应 `TKC/UKC` 融合 gate
+  - 报告包含 `Brier/ECE/分桶校准`
+- 只修改 single graph 模式下 `UKC` 使用的传播矩阵:
+  - `TKC` 保持 `concept_graph @ self.tkc_concept_to_concept(concept_embeddings)`
+  - `UKC` 改为 `ukc_graph @ self.ukc_concept_to_concept(concept_embeddings)`
+- 因当前 `propagation_graph.csv` 已经是带 self-loop 的 row-normalized 图，实验中用非零 pattern 还原二值 support:
+  - `support = (concept_graph > 0).float()`
+  - `ukc_graph = D_out^-1/2 @ support @ D_in^-1/2`
+- 目的: 在保留 directed prerequisite 边方向性的前提下，减弱高出度/高入度知识点对 `UKC` 平滑的支配，单独检查“图归一化方式”是否是过度平滑来源。
+
+单次实验结论:
+
+- 分支:
+  - `exp/ukc-directed-sym-norm`
+- `seed=2024`:
+  - `best_val_auc = 0.764946`
+  - `best_epoch = 191`
+  - `test_auc = 0.760594`
+  - `test_acc = 0.722164`
+  - `test_rmse = 0.432111`
+  - `test_brier = 0.186720`
+  - `test_ece = 0.066479`
+  - 文件:
+    - `results/exp_ukc_directed_sym_norm/assist_09_ukc_directed_sym_norm_seed2024_300ep.json`
+- 当前 `master` 对照 `seed=2024`:
+  - `best_val_auc = 0.763858`
+  - `best_epoch = 175`
+  - `test_auc = 0.760568`
+  - `test_acc = 0.722316`
+  - `test_rmse = 0.431628`
+  - `test_brier = 0.186303`
+  - `test_ece = 0.065051`
+- 相对当前 `master` 的 `seed=2024` 差:
+  - `test_auc = +0.000026`
+  - `test_acc = -0.000152`
+  - `test_rmse = +0.000483`
+  - `test_brier = +0.000417`
+  - `test_ece = +0.001427`
+
+结论:
+
+- `best_val_auc` 提升，但最终 `test_auc` 只有极小提升，且 `ACC/RMSE/Brier/ECE` 全部变差。
+- `ECE` 退化幅度比 AUC 微升更大，说明该归一化方式可能让 `UKC` 支持项的校准更偏。
+- 单 seed 已不满足“至少不伤误差和校准”的扩 seed 门槛，当前不建议继续补三 seed，也不建议合入 `master`。
+
 ## D. 快速索引
 
 这部分只用于快速查重，不替代上面的详细条目。
@@ -1254,6 +1308,7 @@
 - 实验 29: `cognitive_match` 拼入 `difficulty.detach()` 在 `seed=2024/2025` 有信号，但 `seed=2026` 稳定崩盘；zero-init 也未解决，当前不建议继续。
 - 实验 30: `TKC` 行为正误融合 gate 加 concept-specific residual bias 后，单次 AUC 持平但 RMSE/Brier/ECE 变差，当前不建议继续。
 - 实验 31: `UKC` no-param graph propagation 三 seed 平均 AUC 仅微升，但 ACC/RMSE/Brier/ECE 均变差，当前不建议合入。
+- 实验 32: `UKC` directed symmetric-like normalization 单次 AUC 仅微升，但 ACC/RMSE/Brier/ECE 均变差，当前不建议继续。
 
 ### 当前主线口径下的近线 follow-up
 
