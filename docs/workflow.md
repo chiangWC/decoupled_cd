@@ -65,6 +65,7 @@ bash scripts/remote_exec.sh python scripts/train.py
 - `master` 只保留当前认可状态，不把探索性实验直接堆到主线。
 - 新实验默认从最新 `master` 切出 `exp/<short-name>` 分支。
 - 实验效果不好时，保留或删除对应 `exp/*` 分支即可，不需要用回退提交污染 `master`。
+- 若实验已经形成明确判断，即使代码不合入 `master`，也要把对应实验结论用 doc-only 提交同步回 `master` 的台账文档，避免结论只留在支线。
 - 实验效果成立后，再整理提交并合回 `master`。
 - `git push origin "$(git branch --show-current)"` 会把当前本地分支推到远端同名分支。
 - `bash scripts/remote_exec.sh ...` 会先确认远端同名分支已更新到当前本地提交，再在远端切到该分支执行命令。
@@ -74,3 +75,4 @@ bash scripts/remote_exec.sh python scripts/train.py
 - 探索性结构改动默认先开 `exp/<short-name>` 分支。
 - 新结构默认先跑单次。
 - 单次值得继续时，再补 `2-3` 个 seed。
+- 实验结束时要明确两件事: 代码是否合入主线，结论是否已同步到 `master` 台账。二者可以分开处理。
