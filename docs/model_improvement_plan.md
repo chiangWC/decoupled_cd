@@ -175,6 +175,19 @@
     - `test_ece +0.000762`
   - `concept_count=2/3` 切片也退化；`4+` 仅在 `RMSE/Brier` 小幅改善但样本少且 `ECE` 明显变差
   - 结论: 不扩 seed，不建议合入主线
+- 实验 36: student base ability
+  - 做法: 在 cognitive logit 分支增加 zero-init 学生全局能力 embedding `theta_u`
+  - `seed=2024` 相对实验 34 同 seed:
+    - `test_auc -0.002491`
+    - `test_acc +0.001827`
+    - `test_rmse +0.000491`
+    - `test_brier +0.000422`
+    - `test_ece -0.000231`
+  - 切片上有信号:
+    - `none_seen` 的 `RMSE/Brier/ECE` 改善，但 `AUC` 下降
+    - `student_history_count=51-100` 与 `6-20` 改善，`101+` 与 `21-50` 的误差变差
+    - `concept_count=2/3/4+` 的 `RMSE/Brier` 改善，但主量级样本 `concept_count=1` 退化
+  - 结论: exact 版本整体代价大于收益，不扩 seed；后续若复访，应考虑更强约束或只作为 targeted calibration sidecar
 
 ### 语义更干净，但不值得主线吸收
 
@@ -278,3 +291,4 @@
 - 实验 29: 直接扩展 `cognitive_match` 输入
 - 实验 31/32: `UKC` 图传播轻量替换
 - 实验 35: local readout adapter
+- 实验 36: student base ability
