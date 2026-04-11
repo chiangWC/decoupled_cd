@@ -1144,6 +1144,83 @@
 - 单次没有足够正向信号，当前不建议继续补多 seed，也不建议合入 `master`。
 - 更稳妥的判断是: 给行为正误融合 gate 加 concept-specific bias 不解决当前主要误差；它可能引入更偏的校准倾向。
 
+#### 实验 31. `UKC` 结构传播去参数化: no-param graph propagation
+
+改动:
+
+- 以当前 `master` 为底座:
+  - 单图 `propagation_graph`
+  - `conditional g/s`
+  - `TKC/UKC` 结构传播参数独立
+  - `TKC` 正误双通道行为消息
+  - 学生级自适应 `TKC/UKC` 融合 gate
+  - 报告包含 `Brier/ECE/分桶校准`
+- 只修改 `UKC` 侧概念图传播:
+  - 原实现: `concept_graph @ self.ukc_concept_to_concept(concept_embeddings)`
+  - 新实现: `concept_graph @ concept_embeddings`
+- 目的: 检查 `UKC` 侧的线性变换是否会放大全局平滑噪声；用接近 LightGCN 的无参数结构传播作为最小扰动对照。
+- 保留 `self.ukc_concept_to_concept` 模块定义不删，以尽量减少初始化结构和 checkpoint schema 之外的额外扰动。
+
+实验结果:
+
+- 分支:
+  - `exp/ukc-no-param-propagation`
+- `seed=2024`:
+  - `best_val_auc = 0.764805`
+  - `best_epoch = 187`
+  - `test_auc = 0.760853`
+  - `test_acc = 0.722450`
+  - `test_rmse = 0.431866`
+  - `test_brier = 0.186508`
+  - `test_ece = 0.064660`
+  - 文件:
+    - `results/exp_ukc_no_param_propagation/assist_09_ukc_no_param_propagation_seed2024_300ep.json`
+- `seed=2025`:
+  - `best_val_auc = 0.764259`
+  - `best_epoch = 190`
+  - `test_auc = 0.758322`
+  - `test_acc = 0.722849`
+  - `test_rmse = 0.432408`
+  - `test_brier = 0.186976`
+  - `test_ece = 0.061853`
+  - 文件:
+    - `results/exp_ukc_no_param_propagation/assist_09_ukc_no_param_propagation_seed2025_300ep.json`
+- `seed=2026`:
+  - `best_val_auc = 0.764830`
+  - `best_epoch = 185`
+  - `test_auc = 0.760474`
+  - `test_acc = 0.724257`
+  - `test_rmse = 0.431110`
+  - `test_brier = 0.185856`
+  - `test_ece = 0.060441`
+  - 文件:
+    - `results/exp_ukc_no_param_propagation/assist_09_ukc_no_param_propagation_seed2026_300ep.json`
+- 三 seed 均值:
+  - `test_auc = 0.759883`
+  - `test_acc = 0.723185`
+  - `test_rmse = 0.431794`
+  - `test_brier = 0.186447`
+  - `test_ece = 0.062318`
+- 当前 `master` 三 seed 均值:
+  - `test_auc = 0.759690`
+  - `test_acc = 0.724784`
+  - `test_rmse = 0.431388`
+  - `test_brier = 0.186096`
+  - `test_ece = 0.062276`
+- 相对当前 `master` 的三 seed 均值差:
+  - `test_auc = +0.000193`
+  - `test_acc = -0.001599`
+  - `test_rmse = +0.000406`
+  - `test_brier = +0.000351`
+  - `test_ece = +0.000043`
+
+结论:
+
+- no-param `UKC` 传播只带来非常小的 AUC 均值提升，但 `ACC/RMSE/Brier/ECE` 均值全部变差。
+- `seed=2024/2026` 的 AUC 有正向信号，`seed=2025` 明显退化，说明该改动并不稳定。
+- 当前不建议合入 `master`。
+- 这个结果更像是在提示: `UKC` 的图侧变换可能确实影响排序，但完全去掉线性变换会损害误差和校准；如果未来复访，更适合尝试 zero-init residual / interpolation，而不是直接替换成纯无参数传播。
+
 ## D. 快速索引
 
 这部分只用于快速查重，不替代上面的详细条目。
@@ -1176,6 +1253,7 @@
 - 实验 27: `q_repr` 内部 item-aware Q pooling 单次弱于当前主线，当前不建议继续。
 - 实验 29: `cognitive_match` 拼入 `difficulty.detach()` 在 `seed=2024/2025` 有信号，但 `seed=2026` 稳定崩盘；zero-init 也未解决，当前不建议继续。
 - 实验 30: `TKC` 行为正误融合 gate 加 concept-specific residual bias 后，单次 AUC 持平但 RMSE/Brier/ECE 变差，当前不建议继续。
+- 实验 31: `UKC` no-param graph propagation 三 seed 平均 AUC 仅微升，但 ACC/RMSE/Brier/ECE 均变差，当前不建议合入。
 
 ### 当前主线口径下的近线 follow-up
 
