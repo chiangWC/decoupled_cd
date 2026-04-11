@@ -17,3 +17,4 @@ data/assist_09_ordered/
 
 # OS files
 .DS_Store
+.codex
