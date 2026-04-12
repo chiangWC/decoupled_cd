@@ -63,6 +63,12 @@
     - `Brier -0.000923`
     - `ECE +0.000029`
   - 结论: 排序/准确率收益很强，但校准没有改善；可作为 ranking-oriented 结构候选继续验证，不应替代实验 37 的校准收益判断
+- 最近叠加验证是实验 39:
+  - branch: `exp/cf-residual-recompute`
+  - `cf_logit_residual cf_dim=16 + recompute_minibatch bs=8192 lr=1e-4`
+  - 相对实验 34 三 seed 均值: `AUC +0.001633`, `ACC -0.000704`, `RMSE -0.001100`, `Brier -0.000942`, `ECE -0.003634`
+  - 相对实验 37 三 seed 均值: `AUC +0.000687`, `ACC -0.001028`, `RMSE +0.000395`, `Brier +0.000338`, `ECE +0.002994`
+  - 结论: 不是实验 37 与实验 38 的无损叠加；暂不建议作为默认主线
 - 当前结果报告默认同时看:
   - `AUC/ACC/RMSE`
   - `Brier/ECE/分桶校准`
@@ -236,6 +242,50 @@
   - 这是当前最强的 ranking-oriented 结构候选，AUC 提升显著大于实验 37。
   - 它没有带来校准收益，且依赖当前学生内随机 split；若要走主线，需要先与实验 37 的训练协议做叠加验证，并在结果说明中明确它是协同过滤后门而非纯 CDM 解释通道。
 
+### 实验 39. CF residual + recompute mini-batch
+
+- 动机:
+  - 验证实验 38 的 ranking-oriented CF residual 能否与实验 37 的校准/泛化收益叠加。
+- 分支: `exp/cf-residual-recompute`
+- 配置:
+  - `cf_logit_residual = true`
+  - `cf_dim = 16`
+  - `training_mode = recompute_minibatch`
+  - `batch_size = 8192`
+  - `learning_rate = 1e-4`
+- 三 seed 结果:
+  - `seed=2024`: `AUC 0.762092`, `ACC 0.725875`, `RMSE 0.428993`, `Brier 0.184035`, `ECE 0.050475`, `cf_gate 0.513134`
+  - `seed=2025`: `AUC 0.764524`, `ACC 0.727987`, `RMSE 0.427098`, `Brier 0.182413`, `ECE 0.047056`, `cf_gate -0.514868`
+  - `seed=2026`: `AUC 0.761869`, `ACC 0.726693`, `RMSE 0.428119`, `Brier 0.183286`, `ECE 0.044992`, `cf_gate -0.473145`
+- 三 seed 均值:
+  - `test_auc = 0.762828`
+  - `test_acc = 0.726852`
+  - `test_rmse = 0.428070`
+  - `test_brier = 0.183244`
+  - `test_ece = 0.047508`
+- 相对实验 34 三 seed 均值:
+  - `AUC +0.001633`
+  - `ACC -0.000704`
+  - `RMSE -0.001100`
+  - `Brier -0.000942`
+  - `ECE -0.003634`
+- 相对实验 37 三 seed 均值:
+  - `AUC +0.000687`
+  - `ACC -0.001028`
+  - `RMSE +0.000395`
+  - `Brier +0.000338`
+  - `ECE +0.002994`
+- 相对实验 38 三 seed 均值:
+  - `AUC -0.001842`
+  - `ACC -0.003463`
+  - `RMSE -0.000023`
+  - `Brier -0.000019`
+  - `ECE -0.003663`
+- 结论:
+  - 叠加后确实比实验 34 的 AUC/ECE 更好，但没有保住实验 38 的 AUC/ACC，也没有达到实验 37 的校准水平。
+  - 这不是无损叠加，不建议直接作为新主线。
+  - 若继续 CF 路线，应优先降低 CF 容量或加 gate/embedding 正则，目标是在 recompute 训练下减少对 ACC/ECE 的拉扯。
+
 ## 已验证无效或已降级
 
 这些路线默认不要再回到主线，除非用户明确要求复访。
@@ -391,6 +441,7 @@
 - 实验 28: `guess/slip` 读入难度，校准改善
 - 实验 37: `recompute_minibatch bs=8192 lr=1e-4`，三 seed 同时改善 `AUC/ACC/RMSE/Brier/ECE`，但尚未合入 `master`
 - 实验 38: `cf_logit_residual cf_dim=16`，三 seed 明显改善 `AUC/ACC/RMSE/Brier`，但 `ECE` 基本持平且弱于实验 37 的校准收益
+- 实验 39: 实验 38 + 实验 37 的叠加不是无损叠加，只能形成 AUC/ECE 折中，暂不建议作为默认主线
 
 当前默认不建议继续的代表路线:
 

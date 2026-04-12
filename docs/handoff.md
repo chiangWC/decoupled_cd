@@ -103,6 +103,28 @@
   - 相对实验 37，`AUC/ACC` 更强，但 `RMSE/Brier/ECE` 更弱，尤其 `ECE +0.006657`。
   - 后续若继续，应优先测试和实验 37 的 `recompute_minibatch bs=8192 lr=1e-4` 是否可叠加，而不是直接替代训练策略主线。
 
+最近叠加验证:
+
+- 分支:
+  - `exp/cf-residual-recompute`
+- 关键配置:
+  - `cf_logit_residual = true`
+  - `cf_dim = 16`
+  - `training_mode = recompute_minibatch`
+  - `batch_size = 8192`
+  - `learning_rate = 1e-4`
+- 三 seed 均值:
+  - `test_auc = 0.762828`
+  - `test_acc = 0.726852`
+  - `test_rmse = 0.428070`
+  - `test_brier = 0.183244`
+  - `test_ece = 0.047508`
+- 判断:
+  - 相对实验 34: `AUC +0.001633`, `RMSE -0.001100`, `Brier -0.000942`, `ECE -0.003634`, 但 `ACC -0.000704`
+  - 相对实验 37: `AUC +0.000687`, 但 `ACC/RMSE/Brier/ECE` 都更弱，其中 `ECE +0.002994`
+  - 相对实验 38: `ECE -0.003663`，但 `AUC -0.001842`, `ACC -0.003463`
+  - 结论: 不是无损叠加，暂不建议作为默认主线；如果继续 CF 路线，优先试更低容量或正则化，而不是直接合入
+
 近期已吸收的 follow-up:
 
 - 实验 33:
@@ -129,6 +151,7 @@
 - 实验 34 证明“多知识点题 targeted residual + guess/slip difficulty residual”可以在三 seed 上同时改善 `AUC/ACC/RMSE/Brier/ECE`，这一步已经吸收到当前 `master`。
 - 实验 37 证明在当前主线结构不变的前提下，`recompute_minibatch bs=8192 lr=1e-4` 三 seed 同时改善 `AUC/ACC/RMSE/Brier/ECE`；但代码仍留在 `exp/training-modes`，尚未推广为 `master` 默认训练协议。
 - 实验 38 证明 final-logit 学生-题目 MF residual 在当前学生内随机 split 下能显著改善 `AUC/ACC`，但不改善 `ECE`；它是 ranking-oriented 后门，不应混作纯 CDM 解释通道。
+- 实验 39 证明 `cf_logit_residual cf_dim=16` 与 `recompute_minibatch bs=8192 lr=1e-4` 不是无损叠加；它形成 AUC/ECE 折中，但弱于实验 37 的校准，也弱于实验 38 的 AUC/ACC。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
@@ -150,6 +173,9 @@
   - 已实现默认关闭的 `--cf-logit-residual`
   - 已验证 `cf_dim=16` 三 seed 明显优于实验 34 的 `AUC/ACC/RMSE/Brier`
   - 已验证它的校准弱于实验 37，后续应优先叠加实验 37 训练协议再判断是否值得主线化
+- `exp/cf-residual-recompute` 是叠加验证支线:
+  - 已验证 `cf_dim=16 + recompute_minibatch bs=8192 lr=1e-4`
+  - 结果不是无损叠加，暂不建议把这组配置主线化
 
 ## 当前关键文件
 
@@ -185,6 +211,6 @@
   - `recompute_minibatch bs=8192 lr=1e-4` 周围的 scheduler / patience / weight decay
   - 对比是否能保住三 seed AUC 的同时进一步降低 `ECE`
   - 单 seed 有信号后再补 `2024/2025/2026` 三 seed
-- 继续 CF residual 支线时，优先从 `exp/cf-residual` 与实验 37 训练协议做叠加验证:
-  - 目标是确认 `AUC/ACC` 增益能否保留，同时用 recompute mini-batch 拉回 `ECE`
-  - 若叠加后 `ECE` 仍明显弱于实验 37，不建议把它作为默认主线
+- 继续 CF residual 支线时，优先考虑降低容量或加正则:
+  - 例如 `cf_dim=4/8`、CF gate 正则、CF embedding 单独 weight decay
+  - 目标是在尽量保留实验 38 排序收益的同时，缓解实验 39 暴露出的 `ACC/ECE` 拉扯
