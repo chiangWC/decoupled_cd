@@ -307,6 +307,19 @@
     - `test_ece -0.019051`
   - 文件: `results/exp_item_discrimination/assist_09_item_discrimination_seed2024_300ep.json`
   - 结论: 这是明显的校准折中而不是排序收益；不扩 seed，不建议作为主线
+- 实验 42: Soft-Q / learnable Q residual
+  - 分支: `exp/soft-q-residual`
+  - 做法: 增加默认关闭的 `--soft-q-residual`，对原始 Q 加 clipped learnable residual；为避免 `Q=0` 位置拿不到梯度，缺失边以极小正值冷启动；传播端只在软权重超过阈值后使用并断开 residual 梯度，避免全图传播 OOM
+  - 工程备注: 第一版让 `q_residual` 梯度穿过全量传播图，full data 训练在 `cuda:3` OOM；修订版改为传播端 detach/threshold，远端单测、1 epoch smoke 和 300 epoch seed=2024 均可跑
+  - `seed=2024` 相对实验 34 同 seed:
+    - `test_auc -0.001154`
+    - `test_acc +0.001104`
+    - `test_rmse +0.000189`
+    - `test_brier +0.000163`
+    - `test_ece +0.000132`
+  - `q_stay_loss` 和 `q_sparse_loss` 基本停留在初始化附近，说明这个 conservative Soft-Q 没学出有效 Q 修正
+  - 文件: `results/exp_soft_q_residual/assist_09_soft_q_residual_seed2024_300ep.json`
+  - 结论: ACC 有小幅收益，但 AUC、误差和校准均弱于实验 34；不扩 seed，不建议作为主线
 
 ### 语义更干净，但不值得主线吸收
 
@@ -415,3 +428,4 @@
 - 实验 35: local readout adapter
 - 实验 36: student base ability
 - 实验 41: item discrimination / 2PL logit scale
+- 实验 42: Soft-Q / learnable Q residual
