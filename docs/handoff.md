@@ -78,7 +78,7 @@
   - 收益主要来自真正 mini-batch SGD 的整体校准/泛化改善，不是彻底解决 `concept_count=4+` 或 `none_seen` 校准问题。
   - 后续若继续优化训练策略，默认从 `exp/training-modes` 出发。
 
-当前正向模型支线:
+近期暂停的 CF 模型支线:
 
 - 分支:
   - `exp/cf-residual`
@@ -101,7 +101,8 @@
 - 判断:
   - 这是当前最强 ranking-oriented 结构候选，但不是校准候选。
   - 相对实验 37，`AUC/ACC` 更强，但 `RMSE/Brier/ECE` 更弱，尤其 `ECE +0.006657`。
-  - 后续若继续，应优先测试和实验 37 的 `recompute_minibatch bs=8192 lr=1e-4` 是否可叠加，而不是直接替代训练策略主线。
+  - 后续已验证和实验 37 的 `recompute_minibatch bs=8192 lr=1e-4` 不是无损叠加；容量扩展到 `cf_dim=64/128` 后 AUC 可到 `0.794/0.812`，但主要依赖当前学生内随机 split 的 transductive ID side channel。
+  - 当前决定: CF 支线暂停，不继续扩容，也不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / ID-aware ablation 或 appendix 讨论。
 
 最近叠加验证:
 
@@ -152,6 +153,7 @@
 - 实验 37 证明在当前主线结构不变的前提下，`recompute_minibatch bs=8192 lr=1e-4` 三 seed 同时改善 `AUC/ACC/RMSE/Brier/ECE`；但代码仍留在 `exp/training-modes`，尚未推广为 `master` 默认训练协议。
 - 实验 38 证明 final-logit 学生-题目 MF residual 在当前学生内随机 split 下能显著改善 `AUC/ACC`，但不改善 `ECE`；它是 ranking-oriented 后门，不应混作纯 CDM 解释通道。
 - 实验 39 证明 `cf_logit_residual cf_dim=16` 与 `recompute_minibatch bs=8192 lr=1e-4` 不是无损叠加；它形成 AUC/ECE 折中，但弱于实验 37 的校准，也弱于实验 38 的 AUC/ACC。
+- 实验 40 证明扩大 CF residual 容量能显著抬高当前 split 的 AUC，但新增收益主要由 ID-aware residual 主导；该支线已暂停，后续回归实验 34/37 这类干净主线。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
@@ -169,10 +171,10 @@
   - 已验证正向配置是 `recompute_minibatch bs=8192 lr=1e-4`
   - 已验证负向配置包括 `frozen_readout`、`alternating_frozen_readout`、`recompute_minibatch lr=1e-3`、`recompute_minibatch bs=4096 lr=3e-4`
   - 后续优化可优先试更细的学习率、调度器、早停策略或 weight decay，而不是再回到 frozen readout
-- `exp/cf-residual` 是当前优先级最高的 ranking-oriented 结构支线:
+- `exp/cf-residual` / `exp/cf-residual-dim-sweep` 当前暂停:
   - 已实现默认关闭的 `--cf-logit-residual`
-  - 已验证 `cf_dim=16` 三 seed 明显优于实验 34 的 `AUC/ACC/RMSE/Brier`
-  - 已验证它的校准弱于实验 37，后续应优先叠加实验 37 训练协议再判断是否值得主线化
+  - 已验证 `cf_dim=16/64/128` 能提高当前学生内随机 split 的 ranking 指标
+  - 已判断大容量收益主要依赖 transductive ID side channel，不作为纯 CDM 主线推进
 - `exp/cf-residual-recompute` 是叠加验证支线:
   - 已验证 `cf_dim=16 + recompute_minibatch bs=8192 lr=1e-4`
   - 结果不是无损叠加，暂不建议把这组配置主线化
@@ -211,6 +213,6 @@
   - `recompute_minibatch bs=8192 lr=1e-4` 周围的 scheduler / patience / weight decay
   - 对比是否能保住三 seed AUC 的同时进一步降低 `ECE`
   - 单 seed 有信号后再补 `2024/2025/2026` 三 seed
-- 继续 CF residual 支线时，优先考虑降低容量或加正则:
-  - 例如 `cf_dim=4/8`、CF gate 正则、CF embedding 单独 weight decay
-  - 目标是在尽量保留实验 38 排序收益的同时，缓解实验 39 暴露出的 `ACC/ECE` 拉扯
+- CF residual 支线暂停:
+  - 不继续扫 `cf_dim`，不作为纯 CDM 主线推进
+  - 后续默认回归实验 34/37 这类干净主线

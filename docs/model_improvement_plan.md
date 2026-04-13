@@ -286,6 +286,16 @@
   - 这不是无损叠加，不建议直接作为新主线。
   - 若继续 CF 路线，应优先降低 CF 容量或加 gate/embedding 正则，目标是在 recompute 训练下减少对 ACC/ECE 的拉扯。
 
+### 实验 40. CF residual capacity follow-up
+
+- 分支: `exp/cf-residual-dim-sweep`
+- 精简结论:
+  - `cf_dim=64` 三 seed 均值: `AUC 0.794028`, `ACC 0.756437`, `RMSE 0.418601`, `Brier 0.175227`, `ECE 0.074710`
+  - `cf_dim=128` 三 seed 均值: `AUC 0.812162`, `ACC 0.773932`, `RMSE 0.409097`, `Brier 0.167361`, `ECE 0.078984`
+  - `CF-only cf_dim=128 seed=2024`: `AUC 0.762013`，不能单独复现 hybrid `0.81`。
+  - 推理时置零 `cf_gate` 后，`cf_dim=64/128` AUC 回到约 `0.761/0.763`，说明大容量新增收益主要由 ID-aware residual 主导。
+  - 判断: 该路线依赖当前学生内随机 split 的 transductive ID side channel，不作为纯 CDM 主线推进；支线暂停，后续回归实验 34/37 这类干净主线。
+
 ## 已验证无效或已降级
 
 这些路线默认不要再回到主线，除非用户明确要求复访。
@@ -440,7 +450,7 @@
 
 - 实验 28: `guess/slip` 读入难度，校准改善
 - 实验 37: `recompute_minibatch bs=8192 lr=1e-4`，三 seed 同时改善 `AUC/ACC/RMSE/Brier/ECE`，但尚未合入 `master`
-- 实验 38: `cf_logit_residual cf_dim=16`，三 seed 明显改善 `AUC/ACC/RMSE/Brier`，但 `ECE` 基本持平且弱于实验 37 的校准收益
+- 实验 38/40: `cf_logit_residual` 显著提高当前学生内随机 split 的 ranking 指标，但依赖 transductive ID side channel；相关支线已暂停，不作为纯 CDM 主线推进
 - 实验 39: 实验 38 + 实验 37 的叠加不是无损叠加，只能形成 AUC/ECE 折中，暂不建议作为默认主线
 
 当前默认不建议继续的代表路线:
