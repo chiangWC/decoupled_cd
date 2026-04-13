@@ -319,7 +319,14 @@
     - `test_ece +0.000132`
   - `q_stay_loss` 和 `q_sparse_loss` 基本停留在初始化附近，说明这个 conservative Soft-Q 没学出有效 Q 修正
   - 文件: `results/exp_soft_q_residual/assist_09_soft_q_residual_seed2024_300ep.json`
-  - 结论: ACC 有小幅收益，但 AUC、误差和校准均弱于实验 34；不扩 seed，不建议作为主线
+  - 调参复访:
+    - 增加 `soft_q_add_logit_offset` 与 `soft_q_propagation_threshold` tuning knobs，远端单测通过
+    - `scale=0.3, stay=1e-4, sparse=1e-5`: `AUC -0.000713`, `ACC +0.001275`, `RMSE -0.000030`, `Brier -0.000026`, `ECE +0.000190`
+    - `scale=0.5, stay=1e-4, sparse=1e-5`: `AUC -0.000644`, `ACC +0.000628`, `RMSE -0.000021`, `Brier -0.000018`, `ECE -0.000689`
+    - `scale=0.5, stay=1e-5, sparse=0`: `AUC -0.000621`, `ACC -0.000894`, `RMSE +0.000454`, `Brier +0.000390`, `ECE +0.001149`
+    - `scale=0.5, offset=4.0, threshold=0.05`: `AUC -0.002479`, `ACC +0.000400`, `RMSE +0.001238`, `Brier +0.001065`, `ECE +0.002887`
+    - `scale=1.0, stay=1e-5, sparse=0`: 验证 AUC 接近实验 34，但测试 `AUC -0.001179`, `ACC -0.001560`, `RMSE +0.001456`, `Brier +0.001252`, `ECE +0.004517`
+  - 结论: ACC 或校准能形成小幅折中，但没有配置在 `AUC/ACC/RMSE/Brier/ECE` 上整体优于实验 34；更强缺失边冷启动会明显加噪，不扩 seed，不建议作为主线
 
 ### 语义更干净，但不值得主线吸收
 
