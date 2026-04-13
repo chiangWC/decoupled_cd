@@ -297,6 +297,16 @@
     - `student_history_count=51-100` 与 `6-20` 改善，`101+` 与 `21-50` 的误差变差
     - `concept_count=2/3/4+` 的 `RMSE/Brier` 改善，但主量级样本 `concept_count=1` 退化
   - 结论: exact 版本整体代价大于收益，不扩 seed；后续若复访，应考虑更强约束或只作为 targeted calibration sidecar
+- 实验 41: item discrimination / 2PL logit scale
+  - 做法: 增加默认关闭的 `--item-discrimination`，用正值题目区分度缩放 `cognitive_match - difficulty`，并以 `softplus^-1(1)` 初始化为 no-op
+  - `seed=2024` 相对实验 34 同 seed:
+    - `test_auc -0.008723`
+    - `test_acc -0.003635`
+    - `test_rmse +0.001466`
+    - `test_brier +0.001261`
+    - `test_ece -0.019051`
+  - 文件: `results/exp_item_discrimination/assist_09_item_discrimination_seed2024_300ep.json`
+  - 结论: 这是明显的校准折中而不是排序收益；不扩 seed，不建议作为主线
 
 ### 语义更干净，但不值得主线吸收
 
@@ -404,3 +414,4 @@
 - 实验 31/32: `UKC` 图传播轻量替换
 - 实验 35: local readout adapter
 - 实验 36: student base ability
+- 实验 41: item discrimination / 2PL logit scale
