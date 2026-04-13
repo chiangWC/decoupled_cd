@@ -259,6 +259,12 @@
   - 工程可跑，但效果明显低于正式主线
 - 实验 27: `q_repr` 内部 item-aware Q pooling
   - 单次弱于当前主线，不建议扩 seed
+  - 复访 `exp/qrepr-item-aware-residual`:
+    - 做法: 保留静态 Q pooling，增加 zero-init low-rank item-aware score residual，仅对 `concept_count >= 2` 生效
+    - `seed=2024`: `test_auc = 0.760899`, `test_acc = 0.726826`, `test_rmse = 0.429599`, `test_brier = 0.184556`, `test_ece = 0.052621`
+    - 相对实验 34 同 seed: `AUC -0.000404`, `ACC +0.001180`, `RMSE +0.000123`, `Brier +0.000106`, `ECE +0.001479`
+    - 文件: `results/exp_qrepr_item_attention_residual/assist_09_qrepr_item_residual_seed2024_300ep.json`
+    - 结论: zero-init residual 版优于旧实验 27 的直接 item-aware pooling，但仍弱于实验 34；不扩 seed，继续归入实验 27 失败路线
 - 实验 29: 直接扩展 `cognitive_match` 输入以读入 `difficulty`
   - `seed=2026` 稳定崩盘，zero-init 也没救回
 - 实验 30: 行为正误融合 gate 加 concept-specific bias
@@ -393,7 +399,7 @@
 - 实验 14/15: 局部硬汇聚
 - 实验 22: 在新主线底座上复验 `local UKC neighbor`
 - 实验 25: readout 侧 `TKC` residual
-- 实验 27: `q_repr` item-aware Q pooling
+- 实验 27: `q_repr` item-aware Q pooling，包括 zero-init residual 复访；仍不建议继续
 - 实验 29: 直接扩展 `cognitive_match` 输入
 - 实验 31/32: `UKC` 图传播轻量替换
 - 实验 35: local readout adapter
