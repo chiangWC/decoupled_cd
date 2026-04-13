@@ -52,7 +52,7 @@
     - `Brier -0.001280`
     - `ECE -0.006628`
   - 结论: 值得作为下一次主线推广候选，但尚未合入 `master`
-- 当前正向模型支线候选是实验 38:
+- 近期暂停的 CF 模型支线:
   - branch: `exp/cf-residual`
   - `cf_logit_residual = true`
   - `cf_dim = 16`
@@ -62,7 +62,7 @@
     - `RMSE -0.001077`
     - `Brier -0.000923`
     - `ECE +0.000029`
-  - 结论: 排序/准确率收益很强，但校准没有改善；可作为 ranking-oriented 结构候选继续验证，不应替代实验 37 的校准收益判断
+  - 结论: 排序/准确率收益很强，但校准没有改善；容量扩展后确认主要依赖 transductive ID side channel，支线已暂停，不作为纯 CDM 主线推进
 - 最近叠加验证是实验 39:
   - branch: `exp/cf-residual-recompute`
   - `cf_logit_residual cf_dim=16 + recompute_minibatch bs=8192 lr=1e-4`
@@ -203,88 +203,21 @@
 
 ### 实验 38. final-logit MF residual
 
-- 动机:
-  - 纯 CDM 读出主要依赖 Q 矩阵把学生状态和题目知识点表示翻译到同一空间；如果题目标注或隐含题目因素不足，学生-题目二阶偏好可能无法被显式知识点通道吸收。
-  - 当前 split 是每个学生内部随机拆分，valid/test 学生全都在 train 中；因此可以单独测试一个纯协同过滤 residual 对当前协议的容量上限有多大帮助。
 - 分支: `exp/cf-residual`
-- 工程改动:
-  - 增加默认关闭的 `--cf-logit-residual`。
-  - 开启时使用 `cf_student` / `cf_exercise` 低维 embedding 做点积，再经可学习 scalar gate 加到最终预测概率的 logit 上。
-  - 不注入 `cognitive_logits`，避免污染 `cognitive_probs` 的可解释语义。
-  - 默认 `cf_dim = 16`，`cf_gate_init = 0.0`，embedding 初始化为 `1/sqrt(cf_dim)` 量级。
-- 三 seed 结果:
-  - `seed=2024`: `AUC 0.764166`, `ACC 0.729300`, `RMSE 0.428168`, `Brier 0.183328`, `ECE 0.050698`, `cf_gate 0.283137`
-  - `seed=2025`: `AUC 0.764893`, `ACC 0.729890`, `RMSE 0.427994`, `Brier 0.183179`, `ECE 0.051050`, `cf_gate -0.322892`
-  - `seed=2026`: `AUC 0.764953`, `ACC 0.731755`, `RMSE 0.428117`, `Brier 0.183285`, `ECE 0.051765`, `cf_gate -0.330886`
-- 三 seed 均值:
-  - `test_auc = 0.764671`
-  - `test_acc = 0.730315`
-  - `test_rmse = 0.428093`
-  - `test_brier = 0.183264`
-  - `test_ece = 0.051171`
-- 相对实验 34 三 seed 均值:
-  - `AUC +0.003475`
-  - `ACC +0.002759`
-  - `RMSE -0.001077`
-  - `Brier -0.000923`
-  - `ECE +0.000029`
-- 相对实验 37 三 seed 均值:
-  - `AUC +0.002530`
-  - `ACC +0.002436`
-  - `RMSE +0.000418`
-  - `Brier +0.000357`
-  - `ECE +0.006657`
-- 切片结论:
-  - `seed=2024` 上 `concept_count=1/2/3` 均改善；`concept_count=4+` 的 `AUC/ACC/ECE` 改善，但 `RMSE/Brier` 小幅退化且 test 只有 `363` 行。
-  - `none_seen` 的 `AUC/ACC/RMSE/Brier/ECE` 在 `seed=2024` 都改善，说明 CF residual 确实补了一部分非 Q 翻译信号。
-  - 按题目训练频次看，收益主要在 `1-5`、`6-20`、`21-50` 桶；`101+` 桶退化，提示它不是单纯“题目越常见越好”的记忆项。
+- 做法: 增加默认关闭的 `--cf-logit-residual`，用学生/题目 ID embedding 点积作为 final-logit residual，不注入 `cognitive_logits`。
+- 三 seed 均值: `AUC 0.764671`, `ACC 0.730315`, `RMSE 0.428093`, `Brier 0.183264`, `ECE 0.051171`
+- 相对实验 34: `AUC +0.003475`, `ACC +0.002759`, `RMSE -0.001077`, `Brier -0.000923`, `ECE +0.000029`
 - 结论:
-  - 这是当前最强的 ranking-oriented 结构候选，AUC 提升显著大于实验 37。
-  - 它没有带来校准收益，且依赖当前学生内随机 split；若要走主线，需要先与实验 37 的训练协议做叠加验证，并在结果说明中明确它是协同过滤后门而非纯 CDM 解释通道。
+  - 它带来 ranking/ACC 收益，但没有校准收益；依赖当前学生内随机 split，不应混作纯 CDM 解释通道。
 
 ### 实验 39. CF residual + recompute mini-batch
 
-- 动机:
-  - 验证实验 38 的 ranking-oriented CF residual 能否与实验 37 的校准/泛化收益叠加。
 - 分支: `exp/cf-residual-recompute`
-- 配置:
-  - `cf_logit_residual = true`
-  - `cf_dim = 16`
-  - `training_mode = recompute_minibatch`
-  - `batch_size = 8192`
-  - `learning_rate = 1e-4`
-- 三 seed 结果:
-  - `seed=2024`: `AUC 0.762092`, `ACC 0.725875`, `RMSE 0.428993`, `Brier 0.184035`, `ECE 0.050475`, `cf_gate 0.513134`
-  - `seed=2025`: `AUC 0.764524`, `ACC 0.727987`, `RMSE 0.427098`, `Brier 0.182413`, `ECE 0.047056`, `cf_gate -0.514868`
-  - `seed=2026`: `AUC 0.761869`, `ACC 0.726693`, `RMSE 0.428119`, `Brier 0.183286`, `ECE 0.044992`, `cf_gate -0.473145`
-- 三 seed 均值:
-  - `test_auc = 0.762828`
-  - `test_acc = 0.726852`
-  - `test_rmse = 0.428070`
-  - `test_brier = 0.183244`
-  - `test_ece = 0.047508`
-- 相对实验 34 三 seed 均值:
-  - `AUC +0.001633`
-  - `ACC -0.000704`
-  - `RMSE -0.001100`
-  - `Brier -0.000942`
-  - `ECE -0.003634`
-- 相对实验 37 三 seed 均值:
-  - `AUC +0.000687`
-  - `ACC -0.001028`
-  - `RMSE +0.000395`
-  - `Brier +0.000338`
-  - `ECE +0.002994`
-- 相对实验 38 三 seed 均值:
-  - `AUC -0.001842`
-  - `ACC -0.003463`
-  - `RMSE -0.000023`
-  - `Brier -0.000019`
-  - `ECE -0.003663`
+- 配置: `cf_dim=16 + recompute_minibatch bs=8192 lr=1e-4`
+- 三 seed 均值: `AUC 0.762828`, `ACC 0.726852`, `RMSE 0.428070`, `Brier 0.183244`, `ECE 0.047508`
+- 相对实验 34: `AUC +0.001633`, `ACC -0.000704`, `RMSE -0.001100`, `Brier -0.000942`, `ECE -0.003634`
 - 结论:
-  - 叠加后确实比实验 34 的 AUC/ECE 更好，但没有保住实验 38 的 AUC/ACC，也没有达到实验 37 的校准水平。
-  - 这不是无损叠加，不建议直接作为新主线。
-  - 若继续 CF 路线，应优先降低 CF 容量或加 gate/embedding 正则，目标是在 recompute 训练下减少对 ACC/ECE 的拉扯。
+  - 不是实验 37 与 38 的无损叠加；暂不建议作为默认主线。
 
 ### 实验 40. CF residual capacity follow-up
 
