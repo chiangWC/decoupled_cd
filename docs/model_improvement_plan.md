@@ -69,6 +69,11 @@
   - 相对实验 34 三 seed 均值: `AUC +0.001633`, `ACC -0.000704`, `RMSE -0.001100`, `Brier -0.000942`, `ECE -0.003634`
   - 相对实验 37 三 seed 均值: `AUC +0.000687`, `ACC -0.001028`, `RMSE +0.000395`, `Brier +0.000338`, `ECE +0.002994`
   - 结论: 不是实验 37 与实验 38 的无损叠加；暂不建议作为默认主线
+- 最近验证的 concept residual:
+  - branch: `exp/concept-residual`
+  - hard-Q masked student/exercise concept residual，作用在 `cognitive_logits`
+  - `seed=2024` 相对实验 34 同 seed: `AUC -0.000155`, `ACC +0.000533`, `RMSE -0.000112`, `Brier -0.000096`, `ECE -0.001931`
+  - 结论: gate 确实学到非零，但收益是 AUC 换校准/ACC 的小折中，不扩 seed，不建议作为主线结构
 - 当前结果报告默认同时看:
   - `AUC/ACC/RMSE`
   - `Brier/ECE/分桶校准`
@@ -327,6 +332,30 @@
     - `scale=0.5, offset=4.0, threshold=0.05`: `AUC -0.002479`, `ACC +0.000400`, `RMSE +0.001238`, `Brier +0.001065`, `ECE +0.002887`
     - `scale=1.0, stay=1e-5, sparse=0`: 验证 AUC 接近实验 34，但测试 `AUC -0.001179`, `ACC -0.001560`, `RMSE +0.001456`, `Brier +0.001252`, `ECE +0.004517`
   - 结论: ACC 或校准能形成小幅折中，但没有配置在 `AUC/ACC/RMSE/Brier/ECE` 上整体优于实验 34；更强缺失边冷启动会明显加噪，不扩 seed，不建议作为主线
+- 实验 43: hard-Q constrained concept residual
+  - 分支: `exp/concept-residual`
+  - 做法: 增加默认关闭的 `--concept-residual`，学习学生和题目的 `num_concepts` 维 residual；题目侧 residual 乘 hard Q mask 后与学生侧 residual 点乘，并加到 `cognitive_logits`，避免像 CF residual 一样直接做 unrestricted student-exercise pair matching。
+  - 配置: `concept_residual_init_std=0.1`, `concept_residual_student_scale=0.1`, `concept_residual_gate_init=0.0`
+  - 远端验证:
+    - 单元测试通过；新增测试确认未标注知识点上的 exercise residual 不改变输出。
+    - `1 epoch max_rows=1024` smoke 通过，gate 从 `0` 学到约 `-0.000991`。
+    - `300 epoch seed=2024`: best epoch `165`, `concept_residual_gate_value=-0.271670`
+  - `seed=2024` 相对实验 34 同 seed:
+    - `test_auc -0.000155`
+    - `test_acc +0.000533`
+    - `test_rmse -0.000112`
+    - `test_brier -0.000096`
+    - `test_ece -0.001931`
+  - 关键切片相对实验 34 同 seed:
+    - `concept_count=1`: `AUC -0.000288`, `Brier -0.000026`, `ECE -0.002267`
+    - `concept_count=2`: `AUC +0.000624`, `Brier -0.000382`, `ECE -0.002135`
+    - `concept_count=3`: `AUC -0.000046`, `Brier -0.001261`, `ECE +0.003034`
+    - `concept_count=4+`: `AUC -0.000580`, `Brier +0.000188`, `ECE +0.011389`
+    - `none_seen`: `AUC +0.000660`, `ACC +0.001809`, `Brier -0.000235`, `ECE +0.002119`
+  - 文件:
+    - `results/exp_concept_residual/assist_09_concept_residual_seed2024_300ep.json`
+    - `results/exp_concept_residual/assist_09_concept_residual_seed2024_slice_report.json`
+  - 结论: 这个结构比 CF residual 更 concept-aware，且确实被 gate 使用；但主收益是小幅 `ACC/RMSE/Brier/ECE` 改善，代价是 AUC 微降，并且 `concept_count=4+` 与 `none_seen` 的 ECE 仍变差。它不是明显正向主线结构，不扩 seed；可作为“受 Q 约束的 ID residual”参考，但不要作为纯 CDM 主线推进。
 
 ### 语义更干净，但不值得主线吸收
 
@@ -436,3 +465,4 @@
 - 实验 36: student base ability
 - 实验 41: item discrimination / 2PL logit scale
 - 实验 42: Soft-Q / learnable Q residual
+- 实验 43: hard-Q constrained concept residual
