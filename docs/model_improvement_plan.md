@@ -13,6 +13,7 @@
 - 先看“当前快照”，确认主线、结果口径和近线候选。
 - 需要判断某条路线是否还值得继续时，看“已验证有效”和“已验证无效/降级”。
 - 需要设计下一轮实验时，看“当前诊断与下一步”。
+- 需要按实验号定位时，直接搜索 `实验 <编号>` 即可。
 - 需要精确文件路径或完整上下文时，再去看对应结果目录或 `git log`，不要把这份文档当成长篇实验报告。
 
 ## 当前快照
@@ -77,20 +78,6 @@
 - 当前结果报告默认同时看:
   - `AUC/ACC/RMSE`
   - `Brier/ECE/分桶校准`
-
-主线形成的最后两步:
-
-- 实验 33:
-  - 把实验 29 中不稳定的“认知分支读难度”改成 zero-init sidecar adapter
-- 实验 34:
-  - 对多知识点题增加 high-concept logit residual
-  - 对 conditional `guess/slip` 增加 difficulty residual
-  - 相对实验 23 基座三 seed 均值:
-    - `AUC +0.001506`
-    - `ACC +0.002772`
-    - `RMSE -0.002218`
-    - `Brier -0.001909`
-    - `ECE -0.011134`
 
 ## 已验证有效
 
@@ -175,10 +162,8 @@
     - `alternating_frozen_readout`: 周期性 full-batch + frozen readout
     - `recompute_minibatch`: 每个 mini-batch 重跑完整传播，真正引入 SGD 噪声
 - 负结果:
-  - `frozen_readout bs=2048 lr=1e-3 seed=2024`: `test_auc = 0.747830`，明显退化
-  - `alternating_frozen_readout interval=5 bs=2048 lr=1e-3 seed=2024`: `test_auc = 0.749458`，明显退化
-  - `recompute_minibatch bs=8192 lr=1e-3 seed=2024`: `test_auc = 0.759134`，弱于实验 34
-  - `recompute_minibatch bs=4096 lr=3e-4 seed=2024`: `test_auc = 0.757055`，强噪声损伤排序
+  - `frozen_readout`、`alternating_frozen_readout` 明显退化，不值得继续。
+  - `recompute_minibatch` 在更高学习率或更小 batch 下也会退化，说明这条路线需要弱噪声配置。
 - 正向配置:
   - `recompute_minibatch bs=8192 lr=1e-4`
   - 三 seed 结果:
@@ -268,7 +253,6 @@
     - 做法: 保留静态 Q pooling，增加 zero-init low-rank item-aware score residual，仅对 `concept_count >= 2` 生效
     - `seed=2024`: `test_auc = 0.760899`, `test_acc = 0.726826`, `test_rmse = 0.429599`, `test_brier = 0.184556`, `test_ece = 0.052621`
     - 相对实验 34 同 seed: `AUC -0.000404`, `ACC +0.001180`, `RMSE +0.000123`, `Brier +0.000106`, `ECE +0.001479`
-    - 文件: `results/exp_qrepr_item_attention_residual/assist_09_qrepr_item_residual_seed2024_300ep.json`
     - 结论: zero-init residual 版优于旧实验 27 的直接 item-aware pooling，但仍弱于实验 34；不扩 seed，继续归入实验 27 失败路线
 - 实验 29: 直接扩展 `cognitive_match` 输入以读入 `difficulty`
   - `seed=2026` 稳定崩盘，zero-init 也没救回
@@ -280,27 +264,11 @@
   - 单 seed 已不满足继续扩 seed 的门槛
 - 实验 35: local readout adapter
   - 做法: zero-init cognitive logit sidecar 读取当前题目 Q mask 对应的 `TKC+UKC` 局部概念状态均值
-  - 工程备注: 朴素 `[N, K, dim]` target gather 会 OOM，实验分支改为 sparse Q `index_add` 聚合
-  - `seed=2024` 相对实验 34 同 seed:
-    - `test_auc -0.004031`
-    - `test_acc -0.000856`
-    - `test_rmse +0.001213`
-    - `test_brier +0.001043`
-    - `test_ece +0.000762`
-  - `concept_count=2/3` 切片也退化；`4+` 仅在 `RMSE/Brier` 小幅改善但样本少且 `ECE` 明显变差
+  - 单 seed 相对实验 34 在 `AUC/ACC/RMSE/Brier/ECE` 上整体更差；多知识点切片也没翻盘。
   - 结论: 不扩 seed，不建议合入主线
 - 实验 36: student base ability
   - 做法: 在 cognitive logit 分支增加 zero-init 学生全局能力 embedding `theta_u`
-  - `seed=2024` 相对实验 34 同 seed:
-    - `test_auc -0.002491`
-    - `test_acc +0.001827`
-    - `test_rmse +0.000491`
-    - `test_brier +0.000422`
-    - `test_ece -0.000231`
-  - 切片上有信号:
-    - `none_seen` 的 `RMSE/Brier/ECE` 改善，但 `AUC` 下降
-    - `student_history_count=51-100` 与 `6-20` 改善，`101+` 与 `21-50` 的误差变差
-    - `concept_count=2/3/4+` 的 `RMSE/Brier` 改善，但主量级样本 `concept_count=1` 退化
+  - 单 seed 呈现“校准/局部切片有信号，但整体排序和误差不占优”的折中。
   - 结论: exact 版本整体代价大于收益，不扩 seed；后续若复访，应考虑更强约束或只作为 targeted calibration sidecar
 - 实验 41: item discrimination / 2PL logit scale
   - 做法: 增加默认关闭的 `--item-discrimination`，用正值题目区分度缩放 `cognitive_match - difficulty`，并以 `softplus^-1(1)` 初始化为 no-op
@@ -310,52 +278,20 @@
     - `test_rmse +0.001466`
     - `test_brier +0.001261`
     - `test_ece -0.019051`
-  - 文件: `results/exp_item_discrimination/assist_09_item_discrimination_seed2024_300ep.json`
   - 结论: 这是明显的校准折中而不是排序收益；不扩 seed，不建议作为主线
 - 实验 42: Soft-Q / learnable Q residual
   - 分支: `exp/soft-q-residual`
   - 做法: 增加默认关闭的 `--soft-q-residual`，对原始 Q 加 clipped learnable residual；为避免 `Q=0` 位置拿不到梯度，缺失边以极小正值冷启动；传播端只在软权重超过阈值后使用并断开 residual 梯度，避免全图传播 OOM
-  - 工程备注: 第一版让 `q_residual` 梯度穿过全量传播图，full data 训练在 `cuda:3` OOM；修订版改为传播端 detach/threshold，远端单测、1 epoch smoke 和 300 epoch seed=2024 均可跑
-  - `seed=2024` 相对实验 34 同 seed:
-    - `test_auc -0.001154`
-    - `test_acc +0.001104`
-    - `test_rmse +0.000189`
-    - `test_brier +0.000163`
-    - `test_ece +0.000132`
-  - `q_stay_loss` 和 `q_sparse_loss` 基本停留在初始化附近，说明这个 conservative Soft-Q 没学出有效 Q 修正
-  - 文件: `results/exp_soft_q_residual/assist_09_soft_q_residual_seed2024_300ep.json`
-  - 调参复访:
-    - 增加 `soft_q_add_logit_offset` 与 `soft_q_propagation_threshold` tuning knobs，远端单测通过
-    - `scale=0.3, stay=1e-4, sparse=1e-5`: `AUC -0.000713`, `ACC +0.001275`, `RMSE -0.000030`, `Brier -0.000026`, `ECE +0.000190`
-    - `scale=0.5, stay=1e-4, sparse=1e-5`: `AUC -0.000644`, `ACC +0.000628`, `RMSE -0.000021`, `Brier -0.000018`, `ECE -0.000689`
-    - `scale=0.5, stay=1e-5, sparse=0`: `AUC -0.000621`, `ACC -0.000894`, `RMSE +0.000454`, `Brier +0.000390`, `ECE +0.001149`
-    - `scale=0.5, offset=4.0, threshold=0.05`: `AUC -0.002479`, `ACC +0.000400`, `RMSE +0.001238`, `Brier +0.001065`, `ECE +0.002887`
-    - `scale=1.0, stay=1e-5, sparse=0`: 验证 AUC 接近实验 34，但测试 `AUC -0.001179`, `ACC -0.001560`, `RMSE +0.001456`, `Brier +0.001252`, `ECE +0.004517`
-  - 结论: ACC 或校准能形成小幅折中，但没有配置在 `AUC/ACC/RMSE/Brier/ECE` 上整体优于实验 34；更强缺失边冷启动会明显加噪，不扩 seed，不建议作为主线
+  - 第一版会让残差梯度穿过全量传播图并引发 OOM，修订版虽可稳定训练，但整体只形成很小的折中。
+  - 多组 `scale/stay/sparse/offset/threshold` 调参都没有在 `AUC/ACC/RMSE/Brier/ECE` 上整体优于实验 34；更激进的缺失边冷启动还会明显加噪。
+  - 结论: 不扩 seed，不建议作为主线
 - 实验 43: hard-Q constrained concept residual
   - 分支: `exp/concept-residual`
   - 做法: 增加默认关闭的 `--concept-residual`，学习学生和题目的 `num_concepts` 维 residual；题目侧 residual 乘 hard Q mask 后与学生侧 residual 点乘，并加到 `cognitive_logits`，避免像 CF residual 一样直接做 unrestricted student-exercise pair matching。
   - 配置: `concept_residual_init_std=0.1`, `concept_residual_student_scale=0.1`, `concept_residual_gate_init=0.0`
-  - 远端验证:
-    - 单元测试通过；新增测试确认未标注知识点上的 exercise residual 不改变输出。
-    - `1 epoch max_rows=1024` smoke 通过，gate 从 `0` 学到约 `-0.000991`。
-    - `300 epoch seed=2024`: best epoch `165`, `concept_residual_gate_value=-0.271670`
-  - `seed=2024` 相对实验 34 同 seed:
-    - `test_auc -0.000155`
-    - `test_acc +0.000533`
-    - `test_rmse -0.000112`
-    - `test_brier -0.000096`
-    - `test_ece -0.001931`
-  - 关键切片相对实验 34 同 seed:
-    - `concept_count=1`: `AUC -0.000288`, `Brier -0.000026`, `ECE -0.002267`
-    - `concept_count=2`: `AUC +0.000624`, `Brier -0.000382`, `ECE -0.002135`
-    - `concept_count=3`: `AUC -0.000046`, `Brier -0.001261`, `ECE +0.003034`
-    - `concept_count=4+`: `AUC -0.000580`, `Brier +0.000188`, `ECE +0.011389`
-    - `none_seen`: `AUC +0.000660`, `ACC +0.001809`, `Brier -0.000235`, `ECE +0.002119`
-  - 文件:
-    - `results/exp_concept_residual/assist_09_concept_residual_seed2024_300ep.json`
-    - `results/exp_concept_residual/assist_09_concept_residual_seed2024_slice_report.json`
-  - 结论: 这个结构比 CF residual 更 concept-aware，且确实被 gate 使用；但主收益是小幅 `ACC/RMSE/Brier/ECE` 改善，代价是 AUC 微降，并且 `concept_count=4+` 与 `none_seen` 的 ECE 仍变差。它不是明显正向主线结构，不扩 seed；可作为“受 Q 约束的 ID residual”参考，但不要作为纯 CDM 主线推进。
+  - gate 确实学到非零，说明结构被模型使用；但整体只是小幅 `ACC/RMSE/Brier/ECE` 改善，代价是 AUC 微降。
+  - `concept_count=4+` 与 `none_seen` 的 ECE 仍变差，因此它不是明显正向主线结构。
+  - 结论: 不扩 seed；可作为“受 Q 约束的 ID residual”参考，但不要作为纯 CDM 主线推进。
 
 ### 语义更干净，但不值得主线吸收
 
@@ -417,6 +353,7 @@
 
 - 下一步应优先针对“多知识点题表示/读出偏弱”做 targeted 修补
 - `none_seen` 更适合作为后续单独校准问题，而不是当前第一优先结构问题
+- exact-3 aggressive residual/readout 已单 seed 验证到头: `3`-concept 局部切片能继续改善，但收益不能稳定转化为更优 overall，不再继续深挖同类结构
 
 ## 默认下一步
 
@@ -424,45 +361,6 @@
 
 1. 先从当前 `master` 主线出发，只改一个结构因素。
 2. 优先考虑轻量、zero-init、可回退的 sidecar / residual 改动。
-3. 优先修多知识点题的 targeted residual / readout 问题，而不是回到早期 `dual graph`、裸 Q 图或大幅改主干。
+3. 若继续做多知识点题，优先换参数化方向，不再继续堆 exact-3 aggressive residual / readout。
 4. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
 5. 判断是否值得合入时，默认同时看 `AUC/ACC/RMSE/Brier/ECE`，不要只看 AUC。
-
-## 快速索引
-
-当前主线形成链路:
-
-- 实验 3: transition graph
-- 实验 6: 合理超参数
-- 实验 7: `conditional g/s`
-- 实验 8: 长训 `300 epoch`
-- 实验 9: 多 seed 稳定性
-- 实验 11: `TKC/UKC` 解耦
-- 实验 12: `TKC` 正误双通道
-- 实验 21: 学生自适应 `TKC/UKC` gate
-- 实验 23: 修正 `TKC` 行为项全局二次缩小
-- 实验 33: zero-init cognitive difficulty adapter
-- 实验 34: high-concept logit adapter + `gs_difficulty_adapter`
-
-当前值得记住的候选:
-
-- 实验 28: `guess/slip` 读入难度，校准改善
-- 实验 37: `recompute_minibatch bs=8192 lr=1e-4`，三 seed 同时改善 `AUC/ACC/RMSE/Brier/ECE`，但尚未合入 `master`
-- 实验 38/40: `cf_logit_residual` 显著提高当前学生内随机 split 的 ranking 指标，但依赖 transductive ID side channel；相关支线已暂停，不作为纯 CDM 主线推进
-- 实验 39: 实验 38 + 实验 37 的叠加不是无损叠加，只能形成 AUC/ECE 折中，暂不建议作为默认主线
-
-当前默认不建议继续的代表路线:
-
-- 实验 10: `dual graph`
-- 实验 13: `q_e` residual
-- 实验 14/15: 局部硬汇聚
-- 实验 22: 在新主线底座上复验 `local UKC neighbor`
-- 实验 25: readout 侧 `TKC` residual
-- 实验 27: `q_repr` item-aware Q pooling，包括 zero-init residual 复访；仍不建议继续
-- 实验 29: 直接扩展 `cognitive_match` 输入
-- 实验 31/32: `UKC` 图传播轻量替换
-- 实验 35: local readout adapter
-- 实验 36: student base ability
-- 实验 41: item discrimination / 2PL logit scale
-- 实验 42: Soft-Q / learnable Q residual
-- 实验 43: hard-Q constrained concept residual
