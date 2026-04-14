@@ -155,6 +155,11 @@
 - 实验 39 证明 `cf_logit_residual cf_dim=16` 与 `recompute_minibatch bs=8192 lr=1e-4` 不是无损叠加；它形成 AUC/ECE 折中，但弱于实验 37 的校准，也弱于实验 38 的 AUC/ACC。
 - 实验 40 证明扩大 CF residual 容量能显著抬高当前 split 的 AUC，但新增收益主要由 ID-aware residual 主导；该支线已暂停，后续回归实验 34/37 这类干净主线。
 - 实验 43 证明 hard-Q constrained concept residual 会被 gate 使用，但在 `seed=2024` 上只是 `AUC -0.000155` 换 `ACC/RMSE/Brier/ECE` 小幅改善，且 `concept_count=4+` / `none_seen` 的 ECE 仍变差；不扩 seed，不作为主线结构推进。
+- `exp/multi-concept-interaction` 已验证更激进的 exact-3 多知识点 residual/readout:
+  - simpler `exact-3 readout` 仍是这条线上最平衡的版本: `AUC 0.761332`, `ACC 0.727283`, `RMSE 0.429016`, `Brier 0.184055`, `ECE 0.049997`
+  - `tri_concept_readout_adapter` 能明显抬高 `concept_count=3` 的 AUC，但 calibration 代价过大，不值得继续扩 seed
+  - `tri_concept_interaction_adapter` 能把 `concept_count=3` 和 `partial_seen` 局部指标继续做强，并基本抹平 `4+` 退化，但 overall 仍不如 simpler `exact-3 readout`
+  - 结论: 这条 exact-3 aggressive residual/readout family 已到头，停止继续
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
@@ -179,6 +184,11 @@
 - `exp/cf-residual-recompute` 是叠加验证支线:
   - 已验证 `cf_dim=16 + recompute_minibatch bs=8192 lr=1e-4`
   - 结果不是无损叠加，暂不建议把这组配置主线化
+- `exp/multi-concept-interaction` 当前已收尾:
+  - 已实现并验证 `multi_concept_interaction_adapter`、`multi_concept_readout_adapter`、`tri_concept_readout_adapter`、`tri_concept_interaction_adapter`
+  - 单 seed 最平衡结果是 simpler `exact-3 readout`，相对实验 34 同 seed: `AUC +0.000028`, `ACC +0.001637`, `RMSE -0.000460`, `Brier -0.000395`, `ECE -0.001145`
+  - 两个 tri-concept aggressive 版本都只带来局部 slice 改善，不能稳定转化为更优 overall，多 seed 价值不足
+  - 这条支线暂停，不再继续追加 exact-3 aggressive 结构
 
 ## 当前关键文件
 
