@@ -62,14 +62,17 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
   - 吸收实验 33 的认知 difficulty sidecar adapter
   - 再吸收“多知识点题 high-concept logit residual + guess/slip difficulty residual”
 - 结构比较默认看 `300 epoch`
-- 实验报告默认同时看 `AUC/ACC/RMSE` 和 `Brier/ECE/分桶校准`
+- 实验报告默认主看 `AUC/ACC`
+- `RMSE/Brier/ECE/分桶校准` 仍保留，但默认作为次要指标用于判断误差与校准副作用
+- 若目标是推进主线，默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级
 
 ## 已定规则
 
 - ordered ASSIST09 + transition graph 是当前固定主线。
 - `dual graph` 只作为 legacy ablation，不是默认路径。
 - `valid/test` 复用 `train` 行为历史做传播输入。
-- 一次只改一个结构因素。
+- 默认一次只改一个结构因素。
+- 若单因素已经出现明确的 overall 正向信号，或出现可解释且互补的 slice 信号，可少量做双因素组合验证；组合数应严格受控，避免组合爆炸。
 - 探索性结构改动默认先从最新 `master` 切 `exp/<short-name>` 分支。
 - 新结构默认先跑单次；单次值得继续时再补 `2-3` 个 seed。
 - 结果未验证前，不要把探索性实验直接推到 `master`。
