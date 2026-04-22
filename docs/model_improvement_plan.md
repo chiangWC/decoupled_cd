@@ -190,6 +190,17 @@
 - 结论:
   - 这是当前最强正向支线候选，值得下一步推广到主线或至少作为正式训练协议候选。
   - 推广前要接受训练成本增加；`lr=1e-4` 的最佳 epoch 在 `135/151/144`，明显比高学习率 mini-batch 配置慢。
+  - 后续工程优化结论:
+    - `adamw + weight_decay=1e-4` 与基线完全一致；`weight_decay=3e-4` 单 seed 退化
+    - `max_grad_norm=1.0` 完全不触发；`0.08` 明显伤害 `ACC/RMSE/Brier/ECE`；`0.2` 三 seed 均值仍低于实验 37 原始均值
+    - `cosine + warmup` 配置 `lr=3e-4, warmup_epochs=8, warmup_start_factor=0.2, min_lr=1e-5` 的三 seed 均值为:
+      - `test_auc = 0.762612`
+      - `test_acc = 0.728006`
+      - `test_rmse = 0.427753`
+      - `test_brier = 0.182973`
+      - `test_ece = 0.046956`
+    - 相对实验 37 三 seed 均值仅有 `AUC +0.000471`, `ACC +0.000127`，同时 `ECE +0.002442`
+    - 判断: 训练协议层面的工程优化已接近收益上限，不值得把 `exp/training-modes` 或 `exp/training-modes-auc` 整包合入主线
 
 ### 实验 38. final-logit MF residual
 

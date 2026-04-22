@@ -220,10 +220,10 @@
 - 避免显著增加 full-batch 显存占用的主干改动。
 - 新实验默认在 `exp/*` 分支上进行，确认成立后再整理回 `master`。
 - 远端运行前，先把当前分支 `git push` 到 `origin`，再执行 `remote_exec.sh`。
-- 继续训练策略支线时，优先从 `exp/training-modes` 当前实现小步试:
-  - `recompute_minibatch bs=8192 lr=1e-4` 周围的 scheduler / patience / weight decay
-  - 对比是否能保住三 seed AUC 的同时进一步降低 `ECE`
-  - 单 seed 有信号后再补 `2024/2025/2026` 三 seed
+- 实验 37 后续工程优化已做过一轮:
+  - `weight_decay` / `grad clipping` 未带来值得保留的 `AUC/ACC` 增益
+  - `cosine + warmup` 可带来极小的 `AUC/ACC` 提升，但量级不足以推动主线切换，且 `ECE` 变差
+  - 训练模式支线暂不合入 `master`；如继续推进，优先做保持语义干净的模型改动，而不是继续打磨训练协议
 - CF residual 支线暂停:
   - 不继续扫 `cf_dim`，不作为纯 CDM 主线推进
   - 后续默认回归实验 34/37 这类干净主线
