@@ -75,6 +75,13 @@
   - hard-Q masked student/exercise concept residual，作用在 `cognitive_logits`
   - `seed=2024` 相对实验 34 同 seed: `AUC -0.000155`, `ACC +0.000533`, `RMSE -0.000112`, `Brier -0.000096`, `ECE -0.001931`
   - 结论: gate 确实学到非零，但收益是 AUC 换校准/ACC 的小折中，不扩 seed，不建议作为主线结构
+- 最近验证的 local exercise student adapter:
+  - branch: `exp/local-exercise-student-adapter`
+  - 用当前题 `Q mask` 下的局部 `TKC/UKC` 概念状态构造 zero-init 学生表征 residual，再注入 `cognitive_match`
+  - `seed=2024` 相对实验 34 同 seed:
+    - `min_count=2`: `AUC -0.001609`, `ACC +0.000533`, `RMSE +0.000377`, `Brier +0.000324`, `ECE +0.002203`
+    - `min_count=3`: `AUC -0.000509`, `ACC +0.000228`, `RMSE +0.000530`, `Brier +0.000456`, `ECE +0.001742`
+  - 结论: `3/4+` 多知识点切片有局部增益，但不能转化为整体 `AUC` 正收益；这条 family 暂停，不扩 seed
 - 当前结果报告默认同时看:
   - `AUC/ACC/RMSE`
   - `Brier/ECE/分桶校准`
@@ -303,6 +310,26 @@
   - gate 确实学到非零，说明结构被模型使用；但整体只是小幅 `ACC/RMSE/Brier/ECE` 改善，代价是 AUC 微降。
   - `concept_count=4+` 与 `none_seen` 的 ECE 仍变差，因此它不是明显正向主线结构。
   - 结论: 不扩 seed；可作为“受 Q 约束的 ID residual”参考，但不要作为纯 CDM 主线推进。
+- 实验 44: local exercise student adapter
+  - 分支: `exp/local-exercise-student-adapter`
+  - 做法: 对当前题 `Q mask` 下的局部 `TKC/UKC` 概念状态做汇总，构造 zero-init 学生表征 residual，并注入 `cognitive_match`；语义上是“学生在当前题相关概念上的局部状态修正”，不是 ID residual
+  - 第一版 `min_count=2`:
+    - `seed=2024` 相对实验 34 同 seed:
+      - `test_auc -0.001609`
+      - `test_acc +0.000533`
+      - `test_rmse +0.000377`
+      - `test_brier +0.000324`
+      - `test_ece +0.002203`
+    - 切片上 `concept_count=3/4+` 的 `AUC` 分别约 `+0.0070/+0.0170`，但 `concept_count=2` 退化约 `-0.0065`，`partial_seen` 退化约 `-0.0234`
+  - follow-up `min_count=3`:
+    - `seed=2024` 相对实验 34 同 seed:
+      - `test_auc -0.000509`
+      - `test_acc +0.000228`
+      - `test_rmse +0.000530`
+      - `test_brier +0.000456`
+      - `test_ece +0.001742`
+    - 说明把作用范围收紧到 `3+` 后，确实缓和了整体退化，但仍没有把局部收益转化为整体 `AUC` 正增益
+  - 结论: 这条“exercise-local student state residual” family 可以改善 `3/4+` 多知识点题，但对当前主线最关键的 overall `AUC` 不成立；不扩 seed，暂时停止
 
 ### 语义更干净，但不值得主线吸收
 
