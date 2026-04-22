@@ -159,6 +159,7 @@
 - 实验 43 证明 hard-Q constrained concept residual 会被 gate 使用，但在 `seed=2024` 上只是 `AUC -0.000155` 换 `ACC/RMSE/Brier/ECE` 小幅改善，且 `concept_count=4+` / `none_seen` 的 ECE 仍变差；不扩 seed，不作为主线结构推进。
 - 实验 45 `exp/concept-conditioned-prop` 在 propagation 侧引入 exercise-to-concept concept-conditioned zero-init residual 后，`seed=2024` 相对当前主线 baseline 仅 `AUC +0.000109`，但 `ACC -0.000362`、`RMSE +0.000271`、`Brier +0.000233`、`ECE +0.002160`；`concept_count=2` 有轻微正向，但 `3/4+` 与 `none_seen` 仍不是干净收益，不扩 seed，不作为主线结构推进。
 - 实验 46 `exp/qrepr-score-residual` 在 readout 侧引入 multi-concept-only zero-init exercise-conditioned Q-pooling score residual 后，`seed=2024` 相对当前主线 baseline 为 `AUC +0.000664`，但 `ACC -0.001370`、`RMSE +0.000185`、`Brier +0.000159`、`ECE +0.001519`；`concept_count=2/3` 的 AUC 有提升，但 `4+`、`none_seen`、`partial_seen` 仍出现明显副作用，不扩 seed，不作为主线结构推进。
+- 实验 47 `exp/none-seen-calibration-bias` 在 final logit 侧加入只看 target coverage / `concept_count` / `difficulty` 的 zero-init calibration bias 后，`seed=2024` 相对当前主线 baseline 为 `AUC -0.000945`、`ACC -0.000381`、`RMSE +0.000438`、`Brier +0.000376`、`ECE -0.001393`；overall `ECE` 虽略降，但 `none_seen` 的 `ACC/RMSE/Brier/ECE` 全部变差，不扩 seed，不作为主线结构推进。
 - `exp/multi-concept-interaction` 已验证更激进的 exact-3 多知识点 residual/readout:
   - simpler `exact-3 readout` 仍是这条线上最平衡的版本: `AUC 0.761332`, `ACC 0.727283`, `RMSE 0.429016`, `Brier 0.184055`, `ECE 0.049997`
   - `tri_concept_readout_adapter` 能明显抬高 `concept_count=3` 的 AUC，但 calibration 代价过大，不值得继续扩 seed
@@ -200,6 +201,10 @@
 - `exp/qrepr-score-residual` 当前已做单 seed 判断:
   - readout 侧 static Q pooling + multi-concept-only zero-init exercise-conditioned score residual 在 `seed=2024` 上带来 `AUC +0.000664`
   - `concept_count=2/3` 有局部 AUC 信号，但 `ACC` 不升，且 `4+`、`none_seen`、`partial_seen` 明显变差
+  - 这条支线暂停，不继续扩 seed
+- `exp/none-seen-calibration-bias` 当前已做单 seed 判断:
+  - final-logit zero-init calibration bias 在 `seed=2024` 上只换来 `ECE -0.001393`
+  - `none_seen` 本身没有被修好，反而出现 `ACC/RMSE/Brier/ECE` 一起变差
   - 这条支线暂停，不继续扩 seed
 
 ## 当前关键文件

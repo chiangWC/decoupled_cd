@@ -59,6 +59,7 @@
   - 实验 44 `exp/local-exercise-student-adapter`: `seed=2024` 下 `min_count=2` 为 `AUC -0.001609`，`min_count=3` 为 `AUC -0.000509`；虽改善 `3/4+` 多知识点切片，但不能转化为 overall `AUC` 正收益
   - 实验 45 `exp/concept-conditioned-prop`: propagation 侧 concept-conditioned residual 在 `seed=2024` 上相对当前主线 baseline 为 `AUC +0.000109`, `ACC -0.000362`, `RMSE +0.000271`, `Brier +0.000233`, `ECE +0.002160`；`concept_count=2` 小幅改善，但 `3/4+` 与 `none_seen` 仍不是 clean win
   - 实验 46 `exp/qrepr-score-residual`: readout 侧 multi-concept-only exercise-conditioned Q-pooling score residual 在 `seed=2024` 上相对当前主线 baseline 为 `AUC +0.000664`, `ACC -0.001370`, `RMSE +0.000185`, `Brier +0.000159`, `ECE +0.001519`；`concept_count=2/3` 的 AUC 有提升，但 `4+`、`none_seen`、`partial_seen` 副作用明显
+  - 实验 47 `exp/none-seen-calibration-bias`: final-logit coverage/concept-count/difficulty zero-init calibration bias 在 `seed=2024` 上相对当前主线 baseline 为 `AUC -0.000945`, `ACC -0.000381`, `RMSE +0.000438`, `Brier +0.000376`, `ECE -0.001393`；overall ECE 虽略降，但 `none_seen` 的 `ACC/RMSE/Brier/ECE` 全部变差，不是 clean win
 
 ## 已验证有效
 
@@ -243,6 +244,19 @@
     - `none_seen`: `AUC +0.001804`, 但 `RMSE +0.008018`, `ECE +0.017540`
     - `partial_seen`: `AUC -0.001127`, `RMSE +0.010477`, `ECE +0.009486`
   - 结论: 相比实验 45，这条 readout 侧窄变体更接近目标瓶颈，但仍然是“局部排序改善换整体与校准副作用”的折中；不扩 seed，不纳入主线
+- 实验 47: final-logit none-seen calibration bias
+  - 分支: `exp/none-seen-calibration-bias`
+  - 做法: 在最终概率输出前增加 zero-init calibration residual；输入只看 target concept coverage、`concept_count` 和 `difficulty`，不改 TKC/UKC propagation 语义
+  - `seed=2024` 相对当前主线 baseline: `AUC -0.000945`, `ACC -0.000381`, `RMSE +0.000438`, `Brier +0.000376`, `ECE -0.001393`
+  - 切片:
+    - `none_seen`: `AUC +0.000401`, 但 `ACC -0.005428`, `RMSE +0.003811`, `Brier +0.002895`, `ECE +0.011709`
+    - `partial_seen`: `AUC +0.004038`, `ACC +0.003030`, 但 `RMSE +0.000513`, `Brier +0.000418`, `ECE +0.015319`
+    - `all_seen`: `AUC -0.000886`, `ACC -0.000237`, `RMSE +0.000340`, `Brier +0.000293`, `ECE -0.001199`
+    - `concept_count=1`: `AUC -0.001279`, `ACC -0.000754`, `RMSE +0.000597`, `Brier +0.000510`, `ECE -0.001459`
+    - `concept_count=2`: `AUC +0.001413`, `ACC +0.002801`, `RMSE -0.000603`, `Brier -0.000529`, `ECE -0.000978`
+    - `concept_count=3`: `AUC -0.002885`, `ACC -0.008859`, `RMSE +0.000545`, `Brier +0.000520`, `ECE -0.000689`
+    - `concept_count=4+`: `AUC -0.005805`, `ACC +0.000000`, `RMSE +0.002798`, `Brier +0.002615`, `ECE +0.001669`
+  - 结论: 这类“全局共享 final-logit calibration bias”太钝。虽然 overall `ECE` 略降，但没有解决 `none_seen`，反而把目标切片的 `ACC/RMSE/Brier/ECE` 一起做坏；不扩 seed，不纳入主线
 
 ### 语义更干净，但不值得主线吸收
 
@@ -284,6 +298,12 @@
   - 下一步应优先针对“多知识点题表示/读出偏弱”做 targeted 修补
   - `none_seen` 更适合作为后续单独校准问题，而不是当前第一优先结构问题
   - exact-3 aggressive residual/readout 已单 seed 验证到头，不再继续深挖同类结构
+
+### 实验 47 后的补充判断
+
+- `none_seen` 的确可以单独当校准问题做，但“对所有样本共享的 final-logit bias”过于粗糙
+- 即便输入里放入 target coverage / `concept_count` / `difficulty`，模型也可能拿 overall ECE 换掉 `none_seen` 自身校准
+- 如果后续还要回到 `none_seen`，优先考虑更局部、更显式的触发方式，而不是继续扩这一类全局共享 bias
 
 ## 默认下一步
 
