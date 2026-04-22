@@ -157,6 +157,7 @@
 - 实验 39 证明 `cf_logit_residual cf_dim=16` 与 `recompute_minibatch bs=8192 lr=1e-4` 不是无损叠加；它形成 AUC/ECE 折中，但弱于实验 37 的校准，也弱于实验 38 的 AUC/ACC。
 - 实验 40 证明扩大 CF residual 容量能显著抬高当前 split 的 AUC，但新增收益主要由 ID-aware residual 主导；该支线已暂停，后续回归实验 34/37 这类干净主线。
 - 实验 43 证明 hard-Q constrained concept residual 会被 gate 使用，但在 `seed=2024` 上只是 `AUC -0.000155` 换 `ACC/RMSE/Brier/ECE` 小幅改善，且 `concept_count=4+` / `none_seen` 的 ECE 仍变差；不扩 seed，不作为主线结构推进。
+- 实验 45 `exp/concept-conditioned-prop` 在 propagation 侧引入 exercise-to-concept concept-conditioned zero-init residual 后，`seed=2024` 相对当前主线 baseline 仅 `AUC +0.000109`，但 `ACC -0.000362`、`RMSE +0.000271`、`Brier +0.000233`、`ECE +0.002160`；`concept_count=2` 有轻微正向，但 `3/4+` 与 `none_seen` 仍不是干净收益，不扩 seed，不作为主线结构推进。
 - `exp/multi-concept-interaction` 已验证更激进的 exact-3 多知识点 residual/readout:
   - simpler `exact-3 readout` 仍是这条线上最平衡的版本: `AUC 0.761332`, `ACC 0.727283`, `RMSE 0.429016`, `Brier 0.184055`, `ECE 0.049997`
   - `tri_concept_readout_adapter` 能明显抬高 `concept_count=3` 的 AUC，但 calibration 代价过大，不值得继续扩 seed
@@ -191,6 +192,10 @@
   - 单 seed 最平衡结果是 simpler `exact-3 readout`，相对实验 34 同 seed: `AUC +0.000028`, `ACC +0.001637`, `RMSE -0.000460`, `Brier -0.000395`, `ECE -0.001145`
   - 两个 tri-concept aggressive 版本都只带来局部 slice 改善，不能稳定转化为更优 overall，多 seed 价值不足
   - 这条支线暂停，不再继续追加 exact-3 aggressive 结构
+- `exp/concept-conditioned-prop` 当前已做单 seed 判断:
+  - propagation 侧 `exercise -> concept` concept-conditioned zero-init residual 在 `seed=2024` 上只带来 `AUC +0.000109`
+  - `concept_count=2` 有小幅正向，但 `concept_count=3/4+` 与 `none_seen` 没形成可扩线的 clean win
+  - 这条支线暂停，不继续扩 seed
 
 ## 当前关键文件
 
