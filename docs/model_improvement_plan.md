@@ -58,6 +58,7 @@
   - 实验 43 `exp/concept-residual`: `seed=2024` 相对实验 34 为 `AUC -0.000155`, `ACC +0.000533`，属于 AUC 换其他指标的小折中
   - 实验 44 `exp/local-exercise-student-adapter`: `seed=2024` 下 `min_count=2` 为 `AUC -0.001609`，`min_count=3` 为 `AUC -0.000509`；虽改善 `3/4+` 多知识点切片，但不能转化为 overall `AUC` 正收益
   - 实验 45 `exp/concept-conditioned-prop`: propagation 侧 concept-conditioned residual 在 `seed=2024` 上相对当前主线 baseline 为 `AUC +0.000109`, `ACC -0.000362`, `RMSE +0.000271`, `Brier +0.000233`, `ECE +0.002160`；`concept_count=2` 小幅改善，但 `3/4+` 与 `none_seen` 仍不是 clean win
+  - 实验 46 `exp/qrepr-score-residual`: readout 侧 multi-concept-only exercise-conditioned Q-pooling score residual 在 `seed=2024` 上相对当前主线 baseline 为 `AUC +0.000664`, `ACC -0.001370`, `RMSE +0.000185`, `Brier +0.000159`, `ECE +0.001519`；`concept_count=2/3` 的 AUC 有提升，但 `4+`、`none_seen`、`partial_seen` 副作用明显
 
 ## 已验证有效
 
@@ -231,6 +232,17 @@
     - `concept_count=4+`: `ACC +0.024793`, `ECE -0.016021`, 但 `AUC -0.002352`, `RMSE +0.004048`
     - `none_seen`: `AUC +0.003574`, 但 `RMSE +0.001578`, `ECE +0.001645`
   - 结论: 这是“局部切片有信号但整体不成立”的传播侧修补；不扩 seed，不纳入主线
+- 实验 46: readout-side qrepr score residual
+  - 分支: `exp/qrepr-score-residual`
+  - 做法: 保留 static `q_pool_gate`，仅对 `concept_count >= 2` 的题增加 zero-init exercise-conditioned Q-pooling score residual；按 batch chunk 分块计算 additive score，避免显式物化完整 `B x K x D`
+  - `seed=2024` 相对当前主线 baseline: `AUC +0.000664`, `ACC -0.001370`, `RMSE +0.000185`, `Brier +0.000159`, `ECE +0.001519`
+  - 切片:
+    - `concept_count=2`: `AUC +0.002694`, `ECE -0.003136`，但 `ACC -0.006002`
+    - `concept_count=3`: `AUC +0.007144`, `RMSE -0.002483`, `ECE -0.002975`，但 `ACC -0.016611`
+    - `concept_count=4+`: `ACC +0.024793`, `ECE -0.008125`，但 `AUC -0.012312`, `RMSE +0.006886`
+    - `none_seen`: `AUC +0.001804`, 但 `RMSE +0.008018`, `ECE +0.017540`
+    - `partial_seen`: `AUC -0.001127`, `RMSE +0.010477`, `ECE +0.009486`
+  - 结论: 相比实验 45，这条 readout 侧窄变体更接近目标瓶颈，但仍然是“局部排序改善换整体与校准副作用”的折中；不扩 seed，不纳入主线
 
 ### 语义更干净，但不值得主线吸收
 
