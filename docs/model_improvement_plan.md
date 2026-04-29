@@ -45,11 +45,17 @@
 - `RMSE/Brier/ECE/分桶校准` 默认作为次要指标
 - 若目标是推进主线，默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级；达不到时，通常需要很强的 slice 证据才值得继续
 
-- 当前正向支线候选是实验 37:
-  - branch: `exp/training-modes`
-  - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上已弱于实验 49，不作为默认 `master` 训练口径
-  - 补充: 这条线属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不优先合入主线
-  - 详细指标见下文“实验 37”
+- 当前正向支线候选:
+  - 实验 37
+    - branch: `exp/training-modes`
+    - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上已弱于实验 49，不作为默认 `master` 训练口径
+    - 补充: 这条线属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不优先合入主线
+    - 详细指标见下文“实验 37”
+  - 实验 51
+    - branch: `exp/interpretable-readout-experts`
+    - 判断: 这是当前最强的结构 follow-up 候选；三 seed 上相对实验 49 形成稳定 `AUC` 正收益，同时维持 `RMSE/Brier/ECE` 小幅改善
+    - 补充: 这条线通过可解释 gate 给读出侧增加有限专家容量，不读取学生/题目 ID，也不依赖 CF 式 side channel
+    - 详细指标见下文“实验 51”
 
 - 暂停中的 CF 支线:
   - 实验 38 `exp/cf-residual`: ranking-oriented 候选，但依赖学生内随机 split 的 ID-aware side channel，不作为纯 CDM 主线
@@ -328,6 +334,40 @@
     - 这说明当前增益主要来自“history carrier + pairwise scorer”本身，而不是更复杂的 pair aggregator
     - 主线保留简单均值聚合，不继续扩 seed
 
+- 实验 51: interpretable readout expert residual
+  - 分支: `exp/interpretable-readout-experts`
+  - 做法:
+    - 在 `cognitive_logits` 外增加 zero-init readout expert residual
+    - gate 只读取 `concept_count / difficulty / dispersion / coverage` 这四类可解释量
+    - expert 侧读取 detached readout features，不读学生/题目 ID，不改 propagation 主干语义
+  - 最强配置:
+    - `--interpretable-readout-expert-adapter`
+    - `--interpretable-readout-expert-count 3`
+  - `seed=2024` 相对实验 49 control:
+    - `AUC +0.001548`
+    - `ACC -0.000818`
+    - `RMSE +0.000000`
+    - `Brier +0.000001`
+    - `ECE +0.000973`
+  - targeted 变体:
+    - `min_count>=2` 的三专家版本能让 `concept_count=2/3` 切片转正，但 overall `AUC -0.000151`，不如 full-trigger
+    - `min_count>=3` 的两专家/三专家版本都未超过 full-trigger 单次结果
+  - full-trigger 三 seed 结果:
+    - `seed=2024`: `AUC 0.764051`, `ACC 0.728672`, `RMSE 0.428295`, `Brier 0.183437`, `ECE 0.050665`
+    - `seed=2025`: `AUC 0.764711`, `ACC 0.728387`, `RMSE 0.428095`, `Brier 0.183265`, `ECE 0.051829`
+    - `seed=2026`: `AUC 0.762904`, `ACC 0.729795`, `RMSE 0.427466`, `Brier 0.182727`, `ECE 0.045703`
+  - full-trigger 三 seed 均值相对实验 49:
+    - `AUC +0.001520`
+    - `ACC -0.000812`
+    - `RMSE -0.000253`
+    - `Brier -0.000217`
+    - `ECE -0.000429`
+  - 结论:
+    - 这条线已经从单 seed 信号变成稳定的结构候选，当前是最强的非 ID-aware follow-up
+    - 它的代价是小幅 `ACC` 回撤，但 `AUC` 增益已经达到继续保留的门槛
+    - 第一版 full-trigger 收益主要来自 `concept_count=1 / all_seen`，没有自然学成“只服务高 concept-count”的干净专家分工
+    - 如果后续继续做 selective routing，应建立在这条 full-trigger 正向底座上，而不是直接退回更硬的 `3+` trigger
+
 ### 语义更干净，但不值得主线吸收
 
 - 实验 24: 多知识点题按知识点数分摊
@@ -375,13 +415,19 @@
 - 即便输入里放入 target coverage / `concept_count` / `difficulty`，模型也可能拿 overall ECE 换掉 `none_seen` 自身校准
 - 如果后续还要回到 `none_seen`，优先考虑更局部、更显式的触发方式，而不是继续扩这一类全局共享 bias
 
+### 实验 51 后的补充判断
+
+- “可解释 gate + 专家 residual” 这条线是成立的，说明读出侧适度增容本身有真实信号
+- 但第一版最优解并没有自动把容量集中到高知识点数题；如果强行把 trigger 收窄到 `concept_count>=3`，overall `AUC` 反而回落
+- 这说明当前目标不是证明“高知识点数一定要硬分流”，而是继续寻找更干净的 selective routing，让专家容量既保住 full-trigger 的 overall 收益，又更准确服务目标 slice
+
 ## 默认下一步
 
 如果没有用户明确指定路线，默认按下面优先级思考:
 
 1. 先从当前 `master` 主线出发，默认只改一个结构因素。
 2. 优先考虑轻量、zero-init、可回退的 sidecar / residual 改动。
-3. 若继续做多知识点题，优先换参数化方向，不再继续堆 exact-3 aggressive residual / readout。
+3. 若继续做多知识点题，优先在实验 51 这类可解释 expert residual 底座上做更干净的 selective routing，而不是继续堆 exact-3 aggressive residual / readout。
 4. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
 5. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
 6. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
