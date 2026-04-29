@@ -80,6 +80,7 @@
 - 判断:
   - 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上已弱于实验 49 主线。
   - 收益主要来自真正 mini-batch SGD 的整体校准/泛化改善，不是彻底解决 `concept_count=4+` 或 `none_seen` 校准问题。
+  - 它属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不适合作为 `master` 默认训练协议。
   - 后续若继续优化训练策略，默认从 `exp/training-modes` 出发。
 
 近期暂停的 CF 模型支线:
@@ -154,39 +155,12 @@
 - 实验 33 的 zero-init cognitive difficulty adapter 在三 seed 上稳定优于实验 23 基座，且避开了实验 29 的 seed 崩盘。
 - 诊断 1 表明主线的主要剩余误差集中在多知识点题和 `none_seen` 校准。
 - 实验 34 证明“多知识点题 targeted residual + guess/slip difficulty residual”可以在三 seed 上同时改善 `AUC/ACC/RMSE/Brier/ECE`，这一步已经吸收到当前 `master`。
-- 实验 37 证明在当前主线结构不变的前提下，`recompute_minibatch bs=8192 lr=1e-4` 三 seed 同时改善 `AUC/ACC/RMSE/Brier/ECE`；但代码仍留在 `exp/training-modes`，尚未推广为 `master` 默认训练协议。
-- 实验 38 证明 final-logit 学生-题目 MF residual 在当前学生内随机 split 下能显著改善 `AUC/ACC`，但不改善 `ECE`；它是 ranking-oriented 后门，不应混作纯 CDM 解释通道。
-- 实验 39 证明 `cf_logit_residual cf_dim=16` 与 `recompute_minibatch bs=8192 lr=1e-4` 不是无损叠加；它形成 AUC/ECE 折中，但弱于实验 37 的校准，也弱于实验 38 的 AUC/ACC。
-- 实验 40 证明扩大 CF residual 容量能显著抬高当前 split 的 AUC，但新增收益主要由 ID-aware residual 主导；该支线已暂停，后续回归实验 34/37 这类干净主线。
-- 实验 43 证明 hard-Q constrained concept residual 会被 gate 使用，但在 `seed=2024` 上只是 `AUC -0.000155` 换 `ACC/RMSE/Brier/ECE` 小幅改善，且 `concept_count=4+` / `none_seen` 的 ECE 仍变差；不扩 seed，不作为主线结构推进。
-- 实验 45 `exp/concept-conditioned-prop` 在 propagation 侧引入 exercise-to-concept concept-conditioned zero-init residual 后，`seed=2024` 相对当前主线 baseline 仅 `AUC +0.000109`，但 `ACC -0.000362`、`RMSE +0.000271`、`Brier +0.000233`、`ECE +0.002160`；`concept_count=2` 有轻微正向，但 `3/4+` 与 `none_seen` 仍不是干净收益，不扩 seed，不作为主线结构推进。
-- 实验 46 `exp/qrepr-score-residual` 在 readout 侧引入 multi-concept-only zero-init exercise-conditioned Q-pooling score residual 后，`seed=2024` 相对当前主线 baseline 为 `AUC +0.000664`，但 `ACC -0.001370`、`RMSE +0.000185`、`Brier +0.000159`、`ECE +0.001519`；`concept_count=2/3` 的 AUC 有提升，但 `4+`、`none_seen`、`partial_seen` 仍出现明显副作用，不扩 seed，不作为主线结构推进。
-- 实验 47 `exp/none-seen-calibration-bias` 在 final logit 侧加入只看 target coverage / `concept_count` / `difficulty` 的 zero-init calibration bias 后，`seed=2024` 相对当前主线 baseline 为 `AUC -0.000945`、`ACC -0.000381`、`RMSE +0.000438`、`Brier +0.000376`、`ECE -0.001393`；overall `ECE` 虽略降，但 `none_seen` 的 `ACC/RMSE/Brier/ECE` 全部变差，不扩 seed，不作为主线结构推进。
-- 实验 48 `exp/history-concept-stats-adapter` 做了三 seed 复验:
-  - 结构: 显式构造学生-概念历史正确率 / 覆盖率统计，按题相关概念聚合 `mean/min/gap/seen_ratio`，以 zero-init residual 形式接到 `cognitive_logits`
-  - 三 seed 均值相对当前主线 baseline: `AUC -0.000366`, `ACC +0.001389`, `RMSE -0.000139`, `Brier -0.000120`, `ECE +0.000637`
-  - `seed=2024` 的 `concept_count=2/3/4+` 切片明显改善，但 `seed=2025` 的多知识点切片出现不稳定反转，`none_seen` 也没有被修好
-  - 结论: 这条路证明“显式历史概念统计”对多知识点题确有局部信号，但 overall 不稳定，不作为主线结构推进；若后续再访，优先改成更局部的 targeted trigger，而不是对所有 `concept_count>=2` 题统一加 residual
-- 实验 49 `exp/pairwise-history-carrier` 做了三 seed 复验:
-  - 结构: 保留实验 34 主线，其上新增只对 `concept_count>=2` 激活的 zero-init pairwise interaction residual
-  - carrier 不再读局部 `TKC/UKC` embedding，而是在线构造逐概念历史统计: `accuracy / seen / log_attempt_count`
-  - 对题相关概念对共享 scorer，pair score 做均值聚合后直接加到 `cognitive_logits`
-  - 三 seed 均值相对实验 34 主线: `AUC +0.001173`, `ACC +0.002207`, `RMSE -0.000965`, `Brier -0.000827`, `ECE -0.001314`
-  - `seed=2024` 切片:
-    - `concept_count=2`: `AUC +0.011842`, `ACC +0.012003`, `RMSE -0.004802`
-    - `concept_count=3`: `AUC +0.030833`, `ACC +0.025471`, `RMSE -0.013033`, `ECE -0.007842`
-    - `concept_count=4+`: `AUC +0.018086`, `ACC +0.033058`, `RMSE -0.004449`
-    - `none_seen`: `ACC +0.007841`, `RMSE -0.004422`, `ECE -0.008649`
-  - 结论: 这是当前最强的结构主线更新，已经吸收到 `master`
-- 实验 50 `exp/pairwise-history-weighted-agg` 做了单 seed follow-up:
-  - 做法: 在实验 49 的 history-carrier pairwise residual 上，把 pair score 聚合从固定均值改成 learned weighting
-  - `seed=2024` 相对实验 49: `AUC -0.000441`, `ACC -0.000305`, `RMSE -0.000120`, `Brier -0.000103`, `ECE +0.000002`
-  - 结论: learned weighting 没有带来额外收益，主线保留简单均值聚合
-- `exp/multi-concept-interaction` 已验证更激进的 exact-3 多知识点 residual/readout:
-  - simpler `exact-3 readout` 仍是这条线上最平衡的版本: `AUC 0.761332`, `ACC 0.727283`, `RMSE 0.429016`, `Brier 0.184055`, `ECE 0.049997`
-  - `tri_concept_readout_adapter` 能明显抬高 `concept_count=3` 的 AUC，但 calibration 代价过大，不值得继续扩 seed
-  - `tri_concept_interaction_adapter` 能把 `concept_count=3` 和 `partial_seen` 局部指标继续做强，并基本抹平 `4+` 退化，但 overall 仍不如 simpler `exact-3 readout`
-  - 结论: 这条 exact-3 aggressive residual/readout family 已到头，停止继续
+- 实验 37 证明 `recompute_minibatch bs=8192 lr=1e-4` 是当前最强的 calibration-oriented 训练协议候选；但它属于纯训练工程优化，运行成本更高，且在 `AUC/ACC` 上仍弱于实验 49，因此暂不推广为 `master` 默认训练口径。
+- 实验 48 证明“显式历史概念统计”对多知识点题确有局部信号，但 original form 的三 seed overall 不稳定；这条路如再访，应改成更局部的 targeted trigger / mixture，而不是继续推进统一 residual。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 48。
+- 实验 49 证明 history-carrier pairwise interaction residual 能把“显式历史概念统计”稳定转成 overall 正收益，并且 `none_seen` 也形成 clean win；这是当前最强的结构主线更新，已经吸收到 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 49。
+- 实验 50 证明 learned pair aggregation 没有额外收益，主线保留简单均值聚合。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 50。
+- 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；细节统一以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 为准。
+- 实验 38-40 的 CF 支线已确认主要依赖 ID-aware side channel，不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / appendix 讨论。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
@@ -256,8 +230,8 @@
 
 ## 后续实验规则
 
-- 默认一次只改一个结构因素。
-- 若单因素已经给出明确的 overall 正向信号，或两个因素分别给出可解释且互补的 slice 信号，可少量做双因素组合验证。
+- 默认先只改一个结构因素，先把单因素证据立住。
+- 若单因素已经给出明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释且互补的证据，可少量做双因素组合验证。
 - 双因素验证仍应严格限量，默认只测最强的 `1-2` 组候选，不做组合爆炸。
 - 探索性结构改动默认先从最新 `master` 切 `exp/<short-name>` 分支。
 - 新结构默认先跑单次；单次值得继续时再补 `2-3` 个 seed。
