@@ -64,6 +64,7 @@
   - 实验 48: 证明“显式历史概念统计”有局部价值，但 original form 的三 seed overall 不稳定，不作为主线结构推进
   - 实验 50: learned weighting 没有带来额外收益，主线保留简单均值聚合
   - 实验 52: 更干净的 interpretable readout routing 没能超过实验 51 原版 full-trigger，不继续沿这条 selective routing 扩线
+  - 实验 53: softer routing regularizer 也没能超过实验 51 原版 full-trigger，不继续沿这条 routing regularization 扩线
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -388,6 +389,50 @@
     - 实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
     - 若后续还要 revisit selective routing，优先考虑更软的路由约束或训练正则，而不是显式 top-k 稀疏化
 
+- 实验 53: soft routing regularizer for readout experts
+  - 分支: `exp/readout-routing-soft-regularizer`
+  - 提交: `910b9c8`
+  - 做法:
+    - 以实验 51 的 full-trigger 三专家 residual 为底座
+    - 暴露 gate probability，并在训练时加入轻量 routing regularizer
+    - regularizer 形式为 `conditional_entropy - marginal_entropy`
+    - 本轮只测试 `--interpretable-readout-expert-routing-mi-weight 0.05`
+  - 结果:
+    - smoke:
+      - `max_rows=2000`, `epoch=1`, `mi_weight=0.05` 能正常训练并产出 summary
+    - `seed=2024`:
+      - `AUC 0.764348`
+      - `ACC 0.729148`
+      - `RMSE 0.427924`
+      - `Brier 0.183119`
+      - `ECE 0.050730`
+    - `seed=2025`:
+      - `AUC 0.764564`
+      - `ACC 0.726008`
+      - `RMSE 0.429125`
+      - `Brier 0.184148`
+      - `ECE 0.055972`
+    - `seed=2026`:
+      - `AUC 0.761720`
+      - `ACC 0.729148`
+      - `RMSE 0.427652`
+      - `Brier 0.182886`
+      - `ECE 0.041885`
+  - 三 seed 均值相对实验 51:
+    - `AUC -0.000345`
+    - `ACC -0.000850`
+    - `RMSE +0.000282`
+    - `Brier +0.000241`
+    - `ECE +0.000130`
+  - 判断:
+    - `seed=2024` 虽然略优于实验 51 同 seed，但 `seed=2025/2026` 没有复现，均值回到全面弱于当前主线
+    - 这说明“更软的 routing regularization”至少在当前这版 `MI-weight=0.05` 设定下，没有把实验 51 的 expert 容量利用稳定推高
+    - 相比实验 52 的硬 routing/稀疏 routing，这条线副作用更小，但仍不足以形成新的主线证据
+  - 结论:
+    - 不继续沿这条 soft routing regularizer 扩线
+    - 实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
+    - 若后续还要 revisit routing，优先考虑更局部的软引导或更明确的 slice 目标，而不是继续围绕同一种全局 gate regularizer 小步扫参
+
 ### 语义更干净，但不值得主线吸收
 
 - 实验 24: 多知识点题按知识点数分摊
@@ -447,15 +492,22 @@
 - 显式 `top-k` 稀疏路由也没有带来更干净的专家分工，反而更像过早限制容量共享
 - 因此实验 51 后文档里提到的“继续寻找更干净的 selective routing”暂时不再优先指向结构性硬 routing，而应更偏向软约束或训练层面的轻量引导
 
+### 实验 53 后的补充判断
+
+- 把方向从“更硬的 selective routing”换成“更软的 gate regularization”后，副作用确实变小了，但仍没有形成稳定的三 seed overall 增益
+- 这说明实验 51 的剩余空间不太像“给当前 gate 再加一个全局共享正则项”就能拿到；至少现阶段，这条线的提升空间没有想象中大
+- 因此若后续还要继续挖实验 51，优先级应降到“明确有新 slice 假设时再访”，而不是把 routing regularizer 当成默认下一步
+
 ## 默认下一步
 
 如果没有用户明确指定路线，默认按下面优先级思考:
 
 1. 先从当前 `master` 主线出发，默认只改一个结构因素。
 2. 优先考虑轻量、zero-init、可回退的 sidecar / residual 改动。
-3. 若继续做多知识点题，优先保留实验 51 原版 full-trigger expert residual 作为底座；selective routing 若再访，应优先试更软的约束，而不是继续加硬 trigger 或显式 top-k 稀疏路由。
-4. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
-5. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
-6. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
-7. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
-8. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。
+3. 若继续做多知识点题，优先保留实验 51 原版 full-trigger expert residual 作为底座；已有证据说明无论更硬的 selective routing 还是当前这版 soft routing regularizer，都不足以直接带来稳定增益。
+4. 若再访实验 51 这条线，默认需要先有更明确的 slice 假设或更局部的引导目标，不再把全局 gate regularizer 视为高优先级默认下一步。
+5. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
+6. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
+7. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
+8. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
+9. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。
