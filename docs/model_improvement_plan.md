@@ -67,6 +67,7 @@
   - 实验 43-47: 都只形成局部 slice 信号、AUC/ACC 不成立或整体副作用明显，不继续扩线
   - 实验 48: 证明“显式历史概念统计”有局部价值，但 original form 的三 seed overall 不稳定，不作为主线结构推进
   - 实验 50: learned weighting 没有带来额外收益，主线保留简单均值聚合
+  - 实验 52: 更干净的 interpretable readout routing 没能超过实验 51 原版 full-trigger，不继续沿这条 selective routing 扩线
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -368,6 +369,28 @@
     - 第一版 full-trigger 收益主要来自 `concept_count=1 / all_seen`，没有自然学成“只服务高 concept-count”的干净专家分工
     - 如果后续继续做 selective routing，应建立在这条 full-trigger 正向底座上，而不是直接退回更硬的 `3+` trigger
 
+- 实验 52: clean interpretable readout routing
+  - 分支: `exp/clean-readout-routing`
+  - 做法:
+    - 以实验 51 的 full-trigger 三专家 residual 为底座
+    - gate 输入从 `concept_count / difficulty / dispersion / coverage` 扩成 `concept_count / seen_count / unseen_count / difficulty / dispersion / coverage`
+    - 额外测试可选 `top-k` 稀疏路由，希望得到更干净的 selective routing，而不是继续用硬 `min_count` trigger
+  - 结果:
+    - smoke:
+      - `max_rows=2000`, `epoch=1`, `topk=2` 能正常训练并写出 checkpoint / summary
+    - `seed=2024`, dense:
+      - `AUC 0.761346`, `ACC 0.726655`, `RMSE 0.429885`, `Brier 0.184801`, `ECE 0.053194`
+    - `seed=2024`, `topk=2`:
+      - `AUC 0.763301`, `ACC 0.727036`, `RMSE 0.428496`, `Brier 0.183609`, `ECE 0.050861`
+  - 判断:
+    - `topk=2` 虽然比 dense 好，但仍弱于实验 51 原版 full-trigger `seed=2024` 的 `AUC 0.764051 / ACC 0.728672 / RMSE 0.428295 / Brier 0.183437 / ECE 0.050665`
+    - 相对实验 49 control，`topk=2` 只保住了小幅 `AUC` 正向，但 `ACC/RMSE/Brier/ECE` 全部回撤，不满足继续扩 seed 的条件
+    - 这说明“更可解释的 gate 统计 + 稀疏 top-k 路由”没有把实验 51 的容量利用进一步变干净，反而削弱了原有收益
+  - 结论:
+    - 不继续沿这条 routing 设计扩 seed
+    - 实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
+    - 若后续还要 revisit selective routing，优先考虑更软的路由约束或训练正则，而不是显式 top-k 稀疏化
+
 ### 语义更干净，但不值得主线吸收
 
 - 实验 24: 多知识点题按知识点数分摊
@@ -421,13 +444,19 @@
 - 但第一版最优解并没有自动把容量集中到高知识点数题；如果强行把 trigger 收窄到 `concept_count>=3`，overall `AUC` 反而回落
 - 这说明当前目标不是证明“高知识点数一定要硬分流”，而是继续寻找更干净的 selective routing，让专家容量既保住 full-trigger 的 overall 收益，又更准确服务目标 slice
 
+### 实验 52 后的补充判断
+
+- 从 `seen_count / unseen_count` 这类更直观的可解释统计出发，并不会自动得到更强的 routing；至少在当前 readout expert 设定下，它比实验 51 原版更容易伤到 `ACC` 与校准
+- 显式 `top-k` 稀疏路由也没有带来更干净的专家分工，反而更像过早限制容量共享
+- 因此实验 51 后文档里提到的“继续寻找更干净的 selective routing”暂时不再优先指向结构性硬 routing，而应更偏向软约束或训练层面的轻量引导
+
 ## 默认下一步
 
 如果没有用户明确指定路线，默认按下面优先级思考:
 
 1. 先从当前 `master` 主线出发，默认只改一个结构因素。
 2. 优先考虑轻量、zero-init、可回退的 sidecar / residual 改动。
-3. 若继续做多知识点题，优先在实验 51 这类可解释 expert residual 底座上做更干净的 selective routing，而不是继续堆 exact-3 aggressive residual / readout。
+3. 若继续做多知识点题，优先保留实验 51 原版 full-trigger expert residual 作为底座；selective routing 若再访，应优先试更软的约束，而不是继续加硬 trigger 或显式 top-k 稀疏路由。
 4. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
 5. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
 6. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
