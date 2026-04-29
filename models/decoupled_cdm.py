@@ -43,6 +43,8 @@ class DecoupledCDM(nn.Module):
         gs_mode: str = "conditional",
         high_concept_logit_adapter: bool = False,
         high_concept_logit_min_count: int = 3,
+        pairwise_history_interaction_adapter: bool = False,
+        pairwise_history_interaction_min_count: int = 2,
         gs_difficulty_adapter: bool = False,
     ):
         super().__init__()
@@ -50,9 +52,13 @@ class DecoupledCDM(nn.Module):
             raise ValueError(f"Unsupported gs_mode: {gs_mode}")
         if high_concept_logit_min_count < 2:
             raise ValueError("high_concept_logit_min_count must be at least 2.")
+        if pairwise_history_interaction_min_count < 2:
+            raise ValueError("pairwise_history_interaction_min_count must be at least 2.")
         self.gs_mode = gs_mode
         self.high_concept_logit_adapter = high_concept_logit_adapter
         self.high_concept_logit_min_count = high_concept_logit_min_count
+        self.pairwise_history_interaction_adapter = pairwise_history_interaction_adapter
+        self.pairwise_history_interaction_min_count = pairwise_history_interaction_min_count
         self.gs_difficulty_adapter = gs_difficulty_adapter
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
         self.exercise_difficulty = nn.Embedding(num_exercises, 1)
@@ -108,10 +114,17 @@ class DecoupledCDM(nn.Module):
             nn.ReLU(),
             nn.Linear(concept_dim, 1),
         )
+        self.pairwise_history_interaction_scorer = nn.Sequential(
+            nn.Linear(concept_dim * 3 + 6, concept_dim),
+            nn.ReLU(),
+            nn.Linear(concept_dim, 1),
+        )
         nn.init.zeros_(self.cognitive_difficulty_adapter[-1].weight)
         nn.init.zeros_(self.cognitive_difficulty_adapter[-1].bias)
         nn.init.zeros_(self.high_concept_logit_residual[-1].weight)
         nn.init.zeros_(self.high_concept_logit_residual[-1].bias)
+        nn.init.zeros_(self.pairwise_history_interaction_scorer[-1].weight)
+        nn.init.zeros_(self.pairwise_history_interaction_scorer[-1].bias)
         nn.init.zeros_(self.gs_difficulty_residual[-1].weight)
         nn.init.zeros_(self.gs_difficulty_residual[-1].bias)
 
@@ -191,6 +204,17 @@ class DecoupledCDM(nn.Module):
             cognitive_logits = cognitive_logits + (
                 self.high_concept_logit_residual(high_concept_inputs).squeeze(-1) * high_concept_mask.squeeze(-1)
             )
+        if self.pairwise_history_interaction_adapter:
+            cognitive_logits = cognitive_logits + self._build_pairwise_history_interaction_residual(
+                q_matrix=q_matrix,
+                q_vectors=q_vectors,
+                student_exercise_mask=student_exercise_mask,
+                response_matrix=response_matrix,
+                target_student_ids=target_student_ids,
+                concept_embeddings=concept_embeddings.detach(),
+                target_exercise_embeddings=target_exercise_embeddings.detach(),
+                concept_summary=concept_summary,
+            )
         cognitive_probs = torch.sigmoid(cognitive_logits)
 
         guess_logits = self.guess_logit(target_student_ids).squeeze(-1)
@@ -248,3 +272,80 @@ class DecoupledCDM(nn.Module):
         pooled = attn @ concept_embeddings
         fused = self.exercise_q_fusion(torch.cat([pooled, exercise_embeddings], dim=-1))
         return self.q_pool_mlp(fused)
+
+    def _build_pairwise_history_interaction_residual(
+        self,
+        *,
+        q_matrix: torch.Tensor,
+        q_vectors: torch.Tensor,
+        student_exercise_mask: torch.Tensor,
+        response_matrix: torch.Tensor,
+        target_student_ids: torch.Tensor,
+        concept_embeddings: torch.Tensor,
+        target_exercise_embeddings: torch.Tensor,
+        concept_summary: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    ) -> torch.Tensor:
+        concept_counts, _, _ = concept_summary
+        concept_count_mask = concept_counts >= float(self.pairwise_history_interaction_min_count)
+        if torch.count_nonzero(concept_count_mask).item() == 0:
+            return target_exercise_embeddings.new_zeros(target_exercise_embeddings.size(0))
+
+        student_concept_attempt_counts = student_exercise_mask @ q_matrix
+        student_concept_correct_sums = (student_exercise_mask * response_matrix) @ q_matrix
+        student_concept_accuracy = student_concept_correct_sums / student_concept_attempt_counts.clamp_min(1.0)
+
+        target_attempt_counts = student_concept_attempt_counts[target_student_ids]
+        target_accuracy = student_concept_accuracy[target_student_ids]
+        target_seen = (target_attempt_counts > 0).to(target_accuracy.dtype)
+        target_log_attempts = torch.log1p(target_attempt_counts)
+
+        q_mask = q_vectors > 0
+        max_concept_count = int(q_mask.sum(dim=1).max().item())
+        if max_concept_count < 2:
+            return target_exercise_embeddings.new_zeros(target_exercise_embeddings.size(0))
+
+        selected_scores, selected_indices = q_vectors.topk(k=max_concept_count, dim=1)
+        selected_valid = selected_scores > 0
+        invalid_index = concept_embeddings.size(0)
+        ordered_indices = torch.where(
+            selected_valid,
+            selected_indices,
+            selected_indices.new_full(selected_indices.shape, invalid_index),
+        )
+        ordered_indices, _ = ordered_indices.sort(dim=1)
+        ordered_valid = ordered_indices != invalid_index
+        safe_indices = ordered_indices.clamp_max(concept_embeddings.size(0) - 1)
+
+        expanded_indices = safe_indices.unsqueeze(-1).expand(-1, -1, concept_embeddings.size(1))
+        selected_concept_embeddings = concept_embeddings[safe_indices]
+        selected_accuracy = target_accuracy.gather(1, safe_indices)
+        selected_seen = target_seen.gather(1, safe_indices)
+        selected_log_attempts = target_log_attempts.gather(1, safe_indices)
+
+        aggregated_scores = target_exercise_embeddings.new_zeros(target_exercise_embeddings.size(0))
+        pair_count = target_exercise_embeddings.new_zeros(target_exercise_embeddings.size(0))
+        for left_index in range(max_concept_count - 1):
+            for right_index in range(left_index + 1, max_concept_count):
+                pair_mask = (ordered_valid[:, left_index] & ordered_valid[:, right_index]).to(
+                    target_exercise_embeddings.dtype
+                )
+                pair_inputs = torch.cat(
+                    [
+                        selected_concept_embeddings[:, left_index],
+                        selected_concept_embeddings[:, right_index],
+                        target_exercise_embeddings,
+                        selected_accuracy[:, left_index].unsqueeze(-1),
+                        selected_seen[:, left_index].unsqueeze(-1),
+                        selected_log_attempts[:, left_index].unsqueeze(-1),
+                        selected_accuracy[:, right_index].unsqueeze(-1),
+                        selected_seen[:, right_index].unsqueeze(-1),
+                        selected_log_attempts[:, right_index].unsqueeze(-1),
+                    ],
+                    dim=-1,
+                )
+                pair_scores = self.pairwise_history_interaction_scorer(pair_inputs).squeeze(-1)
+                aggregated_scores = aggregated_scores + pair_scores * pair_mask
+                pair_count = pair_count + pair_mask
+
+        aggregated_scores = aggregated_scores / pair_count.clamp_min(1.0)
+        return aggregated_scores * concept_count_mask.squeeze(-1).to(aggregated_scores.dtype)

@@ -93,6 +93,17 @@ def parse_args() -> argparse.Namespace:
         help="Minimum concept count required before the high-concept logit adapter is applied.",
     )
     parser.add_argument(
+        "--pairwise-history-interaction-adapter",
+        action="store_true",
+        help="Enable a shared pairwise concept scorer driven by explicit per-concept history statistics.",
+    )
+    parser.add_argument(
+        "--pairwise-history-interaction-min-count",
+        type=int,
+        default=2,
+        help="Minimum concept count required before the history-carrier pairwise residual is applied.",
+    )
+    parser.add_argument(
         "--gs-difficulty-adapter",
         action="store_true",
         help="Enable a zero-init difficulty residual on the conditional guess/slip branch.",
@@ -260,6 +271,8 @@ def main() -> None:
         gs_mode=args.gs_mode,
         high_concept_logit_adapter=args.high_concept_logit_adapter,
         high_concept_logit_min_count=args.high_concept_logit_min_count,
+        pairwise_history_interaction_adapter=args.pairwise_history_interaction_adapter,
+        pairwise_history_interaction_min_count=args.pairwise_history_interaction_min_count,
         gs_difficulty_adapter=args.gs_difficulty_adapter,
     )
     output_path = Path(args.output)
@@ -303,6 +316,8 @@ def main() -> None:
         "student_gate_prior_beta": args.student_gate_prior_beta,
         "high_concept_logit_adapter": args.high_concept_logit_adapter,
         "high_concept_logit_min_count": args.high_concept_logit_min_count,
+        "pairwise_history_interaction_adapter": args.pairwise_history_interaction_adapter,
+        "pairwise_history_interaction_min_count": args.pairwise_history_interaction_min_count,
         "gs_difficulty_adapter": args.gs_difficulty_adapter,
         "seed": args.seed,
         "device": resolved_device,
@@ -339,6 +354,8 @@ def main() -> None:
         "student_gate_prior_beta": args.student_gate_prior_beta,
         "high_concept_logit_adapter": args.high_concept_logit_adapter,
         "high_concept_logit_min_count": args.high_concept_logit_min_count,
+        "pairwise_history_interaction_adapter": args.pairwise_history_interaction_adapter,
+        "pairwise_history_interaction_min_count": args.pairwise_history_interaction_min_count,
         "gs_difficulty_adapter": args.gs_difficulty_adapter,
         "seed": args.seed,
         "best_epoch": result.best_epoch,

@@ -84,6 +84,8 @@ def load_model(
         gs_mode=str(summary.get("gs_mode", "conditional")),
         high_concept_logit_adapter=bool(summary.get("high_concept_logit_adapter", False)),
         high_concept_logit_min_count=int(summary.get("high_concept_logit_min_count", 3)),
+        pairwise_history_interaction_adapter=bool(summary.get("pairwise_history_interaction_adapter", False)),
+        pairwise_history_interaction_min_count=int(summary.get("pairwise_history_interaction_min_count", 2)),
         gs_difficulty_adapter=bool(summary.get("gs_difficulty_adapter", False)),
     )
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
