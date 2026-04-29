@@ -47,23 +47,21 @@
 
 - 当前正向支线候选是实验 37:
   - branch: `exp/training-modes`
-  - 配置: `training_mode = recompute_minibatch`, `batch_size = 8192`, `learning_rate = 1e-4`
-  - 相对实验 49 三 seed 均值: `AUC -0.000228`, `ACC -0.001884`, `RMSE -0.000530`, `Brier -0.000454`, `ECE -0.005314`
   - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上已弱于实验 49，不作为默认 `master` 训练口径
   - 补充: 这条线属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不优先合入主线
+  - 详细指标见下文“实验 37”
 
 - 暂停中的 CF 支线:
-  - 实验 38 `exp/cf-residual`: `AUC +0.003475`, `ACC +0.002759`，但依赖学生内随机 split 的 ID-aware side channel，不作为纯 CDM 主线
+  - 实验 38 `exp/cf-residual`: ranking-oriented 候选，但依赖学生内随机 split 的 ID-aware side channel，不作为纯 CDM 主线
   - 实验 39 `exp/cf-residual-recompute`: 不是实验 37 与 38 的无损叠加，不建议主线化
   - 实验 40 `exp/cf-residual-dim-sweep`: 大容量收益主要来自 transductive ID side channel，整条线暂停
+  - 详细指标见下文“实验 38-40”
 
-- 最近两个失败 follow-up:
-  - 实验 43 `exp/concept-residual`: `seed=2024` 相对实验 34 为 `AUC -0.000155`, `ACC +0.000533`，属于 AUC 换其他指标的小折中
-  - 实验 44 `exp/local-exercise-student-adapter`: `seed=2024` 下 `min_count=2` 为 `AUC -0.001609`，`min_count=3` 为 `AUC -0.000509`；虽改善 `3/4+` 多知识点切片，但不能转化为 overall `AUC` 正收益
-  - 实验 45 `exp/concept-conditioned-prop`: propagation 侧 concept-conditioned residual 在 `seed=2024` 上相对当前主线 baseline 为 `AUC +0.000109`, `ACC -0.000362`, `RMSE +0.000271`, `Brier +0.000233`, `ECE +0.002160`；`concept_count=2` 小幅改善，但 `3/4+` 与 `none_seen` 仍不是 clean win
-  - 实验 46 `exp/qrepr-score-residual`: readout 侧 multi-concept-only exercise-conditioned Q-pooling score residual 在 `seed=2024` 上相对当前主线 baseline 为 `AUC +0.000664`, `ACC -0.001370`, `RMSE +0.000185`, `Brier +0.000159`, `ECE +0.001519`；`concept_count=2/3` 的 AUC 有提升，但 `4+`、`none_seen`、`partial_seen` 副作用明显
-  - 实验 47 `exp/none-seen-calibration-bias`: final-logit coverage/concept-count/difficulty zero-init calibration bias 在 `seed=2024` 上相对当前主线 baseline 为 `AUC -0.000945`, `ACC -0.000381`, `RMSE +0.000438`, `Brier +0.000376`, `ECE -0.001393`；overall ECE 虽略降，但 `none_seen` 的 `ACC/RMSE/Brier/ECE` 全部变差，不是 clean win
-  - 实验 50 `exp/pairwise-history-weighted-agg`: 在实验 49 上把 pair score 聚合从固定均值改成 learned weighting，`seed=2024` 相对实验 49 为 `AUC -0.000441`, `ACC -0.000305`, `RMSE -0.000120`, `Brier -0.000103`, `ECE +0.000002`；不继续扩 seed，主线保留均值聚合
+- 最近失败或已暂停的 follow-up:
+  - 实验 43-47: 都只形成局部 slice 信号、AUC/ACC 不成立或整体副作用明显，不继续扩线
+  - 实验 48: 证明“显式历史概念统计”有局部价值，但 original form 的三 seed overall 不稳定，不作为主线结构推进
+  - 实验 50: learned weighting 没有带来额外收益，主线保留简单均值聚合
+  - 详细指标见对应实验条目
 
 ## 已验证有效
 

@@ -7,6 +7,7 @@
 ## 当前主线
 
 - 当前工作重点是在稳定基线上继续做可解释的结构改动。
+- 当前正式主线配置与 [docs/session_bootstrap.md](./session_bootstrap.md) 的“当前主线”一致；这里只补充结果口径、候选支线和行动判断。
 - 数据:
   - [train.csv](../data/assist_09_ordered/train.csv)
   - [valid.csv](../data/assist_09_ordered/valid.csv)
@@ -15,23 +16,6 @@
   - [Q_matrix.csv](../data/assist_09_ordered/Q_matrix.csv)
 - 图:
   - [propagation_graph.csv](../data/assist_09_ordered/transition_graph/propagation_graph.csv)
-- 默认配置:
-  - `learning_rate = 1e-3`
-  - `concept_dim = 64`
-  - `gs_mode = conditional`
-  - `graph_mode = single`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 行为消息使用正误双通道 + gated fusion
-  - `TKC/UKC` 学生级融合使用自适应 gate
-  - `high_concept_logit_adapter = true`
-  - `high_concept_logit_min_count = 2`
-  - `pairwise_history_interaction_adapter = true`
-  - `pairwise_history_interaction_min_count = 2`
-  - `gs_difficulty_adapter = true`
-  - 长训比较默认看 `300 epoch`
-  - 实验报告默认主看 `AUC/ACC`
-  - `RMSE/Brier/ECE/分桶校准` 默认作为次要指标，用于判断校准与误差副作用
-  - 若目标是推进主线，默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级
 
 当前推荐结果口径:
 
@@ -59,87 +43,25 @@
 
 当前正向训练策略支线:
 
-- 分支:
-  - `exp/training-modes`
-- 关键配置:
-  - `training_mode = recompute_minibatch`
-  - `batch_size = 8192`
-  - `learning_rate = 1e-4`
-- 三 seed 均值:
-  - `test_auc = 0.762141`
-  - `test_acc = 0.727879`
-  - `test_rmse = 0.427675`
-  - `test_brier = 0.182906`
-  - `test_ece = 0.044514`
-- 相对实验 49 三 seed 均值:
-  - `AUC -0.000228`
-  - `ACC -0.001884`
-  - `RMSE -0.000530`
-  - `Brier -0.000454`
-  - `ECE -0.005314`
+- 分支: `exp/training-modes`
 - 判断:
   - 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上已弱于实验 49 主线。
   - 收益主要来自真正 mini-batch SGD 的整体校准/泛化改善，不是彻底解决 `concept_count=4+` 或 `none_seen` 校准问题。
   - 它属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不适合作为 `master` 默认训练协议。
+  - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 37 为准。
   - 后续若继续优化训练策略，默认从 `exp/training-modes` 出发。
 
 近期暂停的 CF 模型支线:
 
 - 分支:
   - `exp/cf-residual`
-- 关键配置:
-  - `cf_logit_residual = true`
-  - `cf_dim = 16`
-  - final-logit 学生-题目 MF residual，不注入 `cognitive_logits`
-- 三 seed 均值:
-  - `test_auc = 0.764671`
-  - `test_acc = 0.730315`
-  - `test_rmse = 0.428093`
-  - `test_brier = 0.183264`
-  - `test_ece = 0.051171`
-- 相对实验 34 三 seed 均值:
-  - `AUC +0.003475`
-  - `ACC +0.002759`
-  - `RMSE -0.001077`
-  - `Brier -0.000923`
-  - `ECE +0.000029`
+  - `exp/cf-residual-recompute`
+  - `exp/cf-residual-dim-sweep`
 - 判断:
   - 这是当前最强 ranking-oriented 结构候选，但不是校准候选。
-  - 相对实验 37，`AUC/ACC` 更强，但 `RMSE/Brier/ECE` 更弱，尤其 `ECE +0.006657`。
-  - 后续已验证和实验 37 的 `recompute_minibatch bs=8192 lr=1e-4` 不是无损叠加；容量扩展到 `cf_dim=64/128` 后 AUC 可到 `0.794/0.812`，但主要依赖当前学生内随机 split 的 transductive ID side channel。
+  - 已验证与实验 37 不是无损叠加，且扩大容量后的收益主要依赖当前 split 下的 ID-aware side channel。
+  - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 38-40 为准。
   - 当前决定: CF 支线暂停，不继续扩容，也不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / ID-aware ablation 或 appendix 讨论。
-
-最近叠加验证:
-
-- 分支:
-  - `exp/cf-residual-recompute`
-- 关键配置:
-  - `cf_logit_residual = true`
-  - `cf_dim = 16`
-  - `training_mode = recompute_minibatch`
-  - `batch_size = 8192`
-  - `learning_rate = 1e-4`
-- 三 seed 均值:
-  - `test_auc = 0.762828`
-  - `test_acc = 0.726852`
-  - `test_rmse = 0.428070`
-  - `test_brier = 0.183244`
-  - `test_ece = 0.047508`
-- 判断:
-  - 相对实验 34: `AUC +0.001633`, `RMSE -0.001100`, `Brier -0.000942`, `ECE -0.003634`, 但 `ACC -0.000704`
-  - 相对实验 37: `AUC +0.000687`, 但 `ACC/RMSE/Brier/ECE` 都更弱，其中 `ECE +0.002994`
-  - 相对实验 38: `ECE -0.003663`，但 `AUC -0.001842`, `ACC -0.003463`
-  - 结论: 不是无损叠加，暂不建议作为默认主线；如果继续 CF 路线，优先试更低容量或正则化，而不是直接合入
-
-近期已吸收的 follow-up:
-
-- 实验 33:
-  - `cognitive_match` zero-init difficulty adapter
-  - 先把实验 29 的“难度条件信号”改造成稳定 sidecar 形式
-- 实验 34:
-  - 对 `concept_count >= 2` 增加 high-concept logit residual
-  - 在 conditional `guess/slip` 分支增加 difficulty residual
-  - 这一步把实验 33 的诊断 1 follow-up 正式吸收到 `master`
 
 ## 已经定下来的判断
 
@@ -165,47 +87,17 @@
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
 - `valid/test` 当前应复用 `train` 行为历史做传播输入，不能各自重建行为矩阵。
 - 更激进的 scheduler patience 没有带来更好结果。
-- `dual graph` 在 `assist_09` 上明显退化，默认不要当主线。
 - 不要回到裸 Q 共现图重新做主基线判断，除非用户明确要求。
 - 并行训练的日志文件名现在已经唯一化，不再共用同一个 `train_*.log`。
 
-## 当前实验分支说明
+## 当前分支优先级
 
 - `exp/*` 分支只作为实验代码和复验参考，不直接代表当前主线。
 - 具体分支以 `git branch -a` 为准；每条路线的定位和结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的详细条目与 D 部分快速索引为准。
-- `exp/training-modes` 是当前优先继续的训练策略支线:
-  - 已实现 `full_batch`、`target_accumulation`、`frozen_readout`、`alternating_frozen_readout`、`recompute_minibatch`
-  - 已验证正向配置是 `recompute_minibatch bs=8192 lr=1e-4`
-  - 已验证负向配置包括 `frozen_readout`、`alternating_frozen_readout`、`recompute_minibatch lr=1e-3`、`recompute_minibatch bs=4096 lr=3e-4`
-  - 后续优化可优先试更细的学习率、调度器、早停策略或 weight decay，而不是再回到 frozen readout
-- `exp/cf-residual` / `exp/cf-residual-dim-sweep` 当前暂停:
-  - 已实现默认关闭的 `--cf-logit-residual`
-  - 已验证 `cf_dim=16/64/128` 能提高当前学生内随机 split 的 ranking 指标
-  - 已判断大容量收益主要依赖 transductive ID side channel，不作为纯 CDM 主线推进
-- `exp/cf-residual-recompute` 是叠加验证支线:
-  - 已验证 `cf_dim=16 + recompute_minibatch bs=8192 lr=1e-4`
-  - 结果不是无损叠加，暂不建议把这组配置主线化
-- `exp/multi-concept-interaction` 当前已收尾:
-  - 已实现并验证 `multi_concept_interaction_adapter`、`multi_concept_readout_adapter`、`tri_concept_readout_adapter`、`tri_concept_interaction_adapter`
-  - 单 seed 最平衡结果是 simpler `exact-3 readout`，相对实验 34 同 seed: `AUC +0.000028`, `ACC +0.001637`, `RMSE -0.000460`, `Brier -0.000395`, `ECE -0.001145`
-  - 两个 tri-concept aggressive 版本都只带来局部 slice 改善，不能稳定转化为更优 overall，多 seed 价值不足
-  - 这条支线暂停，不再继续追加 exact-3 aggressive 结构
-- `exp/concept-conditioned-prop` 当前已做单 seed 判断:
-  - propagation 侧 `exercise -> concept` concept-conditioned zero-init residual 在 `seed=2024` 上只带来 `AUC +0.000109`
-  - `concept_count=2` 有小幅正向，但 `concept_count=3/4+` 与 `none_seen` 没形成可扩线的 clean win
-  - 这条支线暂停，不继续扩 seed
-- `exp/qrepr-score-residual` 当前已做单 seed 判断:
-  - readout 侧 static Q pooling + multi-concept-only zero-init exercise-conditioned score residual 在 `seed=2024` 上带来 `AUC +0.000664`
-  - `concept_count=2/3` 有局部 AUC 信号，但 `ACC` 不升，且 `4+`、`none_seen`、`partial_seen` 明显变差
-  - 这条支线暂停，不继续扩 seed
-- `exp/none-seen-calibration-bias` 当前已做单 seed 判断:
-  - final-logit zero-init calibration bias 在 `seed=2024` 上只换来 `ECE -0.001393`
-  - `none_seen` 本身没有被修好，反而出现 `ACC/RMSE/Brier/ECE` 一起变差
-  - 这条支线暂停，不继续扩 seed
-- `exp/history-concept-stats-adapter` 当前已做三 seed 判断:
-  - `seed=2024` 的多知识点切片很强，但 `seed=2025/2026` 没能把这种局部收益稳定转成更优 overall
-  - 三 seed 均值是 `AUC` 小降、`ACC/RMSE/Brier` 小幅改善、`ECE` 小幅变差
-  - 这条支线暂停，不继续扩 seed；若再访，优先尝试更显式的 targeted trigger / mixture，而不是统一 residual
+- 若继续优化训练协议，优先从 `exp/training-modes` 出发；它是当前唯一仍值得继续的训练策略支线。
+- 若继续做结构主线，默认直接从最新 `master` 切新 `exp/*` 分支，而不是回到已暂停支线继续堆改动。
+- `exp/cf-residual*` 当前暂停，不作为纯 CDM 主线推进。
+- `exp/multi-concept-interaction`、`exp/concept-conditioned-prop`、`exp/qrepr-score-residual`、`exp/none-seen-calibration-bias`、`exp/history-concept-stats-adapter` 当前都已形成暂停判断；如需复访，先以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目为准。
 
 ## 当前关键文件
 

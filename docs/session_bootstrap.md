@@ -82,7 +82,7 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 ## 按需再读
 
 - [docs/workflow.md](./workflow.md)
-  - 需要看完整协作与运行规则时再读
+  - 需要看完整协作、运行规则或文档记录规范时再读
 - [docs/handoff.md](./handoff.md)
   - 需要看当前主线细节、关键判断和关键文件时再读
 - [README_spec.md](../README_spec.md)
