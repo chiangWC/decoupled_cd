@@ -87,6 +87,8 @@ def load_model(
         pairwise_history_interaction_adapter=bool(summary.get("pairwise_history_interaction_adapter", False)),
         pairwise_history_interaction_min_count=int(summary.get("pairwise_history_interaction_min_count", 2)),
         gs_difficulty_adapter=bool(summary.get("gs_difficulty_adapter", False)),
+        interpretable_readout_expert_adapter=bool(summary.get("interpretable_readout_expert_adapter", False)),
+        interpretable_readout_expert_count=int(summary.get("interpretable_readout_expert_count", 3)),
     )
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state)

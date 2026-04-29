@@ -17,7 +17,7 @@
 
 ## 当前快照
 
-- 当前 `master` 正式主线是实验 49:
+- 当前 `master` 正式主线是实验 51:
   - ordered ASSIST09
   - `transition_graph/propagation_graph.csv`
   - `graph_mode = single`
@@ -34,13 +34,14 @@
   - `pairwise_history_interaction_adapter = true`
   - `pairwise_history_interaction_min_count = 2`
   - `gs_difficulty_adapter = true`
-- 当前主线结果目录: `results/exp_pairwise_history_carrier/`
+  - `interpretable_readout_expert_adapter = true`
+  - `interpretable_readout_expert_count = 3`
 - 当前主线三 seed 参考均值:
-  - `test_auc = 0.762369`
-  - `test_acc = 0.729763`
-  - `test_rmse = 0.428205`
-  - `test_brier = 0.183360`
-  - `test_ece = 0.049828`
+  - `test_auc = 0.763889`
+  - `test_acc = 0.728951`
+  - `test_rmse = 0.427952`
+  - `test_brier = 0.183143`
+  - `test_ece = 0.049399`
 - 当前结果报告默认主看 `AUC/ACC`
 - `RMSE/Brier/ECE/分桶校准` 默认作为次要指标
 - 若目标是推进主线，默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级；达不到时，通常需要很强的 slice 证据才值得继续
@@ -48,14 +49,9 @@
 - 当前正向支线候选:
   - 实验 37
     - branch: `exp/training-modes`
-    - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上已弱于实验 49，不作为默认 `master` 训练口径
+    - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前主线，不作为默认 `master` 训练口径
     - 补充: 这条线属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不优先合入主线
     - 详细指标见下文“实验 37”
-  - 实验 51
-    - branch: `exp/interpretable-readout-experts`
-    - 判断: 这是当前最强的结构 follow-up 候选；三 seed 上相对实验 49 形成稳定 `AUC` 正收益，同时维持 `RMSE/Brier/ECE` 小幅改善
-    - 补充: 这条线通过可解释 gate 给读出侧增加有限专家容量，不读取学生/题目 ID，也不依赖 CF 式 side channel
-    - 详细指标见下文“实验 51”
 
 - 暂停中的 CF 支线:
   - 实验 38 `exp/cf-residual`: ranking-oriented 候选，但依赖学生内随机 split 的 ID-aware side channel，不作为纯 CDM 主线
@@ -368,6 +364,7 @@
     - 它的代价是小幅 `ACC` 回撤，但 `AUC` 增益已经达到继续保留的门槛
     - 第一版 full-trigger 收益主要来自 `concept_count=1 / all_seen`，没有自然学成“只服务高 concept-count”的干净专家分工
     - 如果后续继续做 selective routing，应建立在这条 full-trigger 正向底座上，而不是直接退回更硬的 `3+` trigger
+    - 这一步现已吸收到当前 `master`
 
 - 实验 52: clean interpretable readout routing
   - 分支: `exp/clean-readout-routing`

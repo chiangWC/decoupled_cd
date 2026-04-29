@@ -30,5 +30,33 @@ class CognitiveDifficultyAdapterTest(unittest.TestCase):
         self.assertIsNone(difficulty.grad)
 
 
+class InterpretableReadoutExpertAdapterTest(unittest.TestCase):
+    def test_expert_output_layers_start_at_zero(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=2,
+            concept_dim=4,
+            interpretable_readout_expert_adapter=True,
+            interpretable_readout_expert_count=3,
+        )
+
+        self.assertEqual(len(model.interpretable_readout_experts), 3)
+        for expert in model.interpretable_readout_experts:
+            final_layer = expert[-1]
+            torch.testing.assert_close(final_layer.weight, torch.zeros_like(final_layer.weight))
+            torch.testing.assert_close(final_layer.bias, torch.zeros_like(final_layer.bias))
+
+    def test_expert_count_requires_at_least_two(self) -> None:
+        with self.assertRaisesRegex(ValueError, "at least 2"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                interpretable_readout_expert_count=1,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

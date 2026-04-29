@@ -108,6 +108,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable a zero-init difficulty residual on the conditional guess/slip branch.",
     )
+    parser.add_argument(
+        "--interpretable-readout-expert-adapter",
+        action="store_true",
+        help="Enable a zero-init expert residual gated only by interpretable slice features.",
+    )
+    parser.add_argument(
+        "--interpretable-readout-expert-count",
+        type=int,
+        default=3,
+        help="Number of experts used by the interpretable readout residual.",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None, help="Optional comma-separated GPU candidates when --device auto.")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap for quick smoke runs.")
@@ -274,6 +285,8 @@ def main() -> None:
         pairwise_history_interaction_adapter=args.pairwise_history_interaction_adapter,
         pairwise_history_interaction_min_count=args.pairwise_history_interaction_min_count,
         gs_difficulty_adapter=args.gs_difficulty_adapter,
+        interpretable_readout_expert_adapter=args.interpretable_readout_expert_adapter,
+        interpretable_readout_expert_count=args.interpretable_readout_expert_count,
     )
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -319,6 +332,8 @@ def main() -> None:
         "pairwise_history_interaction_adapter": args.pairwise_history_interaction_adapter,
         "pairwise_history_interaction_min_count": args.pairwise_history_interaction_min_count,
         "gs_difficulty_adapter": args.gs_difficulty_adapter,
+        "interpretable_readout_expert_adapter": args.interpretable_readout_expert_adapter,
+        "interpretable_readout_expert_count": args.interpretable_readout_expert_count,
         "seed": args.seed,
         "device": resolved_device,
         "max_rows": args.max_rows,
@@ -357,6 +372,8 @@ def main() -> None:
         "pairwise_history_interaction_adapter": args.pairwise_history_interaction_adapter,
         "pairwise_history_interaction_min_count": args.pairwise_history_interaction_min_count,
         "gs_difficulty_adapter": args.gs_difficulty_adapter,
+        "interpretable_readout_expert_adapter": args.interpretable_readout_expert_adapter,
+        "interpretable_readout_expert_count": args.interpretable_readout_expert_count,
         "seed": args.seed,
         "best_epoch": result.best_epoch,
         "best_val_auc": result.best_val_auc,

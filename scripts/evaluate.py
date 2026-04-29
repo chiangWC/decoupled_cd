@@ -74,6 +74,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable a zero-init difficulty residual on the conditional guess/slip branch.",
     )
+    parser.add_argument(
+        "--interpretable-readout-expert-adapter",
+        action="store_true",
+        help="Enable a zero-init expert residual gated only by interpretable slice features.",
+    )
+    parser.add_argument(
+        "--interpretable-readout-expert-count",
+        type=int,
+        default=3,
+        help="Number of experts used by the interpretable readout residual.",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--output", default="results/eval_summary.json")
@@ -183,6 +194,8 @@ def main() -> None:
         pairwise_history_interaction_adapter=args.pairwise_history_interaction_adapter,
         pairwise_history_interaction_min_count=args.pairwise_history_interaction_min_count,
         gs_difficulty_adapter=args.gs_difficulty_adapter,
+        interpretable_readout_expert_adapter=args.interpretable_readout_expert_adapter,
+        interpretable_readout_expert_count=args.interpretable_readout_expert_count,
     )
 
     payload = {
@@ -204,6 +217,8 @@ def main() -> None:
         "pairwise_history_interaction_adapter": args.pairwise_history_interaction_adapter,
         "pairwise_history_interaction_min_count": args.pairwise_history_interaction_min_count,
         "gs_difficulty_adapter": args.gs_difficulty_adapter,
+        "interpretable_readout_expert_adapter": args.interpretable_readout_expert_adapter,
+        "interpretable_readout_expert_count": args.interpretable_readout_expert_count,
         "train_metrics": evaluate_model(bundle=bundles["train"], model=model, device=device),
         "valid_metrics": evaluate_model(bundle=bundles["valid"], model=model, device=device),
         "test_metrics": evaluate_model(bundle=bundles["test"], model=model, device=device),

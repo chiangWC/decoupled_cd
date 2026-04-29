@@ -36,6 +36,8 @@ fi
   --pairwise-history-interaction-adapter \
   --pairwise-history-interaction-min-count 2 \
   --gs-difficulty-adapter \
+  --interpretable-readout-expert-adapter \
+  --interpretable-readout-expert-count 3 \
   --seed "${SEED:-2024}" \
   --output "${OUTPUT:-results/assist_09_tkc_dual_channel_300ep.json}" \
   "$@"

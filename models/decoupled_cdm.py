@@ -46,6 +46,8 @@ class DecoupledCDM(nn.Module):
         pairwise_history_interaction_adapter: bool = False,
         pairwise_history_interaction_min_count: int = 2,
         gs_difficulty_adapter: bool = False,
+        interpretable_readout_expert_adapter: bool = False,
+        interpretable_readout_expert_count: int = 3,
     ):
         super().__init__()
         if gs_mode not in {"constant", "conditional"}:
@@ -54,12 +56,16 @@ class DecoupledCDM(nn.Module):
             raise ValueError("high_concept_logit_min_count must be at least 2.")
         if pairwise_history_interaction_min_count < 2:
             raise ValueError("pairwise_history_interaction_min_count must be at least 2.")
+        if interpretable_readout_expert_count < 2:
+            raise ValueError("interpretable_readout_expert_count must be at least 2.")
         self.gs_mode = gs_mode
         self.high_concept_logit_adapter = high_concept_logit_adapter
         self.high_concept_logit_min_count = high_concept_logit_min_count
         self.pairwise_history_interaction_adapter = pairwise_history_interaction_adapter
         self.pairwise_history_interaction_min_count = pairwise_history_interaction_min_count
         self.gs_difficulty_adapter = gs_difficulty_adapter
+        self.interpretable_readout_expert_adapter = interpretable_readout_expert_adapter
+        self.interpretable_readout_expert_count = interpretable_readout_expert_count
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
         self.exercise_difficulty = nn.Embedding(num_exercises, 1)
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
@@ -119,6 +125,17 @@ class DecoupledCDM(nn.Module):
             nn.ReLU(),
             nn.Linear(concept_dim, 1),
         )
+        self.interpretable_readout_expert_gate = nn.Linear(4, interpretable_readout_expert_count)
+        self.interpretable_readout_experts = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(concept_dim * 6 + 3, concept_dim),
+                    nn.ReLU(),
+                    nn.Linear(concept_dim, 1),
+                )
+                for _ in range(interpretable_readout_expert_count)
+            ]
+        )
         nn.init.zeros_(self.cognitive_difficulty_adapter[-1].weight)
         nn.init.zeros_(self.cognitive_difficulty_adapter[-1].bias)
         nn.init.zeros_(self.high_concept_logit_residual[-1].weight)
@@ -127,6 +144,9 @@ class DecoupledCDM(nn.Module):
         nn.init.zeros_(self.pairwise_history_interaction_scorer[-1].bias)
         nn.init.zeros_(self.gs_difficulty_residual[-1].weight)
         nn.init.zeros_(self.gs_difficulty_residual[-1].bias)
+        for expert in self.interpretable_readout_experts:
+            nn.init.zeros_(expert[-1].weight)
+            nn.init.zeros_(expert[-1].bias)
 
     def forward(
         self,
@@ -214,6 +234,16 @@ class DecoupledCDM(nn.Module):
                 concept_embeddings=concept_embeddings.detach(),
                 target_exercise_embeddings=target_exercise_embeddings.detach(),
                 concept_summary=concept_summary,
+            )
+        if self.interpretable_readout_expert_adapter:
+            cognitive_logits = cognitive_logits + self._build_interpretable_readout_expert_residual(
+                q_vectors=q_vectors,
+                student_tkc_mask=student_tkc_mask,
+                target_student_ids=target_student_ids,
+                student_state=student_state,
+                q_repr=q_repr,
+                concept_summary=concept_summary,
+                difficulty=difficulty,
             )
         cognitive_probs = torch.sigmoid(cognitive_logits)
 
@@ -349,3 +379,50 @@ class DecoupledCDM(nn.Module):
 
         aggregated_scores = aggregated_scores / pair_count.clamp_min(1.0)
         return aggregated_scores * concept_count_mask.squeeze(-1).to(aggregated_scores.dtype)
+
+    def _build_interpretable_readout_expert_residual(
+        self,
+        *,
+        q_vectors: torch.Tensor,
+        student_tkc_mask: torch.Tensor,
+        target_student_ids: torch.Tensor,
+        student_state: torch.Tensor,
+        q_repr: torch.Tensor,
+        concept_summary: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        difficulty: torch.Tensor,
+    ) -> torch.Tensor:
+        concept_counts, mean_pooled, dispersion = concept_summary
+        q_mask = (q_vectors > 0).to(student_state.dtype)
+        target_concept_seen = student_tkc_mask[target_student_ids]
+        seen_concept_count = (q_mask * target_concept_seen).sum(dim=1, keepdim=True)
+        coverage = seen_concept_count / concept_counts.clamp_min(1.0)
+        dispersion_score = dispersion.mean(dim=1, keepdim=True)
+        gate_inputs = torch.cat(
+            [
+                (concept_counts - 1.0).detach(),
+                difficulty.detach().unsqueeze(-1),
+                dispersion_score.detach(),
+                coverage.detach(),
+            ],
+            dim=-1,
+        )
+        gate_probs = torch.softmax(self.interpretable_readout_expert_gate(gate_inputs), dim=-1)
+        expert_inputs = torch.cat(
+            [
+                student_state.detach(),
+                q_repr.detach(),
+                mean_pooled.detach(),
+                dispersion.detach(),
+                (student_state * q_repr).detach(),
+                torch.abs(student_state - q_repr).detach(),
+                difficulty.detach().unsqueeze(-1),
+                (concept_counts - 1.0).detach(),
+                coverage.detach(),
+            ],
+            dim=-1,
+        )
+        expert_scores = torch.stack(
+            [expert(expert_inputs).squeeze(-1) for expert in self.interpretable_readout_experts],
+            dim=-1,
+        )
+        return (expert_scores * gate_probs).sum(dim=-1)

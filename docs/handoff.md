@@ -26,52 +26,39 @@
   - `results/exp_tkc_exercise_aggregation/`
   - 三 seed 均值约 `test_auc = 0.7597`
 - 当前正式主线结果目录:
-  - `results/exp_pairwise_history_carrier/`
-  - 三 seed 均值:
-    - `test_auc = 0.762369`
-    - `test_acc = 0.729763`
-    - `test_rmse = 0.428205`
-    - `test_brier = 0.183360`
-    - `test_ece = 0.049828`
-- 当前正式主线相对实验 23 基座均值差:
-  - `AUC +0.002679`
-  - `ACC +0.004979`
-  - `RMSE -0.003183`
-  - `Brier -0.002736`
-  - `ECE -0.012448`
-- 详细背景见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 34、实验 49 和实验 50。
-
-当前正向训练策略支线:
-
-- 分支: `exp/training-modes`
-- 判断:
-  - 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上已弱于实验 49 主线。
-  - 收益主要来自真正 mini-batch SGD 的整体校准/泛化改善，不是彻底解决 `concept_count=4+` 或 `none_seen` 校准问题。
-  - 它属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不适合作为 `master` 默认训练协议。
-  - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 37 为准。
-  - 后续若继续优化训练策略，默认从 `exp/training-modes` 出发。
-
-当前正向结构支线:
-
-- 分支: `exp/interpretable-readout-experts`
-- 判断:
-  - 这是当前最强的结构 follow-up 候选。
-  - 最强配置是 full-trigger 三专家版本: `--interpretable-readout-expert-adapter --interpretable-readout-expert-count 3`
+  - 代码口径已吸收实验 51；详细三 seed 指标以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 51 为准
   - 三 seed 均值:
     - `test_auc = 0.763889`
     - `test_acc = 0.728951`
     - `test_rmse = 0.427952`
     - `test_brier = 0.183143`
     - `test_ece = 0.049399`
-  - 相对当前正式主线均值:
-    - `AUC +0.001520`
-    - `ACC -0.000812`
-    - `RMSE -0.000253`
-    - `Brier -0.000217`
-    - `ECE -0.000429`
-  - `min_count>=2` 和 `min_count>=3` 的 targeted 变体都弱于这个 full-trigger 版本，因此当前保留最简单的 full-trigger 配置，不继续沿硬 trigger 扩线。
-  - 后续 `exp/clean-readout-routing` 又测试了更显式的 `seen/unseen` gate 统计和 `top-k` 稀疏路由，但单 seed 仍弱于这里的原版 full-trigger，因此这条线当前仍以实验 51 原版为准。
-  - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 51 为准。
+- 当前正式主线相对实验 23 基座均值差:
+  - `AUC +0.004199`
+  - `ACC +0.004167`
+  - `RMSE -0.003436`
+  - `Brier -0.002953`
+  - `ECE -0.012877`
+- 详细背景见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 34、实验 49、实验 50 和实验 51。
+
+当前正向训练策略支线:
+
+- 分支: `exp/training-modes`
+- 判断:
+  - 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前正式主线。
+  - 收益主要来自真正 mini-batch SGD 的整体校准/泛化改善，不是彻底解决 `concept_count=4+` 或 `none_seen` 校准问题。
+  - 它属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不适合作为 `master` 默认训练协议。
+  - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 37 为准。
+  - 后续若继续优化训练策略，默认从 `exp/training-modes` 出发。
+
+当前结构主线补充:
+
+- 实验 51 的 full-trigger 三专家 readout residual 已吸收到当前 `master`。
+- 当前主线新增默认配置:
+  - `--interpretable-readout-expert-adapter`
+  - `--interpretable-readout-expert-count 3`
+- `min_count>=2` 和 `min_count>=3` 的 targeted 变体没有吸收；它们都弱于 full-trigger 版本。
+- 后续 `exp/clean-readout-routing` 的 `seen/unseen` gate 统计和 `top-k` 稀疏路由也未超过当前主线，因此实验 51 原版 full-trigger 仍是这条线的正式保留版本。
 
 近期暂停的 CF 模型支线:
 
@@ -99,11 +86,11 @@
 - 实验 33 的 zero-init cognitive difficulty adapter 在三 seed 上稳定优于实验 23 基座，且避开了实验 29 的 seed 崩盘。
 - 诊断 1 表明主线的主要剩余误差集中在多知识点题和 `none_seen` 校准。
 - 实验 34 证明“多知识点题 targeted residual + guess/slip difficulty residual”可以在三 seed 上同时改善 `AUC/ACC/RMSE/Brier/ECE`，这一步已经吸收到当前 `master`。
-- 实验 37 证明 `recompute_minibatch bs=8192 lr=1e-4` 是当前最强的 calibration-oriented 训练协议候选；但它属于纯训练工程优化，运行成本更高，且在 `AUC/ACC` 上仍弱于实验 49，因此暂不推广为 `master` 默认训练口径。
+- 实验 37 证明 `recompute_minibatch bs=8192 lr=1e-4` 是当前最强的 calibration-oriented 训练协议候选；但它属于纯训练工程优化，运行成本更高，且在 `AUC/ACC` 上仍弱于当前主线，因此暂不推广为 `master` 默认训练口径。
 - 实验 48 证明“显式历史概念统计”对多知识点题确有局部信号，但 original form 的三 seed overall 不稳定；这条路如再访，应改成更局部的 targeted trigger / mixture，而不是继续推进统一 residual。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 48。
-- 实验 49 证明 history-carrier pairwise interaction residual 能把“显式历史概念统计”稳定转成 overall 正收益，并且 `none_seen` 也形成 clean win；这是当前最强的结构主线更新，已经吸收到 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 49。
+- 实验 49 证明 history-carrier pairwise interaction residual 能把“显式历史概念统计”稳定转成 overall 正收益，并且 `none_seen` 也形成 clean win；这是实验 51 之前的结构主线更新，已经吸收到 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 49。
 - 实验 50 证明 learned pair aggregation 没有额外收益，主线保留简单均值聚合。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 50。
-- 实验 51 证明 interpretable readout expert residual 已形成稳定的非 ID-aware 结构候选；当前最强版本是 full-trigger 三专家，targeted 硬 trigger 反而更弱。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 51。
+- 实验 51 证明 interpretable readout expert residual 已形成稳定的非 ID-aware 结构更新；当前最强版本是 full-trigger 三专家，targeted 硬 trigger 反而更弱，这一步已经吸收到当前 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 51。
 - 实验 52 证明在实验 51 底座上继续加入更显式的 `seen/unseen` routing 统计或 `top-k` 稀疏路由，并没有带来更强结果；这条 selective routing follow-up 暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 52。
 - 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）除实验 51 外，都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；细节统一以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 为准。
 - 实验 38-40 的 CF 支线已确认主要依赖 ID-aware side channel，不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / appendix 讨论。
@@ -119,7 +106,7 @@
 - `exp/*` 分支只作为实验代码和复验参考，不直接代表当前主线。
 - 具体分支以 `git branch -a` 为准；每条路线的定位和结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的详细条目与 D 部分快速索引为准。
 - 若继续优化训练协议，优先从 `exp/training-modes` 出发；它是当前唯一仍值得继续的训练策略支线。
-- 若继续做结构主线，优先参考 `exp/interpretable-readout-experts` 的实验 51；若要开新线，默认从最新 `master` 切新 `exp/*` 分支，而不是回到已暂停支线继续堆改动。
+- 若继续做结构主线，默认直接从最新 `master` 切新 `exp/*` 分支；实验 51 代码已吸收到主线，不需要回到 `exp/interpretable-readout-experts` 继续堆改动。
 - `exp/clean-readout-routing` 已形成暂停判断，不作为当前优先继续线。
 - `exp/cf-residual*` 当前暂停，不作为纯 CDM 主线推进。
 - `exp/multi-concept-interaction`、`exp/concept-conditioned-prop`、`exp/qrepr-score-residual`、`exp/none-seen-calibration-bias`、`exp/history-concept-stats-adapter` 当前都已形成暂停判断；如需复访，先以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目为准。
