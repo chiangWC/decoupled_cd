@@ -33,6 +33,8 @@ fi
   --gs-mode conditional \
   --high-concept-logit-adapter \
   --high-concept-logit-min-count 2 \
+  --pairwise-history-interaction-adapter \
+  --pairwise-history-interaction-min-count 2 \
   --gs-difficulty-adapter \
   --seed "${SEED:-2024}" \
   --output "${OUTPUT:-results/assist_09_tkc_dual_channel_300ep.json}" \

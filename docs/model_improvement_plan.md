@@ -17,7 +17,7 @@
 
 ## 当前快照
 
-- 当前 `master` 正式主线是实验 34:
+- 当前 `master` 正式主线是实验 49:
   - ordered ASSIST09
   - `transition_graph/propagation_graph.csv`
   - `graph_mode = single`
@@ -31,14 +31,16 @@
   - 吸收实验 33 的 zero-init cognitive difficulty adapter
   - `high_concept_logit_adapter = true`
   - `high_concept_logit_min_count = 2`
+  - `pairwise_history_interaction_adapter = true`
+  - `pairwise_history_interaction_min_count = 2`
   - `gs_difficulty_adapter = true`
-- 当前主线结果目录: `results/exp_high_concept_logit_adapter/`
+- 当前主线结果目录: `results/exp_pairwise_history_carrier/`
 - 当前主线三 seed 参考均值:
-  - `test_auc = 0.761196`
-  - `test_acc = 0.727556`
-  - `test_rmse = 0.429170`
-  - `test_brier = 0.184187`
-  - `test_ece = 0.051142`
+  - `test_auc = 0.762369`
+  - `test_acc = 0.729763`
+  - `test_rmse = 0.428205`
+  - `test_brier = 0.183360`
+  - `test_ece = 0.049828`
 - 当前结果报告默认主看 `AUC/ACC`
 - `RMSE/Brier/ECE/分桶校准` 默认作为次要指标
 - 若目标是推进主线，默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级；达不到时，通常需要很强的 slice 证据才值得继续
@@ -46,8 +48,8 @@
 - 当前正向支线候选是实验 37:
   - branch: `exp/training-modes`
   - 配置: `training_mode = recompute_minibatch`, `batch_size = 8192`, `learning_rate = 1e-4`
-  - 相对实验 34 三 seed 均值: `AUC +0.000945`, `ACC +0.000324`, `RMSE -0.001494`, `Brier -0.001280`, `ECE -0.006628`
-  - 判断: 这是当前最强干净正向候选，但仍未达到明确的 `AUC/ACC +1e-3` 级别，尚未合入 `master`
+  - 相对实验 49 三 seed 均值: `AUC -0.000228`, `ACC -0.001884`, `RMSE -0.000530`, `Brier -0.000454`, `ECE -0.005314`
+  - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上已弱于实验 49，不作为默认 `master` 训练口径
 
 - 暂停中的 CF 支线:
   - 实验 38 `exp/cf-residual`: `AUC +0.003475`, `ACC +0.002759`，但依赖学生内随机 split 的 ID-aware side channel，不作为纯 CDM 主线
@@ -60,6 +62,7 @@
   - 实验 45 `exp/concept-conditioned-prop`: propagation 侧 concept-conditioned residual 在 `seed=2024` 上相对当前主线 baseline 为 `AUC +0.000109`, `ACC -0.000362`, `RMSE +0.000271`, `Brier +0.000233`, `ECE +0.002160`；`concept_count=2` 小幅改善，但 `3/4+` 与 `none_seen` 仍不是 clean win
   - 实验 46 `exp/qrepr-score-residual`: readout 侧 multi-concept-only exercise-conditioned Q-pooling score residual 在 `seed=2024` 上相对当前主线 baseline 为 `AUC +0.000664`, `ACC -0.001370`, `RMSE +0.000185`, `Brier +0.000159`, `ECE +0.001519`；`concept_count=2/3` 的 AUC 有提升，但 `4+`、`none_seen`、`partial_seen` 副作用明显
   - 实验 47 `exp/none-seen-calibration-bias`: final-logit coverage/concept-count/difficulty zero-init calibration bias 在 `seed=2024` 上相对当前主线 baseline 为 `AUC -0.000945`, `ACC -0.000381`, `RMSE +0.000438`, `Brier +0.000376`, `ECE -0.001393`；overall ECE 虽略降，但 `none_seen` 的 `ACC/RMSE/Brier/ECE` 全部变差，不是 clean win
+  - 实验 50 `exp/pairwise-history-weighted-agg`: 在实验 49 上把 pair score 聚合从固定均值改成 learned weighting，`seed=2024` 相对实验 49 为 `AUC -0.000441`, `ACC -0.000305`, `RMSE -0.000120`, `Brier -0.000103`, `ECE +0.000002`；不继续扩 seed，主线保留均值聚合
 
 ## 已验证有效
 
@@ -128,6 +131,34 @@
   - `Brier -0.001909`
   - `ECE -0.011134`
 - 结论: 实验 34 是当前 `master` 正式主线。
+
+### 实验 49. history-carrier pairwise interaction residual
+
+- 动机: 不再直接从局部 `TKC/UKC` embedding 读多知识点交互，而是显式建模题相关概念对，并把更直接的历史概念统计作为 state carrier
+- 分支: `exp/pairwise-history-carrier`
+- 结构:
+  - 保留实验 34 主线
+  - 只对 `concept_count >= 2` 的题激活 zero-init pairwise interaction residual
+  - 对每个题相关概念对共享 scorer
+  - pairwise 输入为 `c_k / c_j / e_e` 加上逐概念历史统计 `accuracy / seen / log_attempt_count`
+  - pair score 做均值聚合后加到 `cognitive_logits`
+- 三 seed 相对实验 34:
+  - `seed=2024`: `AUC +0.001199`, `ACC +0.003844`, `RMSE -0.001182`, `Brier -0.001014`, `ECE -0.001450`
+  - `seed=2025`: `AUC +0.002073`, `ACC +0.001427`, `RMSE -0.000984`, `Brier -0.000844`, `ECE -0.000084`
+  - `seed=2026`: `AUC +0.000248`, `ACC +0.001351`, `RMSE -0.000728`, `Brier -0.000624`, `ECE -0.002408`
+- 三 seed 均值:
+  - `AUC +0.001173`
+  - `ACC +0.002207`
+  - `RMSE -0.000965`
+  - `Brier -0.000827`
+  - `ECE -0.001314`
+- 切片:
+  - `seed=2024` 的 `concept_count=2/3/4+` 均明显改善，其中 `concept_count=3` 为 `AUC +0.030833`, `ACC +0.025471`, `RMSE -0.013033`
+  - `none_seen` 也形成 clean win: `ACC +0.007841`, `RMSE -0.004422`, `Brier -0.003331`, `ECE -0.008649`
+- 结论:
+  - 这是第一条把“显式历史概念统计”稳定转成 overall 正收益的多知识点结构
+  - 它不依赖 item ID side channel，也不是 exact-3 特判，语义与实现都足够干净
+  - 实验 49 已吸收到 `master`
 
 ### 实验 37. true mini-batch recompute training
 
@@ -283,6 +314,20 @@
     - 这条“显式历史概念统计 residual”证明了多知识点题的确能从更直接的历史概念统计里获益，但收益主要体现在局部 slice，不足以稳定转化为更优 overall
     - 相比当前主线，它更像 `AUC` 与 `ACC/RMSE/Brier` 之间的 seed-sensitive 折中，不作为主线结构推进
     - 如果后续再回到这条思路，优先考虑把它作为 targeted auxiliary / mixture trigger，而不是对所有 `concept_count>=2` 题统一加 residual
+
+- 实验 50: weighted pairwise history aggregation
+  - 分支: `exp/pairwise-history-weighted-agg`
+  - 做法: 在实验 49 上把 pair score 聚合从固定均值改成 learned weighting，其余结构不变
+  - `seed=2024` 相对实验 49:
+    - `AUC -0.000441`
+    - `ACC -0.000305`
+    - `RMSE -0.000120`
+    - `Brier -0.000103`
+    - `ECE +0.000002`
+  - 结论:
+    - learned weighting 没有提供额外收益
+    - 这说明当前增益主要来自“history carrier + pairwise scorer”本身，而不是更复杂的 pair aggregator
+    - 主线保留简单均值聚合，不继续扩 seed
 
 ### 语义更干净，但不值得主线吸收
 

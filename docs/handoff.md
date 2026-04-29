@@ -25,6 +25,8 @@
   - `TKC/UKC` 学生级融合使用自适应 gate
   - `high_concept_logit_adapter = true`
   - `high_concept_logit_min_count = 2`
+  - `pairwise_history_interaction_adapter = true`
+  - `pairwise_history_interaction_min_count = 2`
   - `gs_difficulty_adapter = true`
   - 长训比较默认看 `300 epoch`
   - 实验报告默认主看 `AUC/ACC`
@@ -40,20 +42,20 @@
   - `results/exp_tkc_exercise_aggregation/`
   - 三 seed 均值约 `test_auc = 0.7597`
 - 当前正式主线结果目录:
-  - `results/exp_high_concept_logit_adapter/`
+  - `results/exp_pairwise_history_carrier/`
   - 三 seed 均值:
-    - `test_auc = 0.761196`
-    - `test_acc = 0.727556`
-    - `test_rmse = 0.429170`
-    - `test_brier = 0.184187`
-    - `test_ece = 0.051142`
+    - `test_auc = 0.762369`
+    - `test_acc = 0.729763`
+    - `test_rmse = 0.428205`
+    - `test_brier = 0.183360`
+    - `test_ece = 0.049828`
 - 当前正式主线相对实验 23 基座均值差:
-  - `AUC +0.001506`
-  - `ACC +0.002772`
-  - `RMSE -0.002218`
-  - `Brier -0.001909`
-  - `ECE -0.011134`
-- 详细背景见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 33、实验 34 和诊断 1。
+  - `AUC +0.002679`
+  - `ACC +0.004979`
+  - `RMSE -0.003183`
+  - `Brier -0.002736`
+  - `ECE -0.012448`
+- 详细背景见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 34、实验 49 和实验 50。
 
 当前正向训练策略支线:
 
@@ -69,14 +71,14 @@
   - `test_rmse = 0.427675`
   - `test_brier = 0.182906`
   - `test_ece = 0.044514`
-- 相对实验 34 三 seed 均值:
-  - `AUC +0.000945`
-  - `ACC +0.000324`
-  - `RMSE -0.001494`
-  - `Brier -0.001280`
-  - `ECE -0.006628`
+- 相对实验 49 三 seed 均值:
+  - `AUC -0.000228`
+  - `ACC -0.001884`
+  - `RMSE -0.000530`
+  - `Brier -0.000454`
+  - `ECE -0.005314`
 - 判断:
-  - 这是当前最强正向支线候选，但尚未合入 `master`。
+  - 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上已弱于实验 49 主线。
   - 收益主要来自真正 mini-batch SGD 的整体校准/泛化改善，不是彻底解决 `concept_count=4+` 或 `none_seen` 校准问题。
   - 后续若继续优化训练策略，默认从 `exp/training-modes` 出发。
 
@@ -165,6 +167,21 @@
   - 三 seed 均值相对当前主线 baseline: `AUC -0.000366`, `ACC +0.001389`, `RMSE -0.000139`, `Brier -0.000120`, `ECE +0.000637`
   - `seed=2024` 的 `concept_count=2/3/4+` 切片明显改善，但 `seed=2025` 的多知识点切片出现不稳定反转，`none_seen` 也没有被修好
   - 结论: 这条路证明“显式历史概念统计”对多知识点题确有局部信号，但 overall 不稳定，不作为主线结构推进；若后续再访，优先改成更局部的 targeted trigger，而不是对所有 `concept_count>=2` 题统一加 residual
+- 实验 49 `exp/pairwise-history-carrier` 做了三 seed 复验:
+  - 结构: 保留实验 34 主线，其上新增只对 `concept_count>=2` 激活的 zero-init pairwise interaction residual
+  - carrier 不再读局部 `TKC/UKC` embedding，而是在线构造逐概念历史统计: `accuracy / seen / log_attempt_count`
+  - 对题相关概念对共享 scorer，pair score 做均值聚合后直接加到 `cognitive_logits`
+  - 三 seed 均值相对实验 34 主线: `AUC +0.001173`, `ACC +0.002207`, `RMSE -0.000965`, `Brier -0.000827`, `ECE -0.001314`
+  - `seed=2024` 切片:
+    - `concept_count=2`: `AUC +0.011842`, `ACC +0.012003`, `RMSE -0.004802`
+    - `concept_count=3`: `AUC +0.030833`, `ACC +0.025471`, `RMSE -0.013033`, `ECE -0.007842`
+    - `concept_count=4+`: `AUC +0.018086`, `ACC +0.033058`, `RMSE -0.004449`
+    - `none_seen`: `ACC +0.007841`, `RMSE -0.004422`, `ECE -0.008649`
+  - 结论: 这是当前最强的结构主线更新，已经吸收到 `master`
+- 实验 50 `exp/pairwise-history-weighted-agg` 做了单 seed follow-up:
+  - 做法: 在实验 49 的 history-carrier pairwise residual 上，把 pair score 聚合从固定均值改成 learned weighting
+  - `seed=2024` 相对实验 49: `AUC -0.000441`, `ACC -0.000305`, `RMSE -0.000120`, `Brier -0.000103`, `ECE +0.000002`
+  - 结论: learned weighting 没有带来额外收益，主线保留简单均值聚合
 - `exp/multi-concept-interaction` 已验证更激进的 exact-3 多知识点 residual/readout:
   - simpler `exact-3 readout` 仍是这条线上最平衡的版本: `AUC 0.761332`, `ACC 0.727283`, `RMSE 0.429016`, `Brier 0.184055`, `ECE 0.049997`
   - `tri_concept_readout_adapter` 能明显抬高 `concept_count=3` 的 AUC，但 calibration 代价过大，不值得继续扩 seed
