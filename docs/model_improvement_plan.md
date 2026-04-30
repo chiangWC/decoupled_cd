@@ -66,6 +66,7 @@
   - 实验 52: 更干净的 interpretable readout routing 没能超过实验 51 原版 full-trigger，不继续沿这条 selective routing 扩线
   - 实验 53: softer routing regularizer 也没能超过实验 51 原版 full-trigger，不继续沿这条 routing regularization 扩线
   - 实验 54: Q-conditioned local mastery readout 复访后仍弱于实验 51 主线，不继续沿这条“local mastery 主 readout”扩线
+  - 实验 55: difficulty-weighted propagation 只带来极小 AUC 正向，但 `ACC/RMSE/Brier/ECE` 副作用明显，不继续沿这条 propagation weighting 扩线
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -474,6 +475,44 @@
     - 不继续沿这条 local mastery main-readout 设计扩线
     - 若后续再访，必须带着更强的概念交互假设或更明确的聚合归纳偏置，而不是再重复“逐概念打分 + 简单聚合”框架
 
+- 实验 55: difficulty-weighted propagation
+  - 分支: `exp/difficulty-weighted-propagation`
+  - 提交: `b9704ec`
+  - 做法:
+    - 在 propagation 的 `correct/incorrect` 两条 `exercise -> concept` 历史证据前，各自增加独立的 zero-init multiplicative scaling
+    - scaling 输入读取 `difficulty + concept_count + detached exercise_embedding`
+    - `correct_weight = base_correct * multiplier_correct`
+    - `incorrect_weight = base_incorrect * multiplier_incorrect`
+    - `multiplier = 2 * sigmoid(raw_scale)`，因此零初始化时严格退化回当前主线
+  - 结果:
+    - smoke:
+      - `max_rows=2000`, `epoch=1` 能正常训练并产出 summary
+    - `seed=2024`:
+      - `AUC 0.764173`
+      - `ACC 0.724124`
+      - `RMSE 0.430202`
+      - `Brier 0.185073`
+      - `ECE 0.061324`
+  - 相对实验 51 `seed=2024`:
+    - `AUC +0.000122`
+    - `ACC -0.004548`
+    - `RMSE +0.001907`
+    - `Brier +0.001636`
+    - `ECE +0.010659`
+  - 切片:
+    - `concept_count=2`: `AUC 0.750349`, `ACC 0.712457`, `ECE 0.070721`
+    - `concept_count=3`: `AUC 0.705193`, `ACC 0.673311`, `ECE 0.102832`
+    - `concept_count=4+`: `AUC 0.747586`, `ACC 0.669421`, `ECE 0.091158`
+    - `none_seen`: `AUC 0.810439`, `ACC 0.769602`, `ECE 0.151766`
+  - 判断:
+    - 这条线确实证明“把 difficulty 前移到 propagation”会改变排序行为，单 seed `AUC` 有极小正向
+    - 但代价过大：`ACC/RMSE/Brier/ECE` 全部明显回撤，尤其 `ECE` 恶化接近 `+0.011`
+    - 切片也没有形成足够干净的多知识点收益；`concept_count=3/4+` 和 `none_seen` 仍然保留明显校准问题
+    - 它比实验 47 那类 final-logit calibration bias 更贴近语义，但在当前形式下更像“排序微升换整体误差和校准显著变差”的折中
+  - 结论:
+    - 不继续沿这条 difficulty-weighted propagation 扩线
+    - 若后续还要 revisit propagation weighting，优先考虑更局部、更学生条件化的证据强度，而不是当前这种按题目全局共享的 difficulty multiplier
+
 ### 语义更干净，但不值得主线吸收
 
 - 实验 24: 多知识点题按知识点数分摊
@@ -545,6 +584,12 @@
 - 这说明当前瓶颈未必只是“global student_state 把局部信息平均掉了”；至少在现有概念表示质量下，把 readout 改成 local-first 还不足以自然得到更强排序
 - 因此不建议把这条线当作当前默认下一步，也不建议在它本身已经负向时继续直接叠 ranking loss
 
+### 实验 55 后的补充判断
+
+- “difficulty 应该前移进 propagation”这个直觉并不是错的；至少单 seed 的 `AUC` 确实出现了极小正向
+- 但当前这版按题目共享的 global difficulty multiplier 太粗，容易把正误历史证据整体推偏，结果是排序收益远小于误差与校准代价
+- 因此如果以后再回到 propagation 侧，优先级不应是继续扫同类全局 weighting，而应转向更局部、更学生条件化的证据重权方式
+
 ## 默认下一步
 
 如果没有用户明确指定路线，默认按下面优先级思考:
@@ -554,8 +599,9 @@
 3. 若继续做多知识点题，优先保留实验 51 原版 full-trigger expert residual 作为底座；已有证据说明无论更硬的 selective routing 还是当前这版 soft routing regularizer，都不足以直接带来稳定增益。
 4. 若再访实验 51 这条线，默认需要先有更明确的 slice 假设或更局部的引导目标，不再把全局 gate regularizer 视为高优先级默认下一步。
 5. “local mastery 主 readout” 这条线也已复访过一次；在新的概念交互或聚合假设出现前，不再视为当前高优先级默认路线。
-6. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
-7. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
-8. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
-9. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
-10. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。
+6. propagation 侧 difficulty weighting 也已试过一版；在更细粒度的 student-conditioned 假设出现前，不再视为当前高优先级默认路线。
+7. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
+8. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
+9. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
+10. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
+11. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。
