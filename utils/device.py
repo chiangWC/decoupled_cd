@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from typing import Optional
 
@@ -15,6 +16,23 @@ def parse_gpu_ids(text: str | None) -> list[int]:
         if token:
             out.append(int(token))
     return out
+
+
+def get_visible_gpu_ids() -> list[int] | None:
+    text = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if text is None:
+        return None
+
+    visible_ids: list[int] = []
+    for token in text.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            visible_ids.append(int(token))
+        except ValueError:
+            return []
+    return visible_ids
 
 
 def get_gpu_memory_map() -> dict[int, int]:
@@ -51,8 +69,23 @@ def resolve_device(device: str = "auto", gpu_candidates: str | None = None) -> t
     if not torch.cuda.is_available():
         return torch.device("cpu")
 
+    visible_gpu_ids = get_visible_gpu_ids()
     candidates = parse_gpu_ids(gpu_candidates)
-    gpu_id = select_best_gpu(candidates)
+    physical_candidates = candidates
+    if visible_gpu_ids:
+        if candidates:
+            if all(candidate in visible_gpu_ids for candidate in candidates):
+                physical_candidates = candidates
+            elif all(0 <= candidate < len(visible_gpu_ids) for candidate in candidates):
+                physical_candidates = [visible_gpu_ids[candidate] for candidate in candidates]
+        else:
+            physical_candidates = visible_gpu_ids
+
+    gpu_id = select_best_gpu(physical_candidates)
     if gpu_id is None:
         return torch.device("cuda:0")
+    if visible_gpu_ids:
+        if gpu_id not in visible_gpu_ids:
+            return torch.device("cuda:0")
+        return torch.device(f"cuda:{visible_gpu_ids.index(gpu_id)}")
     return torch.device(f"cuda:{gpu_id}")
