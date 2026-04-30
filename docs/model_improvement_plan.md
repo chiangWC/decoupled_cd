@@ -65,6 +65,7 @@
   - 实验 50: learned weighting 没有带来额外收益，主线保留简单均值聚合
   - 实验 52: 更干净的 interpretable readout routing 没能超过实验 51 原版 full-trigger，不继续沿这条 selective routing 扩线
   - 实验 53: softer routing regularizer 也没能超过实验 51 原版 full-trigger，不继续沿这条 routing regularization 扩线
+  - 实验 54: Q-conditioned local mastery readout 复访后仍弱于实验 51 主线，不继续沿这条“local mastery 主 readout”扩线
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -433,6 +434,46 @@
     - 实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
     - 若后续还要 revisit routing，优先考虑更局部的软引导或更明确的 slice 目标，而不是继续围绕同一种全局 gate regularizer 小步扫参
 
+- 实验 54: Q-conditioned local mastery readout revisit
+  - 分支: `exp/q-conditioned-local-mastery-readout`
+  - 提交: `aeb42b7`
+  - 做法:
+    - 不再只读全局 `student_state`
+    - 对每个目标交互，只 gather 该题 Q mask 命中的概念
+    - 对每个目标概念，基于 `tkc_state / ukc_state / concept_embedding / seen_flag / difficulty` 共享打分
+    - 用几何均值式的 concept aggregation 形成题目级 local mastery logit
+    - 在原有 `cognitive_logits` 外加 zero-init gate: `old_logit + gate * local_mastery_logit`
+  - 工程验证:
+    - 初版按 “交互数 x 全概念数” 展开局部状态导致远端正式训练 OOM
+    - 改成只对命中概念做 gather 后，单测与 smoke 恢复正常
+  - 结果:
+    - smoke:
+      - `max_rows=2000`, `epoch=1` 能正常训练并产出 summary
+    - `seed=2024`:
+      - `AUC 0.761978`
+      - `ACC 0.726674`
+      - `RMSE 0.428573`
+      - `Brier 0.183675`
+      - `ECE 0.046842`
+  - 相对实验 51 `seed=2024`:
+    - `AUC -0.002073`
+    - `ACC -0.001998`
+    - `RMSE +0.000278`
+    - `Brier +0.000238`
+    - `ECE -0.003823`
+  - 切片:
+    - `concept_count=2`: `AUC 0.749767`, `ACC 0.717925`, `ECE 0.060700`
+    - `concept_count=3`: `AUC 0.698639`, `ACC 0.682171`, `ECE 0.082560`
+    - `concept_count=4+`: `AUC 0.731486`, `ACC 0.680441`, `ECE 0.125002`
+    - `none_seen`: `AUC 0.808718`, `ACC 0.800362`, `ECE 0.112099`
+  - 判断:
+    - 这次复访已经不是实验 35 那种“局部概念状态均值 residual”，而是更接近主 readout 的逐概念打分再聚合版本
+    - 即便如此，它仍没有把“local mastery 更贴近 CD 语义”转成 overall `AUC/ACC` 收益；单 seed 已明显低于继续扩 seed 的门槛
+    - 切片上也没有出现足够强的多知识点 clean win，`concept_count=3/4+` 和 `none_seen` 仍然偏弱
+  - 结论:
+    - 不继续沿这条 local mastery main-readout 设计扩线
+    - 若后续再访，必须带着更强的概念交互假设或更明确的聚合归纳偏置，而不是再重复“逐概念打分 + 简单聚合”框架
+
 ### 语义更干净，但不值得主线吸收
 
 - 实验 24: 多知识点题按知识点数分摊
@@ -498,6 +539,12 @@
 - 这说明实验 51 的剩余空间不太像“给当前 gate 再加一个全局共享正则项”就能拿到；至少现阶段，这条线的提升空间没有想象中大
 - 因此若后续还要继续挖实验 51，优先级应降到“明确有新 slice 假设时再访”，而不是把 routing regularizer 当成默认下一步
 
+### 实验 54 后的补充判断
+
+- “先做逐概念 local mastery，再聚合成题目级认知 logit”在语义上很合理，但当前这版共享 scorer + 几何均值聚合并没有胜过实验 51 主线
+- 这说明当前瓶颈未必只是“global student_state 把局部信息平均掉了”；至少在现有概念表示质量下，把 readout 改成 local-first 还不足以自然得到更强排序
+- 因此不建议把这条线当作当前默认下一步，也不建议在它本身已经负向时继续直接叠 ranking loss
+
 ## 默认下一步
 
 如果没有用户明确指定路线，默认按下面优先级思考:
@@ -506,8 +553,9 @@
 2. 优先考虑轻量、zero-init、可回退的 sidecar / residual 改动。
 3. 若继续做多知识点题，优先保留实验 51 原版 full-trigger expert residual 作为底座；已有证据说明无论更硬的 selective routing 还是当前这版 soft routing regularizer，都不足以直接带来稳定增益。
 4. 若再访实验 51 这条线，默认需要先有更明确的 slice 假设或更局部的引导目标，不再把全局 gate regularizer 视为高优先级默认下一步。
-5. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
-6. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
-7. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
-8. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
-9. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。
+5. “local mastery 主 readout” 这条线也已复访过一次；在新的概念交互或聚合假设出现前，不再视为当前高优先级默认路线。
+6. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
+7. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
+8. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
+9. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
+10. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。

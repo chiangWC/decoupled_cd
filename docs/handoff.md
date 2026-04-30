@@ -60,6 +60,7 @@
 - `min_count>=2` 和 `min_count>=3` 的 targeted 变体没有吸收；它们都弱于 full-trigger 版本。
 - 后续 `exp/clean-readout-routing` 的 `seen/unseen` gate 统计和 `top-k` 稀疏路由也未超过当前主线，因此实验 51 原版 full-trigger 仍是这条线的正式保留版本。
 - 再后续的 `exp/readout-routing-soft-regularizer` 也未超过当前主线；soft routing regularizer 在单 seed 有轻微正信号，但三 seed 均值仍全面弱于实验 51 原版。
+- 再复访的 `exp/q-conditioned-local-mastery-readout` 也未超过当前主线；即便把 local mastery 做成更接近主 readout 的逐概念打分再聚合版本，`seed=2024` 仍明显弱于实验 51 原版。
 
 近期暂停的 CF 模型支线:
 
@@ -94,6 +95,7 @@
 - 实验 51 证明 interpretable readout expert residual 已形成稳定的非 ID-aware 结构更新；当前最强版本是 full-trigger 三专家，targeted 硬 trigger 反而更弱，这一步已经吸收到当前 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 51。
 - 实验 52 证明在实验 51 底座上继续加入更显式的 `seen/unseen` routing 统计或 `top-k` 稀疏路由，并没有带来更强结果；这条 selective routing follow-up 暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 52。
 - 实验 53 证明在实验 51 底座上继续加入全局 soft routing regularizer，也没有形成稳定三 seed 增益；这条 routing-regularization follow-up 同样暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 53。
+- 实验 54 证明 “Q-conditioned local mastery 主 readout” 即使按更贴近 CD 语义的逐概念打分方式重做，单 seed 仍弱于当前主线，且没有留下足够强的多知识点 clean win；这条 readout 复访也暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 54。
 - 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）除实验 51 外，都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；细节统一以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 为准。
 - 实验 38-40 的 CF 支线已确认主要依赖 ID-aware side channel，不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / appendix 讨论。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
@@ -111,6 +113,7 @@
 - 若继续做结构主线，默认直接从最新 `master` 切新 `exp/*` 分支；实验 51 代码已吸收到主线，不需要回到 `exp/interpretable-readout-experts` 继续堆改动。
 - `exp/clean-readout-routing` 已形成暂停判断，不作为当前优先继续线。
 - `exp/readout-routing-soft-regularizer` 已形成暂停判断，不作为当前优先继续线。
+- `exp/q-conditioned-local-mastery-readout` 已形成暂停判断，不作为当前优先继续线。
 - `exp/cf-residual*` 当前暂停，不作为纯 CDM 主线推进。
 - `exp/multi-concept-interaction`、`exp/concept-conditioned-prop`、`exp/qrepr-score-residual`、`exp/none-seen-calibration-bias`、`exp/history-concept-stats-adapter` 当前都已形成暂停判断；如需复访，先以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目为准。
 
