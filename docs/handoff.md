@@ -116,14 +116,7 @@
 - 具体分支以 `git branch -a` 为准；每条路线的定位和结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的详细条目与 D 部分快速索引为准。
 - 若继续优化训练协议，优先从 `exp/training-modes` 出发；它是当前唯一仍值得继续的训练策略支线。
 - 若继续做结构主线，默认直接从最新 `master` 切新 `exp/*` 分支；实验 51 代码已吸收到主线，不需要回到 `exp/interpretable-readout-experts` 继续堆改动。
-- `exp/clean-readout-routing` 已形成暂停判断，不作为当前优先继续线。
-- `exp/readout-routing-soft-regularizer` 已形成暂停判断，不作为当前优先继续线。
-- `exp/q-conditioned-local-mastery-readout` 已形成暂停判断，不作为当前优先继续线。
-- `exp/difficulty-weighted-propagation` 已形成暂停判断，不作为当前优先继续线。
-- `exp/student-pairwise-ranking-loss` 已形成暂停判断，不作为当前优先继续线。
-- `exp/multi-hop-propagation` 已形成暂停判断，不作为当前优先继续线。
-- `exp/cf-residual*` 当前暂停，不作为纯 CDM 主线推进。
-- `exp/multi-concept-interaction`、`exp/concept-conditioned-prop`、`exp/qrepr-score-residual`、`exp/none-seen-calibration-bias`、`exp/history-concept-stats-adapter` 当前都已形成暂停判断；如需复访，先以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目为准。
+- 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先回看 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目，确认是否真的出现了新的 slice 假设或机制假设，再决定是否重开。
 
 ## 当前关键文件
 
@@ -148,14 +141,15 @@
 
 ## 后续实验规则
 
-- 默认先只改一个结构因素，先把单因素证据立住。
-- 若单因素已经给出明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释且互补的证据，可少量做双因素组合验证。
-- 双因素验证仍应严格限量，默认只测最强的 `1-2` 组候选，不做组合爆炸。
+- 新假设默认先只改一个结构因素，先把单因素证据立住。
+- 当前已进入单因素边际收益放缓的平台期；单因素实验默认只作为新假设准入，不再视为完整推进节奏。
+- 默认允许少量测试已各自成立的正交组合；组合验证仍应严格限量，默认只测最强的 `1-2` 组候选，不做组合爆炸。
+- 也允许探索更大一级、真正改变表示瓶颈的模块改动，不再把“小修小补式 residual”当作唯一默认节奏。
 - 探索性结构改动默认先从最新 `master` 切 `exp/<short-name>` 分支。
 - 新结构默认先跑单次；单次值得继续时再补 `2-3` 个 seed。
 - 若单次相对当前主线的 `AUC/ACC` 连 `1e-3` 量级都明显达不到，默认不优先扩 seed，除非用户明确要求或切片信号非常强。
-- 优先考虑更轻量的传播侧改动。
-- 避免显著增加 full-batch 显存占用的主干改动。
+- 若做更大一级结构改动，优先选择能直接作用于多知识点交互、学生状态形成或 propagation/readout 主干语义的模块；避免只在最终 logit 附近继续堆局部补丁。
+- 即使允许更大一级改动，也仍应控制 full-batch 显存占用和训练成本，避免无约束扩主干。
 - 新实验默认在 `exp/*` 分支上进行，确认成立后再整理回 `master`。
 - 远端运行前，先把当前分支 `git push` 到 `origin`，再执行 `remote_exec.sh`。
 - 实验 37 后续工程优化已做过一轮:

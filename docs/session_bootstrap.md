@@ -73,8 +73,9 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - ordered ASSIST09 + transition graph 是当前固定主线。
 - `dual graph` 只作为 legacy ablation，不是默认路径。
 - `valid/test` 复用 `train` 行为历史做传播输入。
-- 默认一次只改一个结构因素。
-- 若单因素已经出现明确的 overall 正向信号，或出现可解释且互补的 slice 信号，可少量做双因素组合验证；组合数应严格受控，避免组合爆炸。
+- 新假设默认先只改一个结构因素，用单因素实验先把证据立住。
+- 当前已进入单因素边际收益放缓的平台期；单因素实验默认只作为新假设准入，不再视为完整推进节奏。
+- 默认允许少量测试已各自成立的正交组合，也允许探索更大一级、真正改变表示瓶颈的模块改动；组合数和结构复杂度都应严格受控，避免无序扩线。
 - 探索性结构改动默认先从最新 `master` 切 `exp/<short-name>` 分支。
 - 新结构默认先跑单次；单次值得继续时再补 `2-3` 个 seed。
 - 结果未验证前，不要把探索性实验直接推到 `master`。
