@@ -607,6 +607,57 @@
     - 不继续沿这版 parallel local context readout 实现扩线，也不进入 rescue sweep
     - 若以后还要 revisit 更大一级 local-context 模块，优先先加显式幅度约束或更保守的 mixture 结构，再决定是否值得进入正式比较
 
+- 实验 60: pairwise history target-exclusion audit
+  - 分支: `exp/target-exclusion-audit`
+  - 提交:
+    - `831da8b`: 加入审计开关、分布打印与 pairwise target exclusion
+  - 动机:
+    - 审计 train / valid / test 的历史口径是否存在关键 mismatch
+    - 在不改模型结构的前提下，先验证“只对 pairwise history residual 做 target exclusion”是否带来 clean 正收益
+  - 工程诊断:
+    - 当前默认训练仍是 full-batch；`--batch-size` 只被记录，不参与实际优化步切分
+    - 在 ASSIST09 `train.csv` 上，`(stu_id, exer_id)` 没有重复，因此这次 pairwise target exclusion 对 train history 的扣除是精确的，不是近似版本
+    - `train_model` 末尾确实会恢复 best checkpoint；审计 run 中 `restored_val_auc == best_val_auc`
+  - 口径确认:
+    - 训练 bundle 允许 target 留在 history
+    - `valid/test` bundle 强制只复用 `train` history
+    - 因此训练/测试 propagation history mismatch 是当前代码中的显式事实，不是推测
+  - 结果:
+    - baseline `seed=2024`:
+      - `AUC 0.764051`
+      - `ACC 0.728672`
+      - `RMSE 0.428295`
+      - `Brier 0.183437`
+      - `ECE 0.050665`
+    - pairwise target-exclusion `seed=2024`:
+      - `AUC 0.764082`
+      - `ACC 0.726883`
+      - `RMSE 0.429038`
+      - `Brier 0.184073`
+      - `ECE 0.054048`
+  - 相对 baseline:
+    - `AUC +0.000030`
+    - `ACC -0.001789`
+    - `RMSE +0.000743`
+    - `Brier +0.000637`
+    - `ECE +0.003383`
+  - 切片:
+    - `concept_count=3`: `AUC -0.008054`, `ACC -0.009967`, `RMSE +0.003870`
+    - `concept_count=4+`: `AUC -0.008402`, `ACC -0.005510`, `RMSE +0.004269`
+    - `none_seen`: `AUC -0.002347`, `ACC -0.009047`, `RMSE +0.000828`
+    - `partial_seen` 有局部正信号，但只有 `330` 条样本，不足以改变 overall 判断
+  - 额外观察:
+    - 开启 target exclusion 后，test 上 `guess_plus_slip` 均值从 `0.244109` 升到 `0.320332`
+    - 这说明只削弱 pairwise history 自举信号后，模型明显把更多解释压力转移到了 `guess/slip` 分支
+  - 判断:
+    - “history mismatch 存在”这件事已经坐实，但“只修 pairwise residual”没有带来 clean 正收益
+    - 这次负结果不能直接推出“完整 leave-one-out 一定无效”，因为 propagation 训练口径仍保持 target-visible
+    - 但它已经足够说明：当前不应把 propagation target exclusion 当作默认高优先 follow-up
+  - 结论:
+    - 先把这次审计结论固化为负向证据，不继续沿 pairwise-only target exclusion 扩 seed
+    - 当前更值得单独处理的是 `--batch-size` 名义生效、实际无效的训练工程问题
+    - 若以后一定要把这条线彻底判死，只应再做一次“pairwise + propagation 同时 target-excluded”的单 seed 最终判定实验；在那之前，不默认继续推进这条方向
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。
