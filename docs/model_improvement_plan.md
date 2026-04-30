@@ -68,6 +68,7 @@
   - 实验 54: Q-conditioned local mastery readout 复访后仍弱于实验 51 主线，不继续沿这条“local mastery 主 readout”扩线
   - 实验 55: difficulty-weighted propagation 只带来极小 AUC 正向，但 `ACC/RMSE/Brier/ECE` 副作用明显，不继续沿这条 propagation weighting 扩线
   - 实验 56: student-wise pairwise ranking loss 也没把 overall 指标做成，不继续沿这条 ranking-loss 训练线扩权重或扩 seed
+  - 实验 57: single-graph multi-hop propagation 复访后仍只有轻微排序波动，未形成 clean overall 正向；全局、coverage-conditioned、`UKC-only` 与 `2-hop only` 变体都不继续扩线
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -564,6 +565,23 @@
     - 不继续沿这条 ranking-loss 训练线扩权重或扩 seed
     - 若后续还要 revisit ranking-oriented 目标，应优先建立在某个已经有明确结构正向的底座之上，而不是单独把 ranking loss 当成默认下一步
 
+- 实验 57: single-graph multi-hop propagation revisit
+  - 分支: `exp/multi-hop-propagation`
+  - 做法:
+    - 保留 single-graph 主线，不回到 dual graph
+    - 依次复访全局 `2/3-hop` residual、coverage-conditioned residual、`UKC-only` residual，以及 `2-hop only` 简化版
+    - 所有变体都保持“零初始化时退化回实验 51 主线”这一约束
+  - 结果:
+    - 最好的 overall 只达到 `seed=2024: AUC 0.764542`
+    - 但对应 `ACC 0.725475 / RMSE 0.428501 / Brier 0.183613 / ECE 0.053370`
+    - 更轻的 `2-hop only` 版本也只是 `AUC 0.764388 / ACC 0.728387 / ECE 0.053974`
+  - 判断:
+    - 这条线反复呈现“很小的 AUC 正向，换来 ACC 或校准回撤”的模式
+    - `none_seen` 与 `4+` 多知识点题没有形成足够干净的收益；coverage-conditioned 版本还会把多跳权重学成“高覆盖更强”
+  - 结论:
+    - 不继续沿 propagation 主干做 multi-hop mixing 扩线
+    - 若以后再访，应只在更明确的局部 slice 假设下做 targeted readout / mixture，而不是继续修改 propagation 主干
+
 ### 语义更干净，但不值得主线吸收
 
 - 实验 24: 多知识点题按知识点数分摊
@@ -647,6 +665,12 @@
 - 这条线更像轻度改变排序偏好，但不足以弥补主模型本身的结构限制；即使 validation AUC 略有上行，test overall 仍没赢过实验 51
 - 因此不建议把 ranking loss 当成当前默认训练升级方向；除非后续先有更强的结构正向底座，否则这类目标层 tweak 的优先级仍然偏低
 
+### 实验 57 后的补充判断
+
+- single-graph multi-hop propagation 这条思路在语义上成立，但当前几版实现都没有把它转成 clean overall 增益
+- 问题不在于“完全没学到多跳”，而在于它更像轻度改变排序偏好，同时持续伤到 `ACC/ECE`
+- 因此 propagation 侧后续优先级应继续下调；若再回到这条线，前提应是已有非常明确的局部 slice 假设
+
 ## 默认下一步
 
 如果没有用户明确指定路线，默认按下面优先级思考:
@@ -658,8 +682,9 @@
 5. “local mastery 主 readout” 这条线也已复访过一次；在新的概念交互或聚合假设出现前，不再视为当前高优先级默认路线。
 6. propagation 侧 difficulty weighting 也已试过一版；在更细粒度的 student-conditioned 假设出现前，不再视为当前高优先级默认路线。
 7. 单独的 student-wise ranking loss 也已试过一轮；在更强结构底座出现前，不再视为当前高优先级默认训练路线。
-8. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
-9. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
-10. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
-11. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
-12. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。
+8. single-graph multi-hop propagation 也已做过一轮系统复访；在更明确的 targeted slice 假设出现前，不再视为当前高优先级 propagation 路线。
+9. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
+10. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
+11. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
+12. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
+13. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。

@@ -100,6 +100,7 @@
 - 实验 54 证明 “Q-conditioned local mastery 主 readout” 即使按更贴近 CD 语义的逐概念打分方式重做，单 seed 仍弱于当前主线，且没有留下足够强的多知识点 clean win；这条 readout 复访也暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 54。
 - 实验 55 证明 propagation 侧 difficulty weighting 虽然能带来极小 `AUC` 正向，但整体更像“排序微升换误差与校准恶化”的折中，且没有留下足够强的多知识点 clean win；这条 propagation weighting 复访也暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 55。
 - 实验 56 证明 student-wise pairwise ranking loss 不能单独把当前主线推高；它最多带来轻微排序偏好变化，但 overall `AUC/ACC` 仍不如实验 51。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 56。
+- 实验 57 证明 single-graph multi-hop propagation 复访后仍只形成轻微排序波动，且全局、coverage-conditioned、`UKC-only`、`2-hop only` 版本都没有给出 clean overall 正向；这条 multi-hop propagation 复访暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 57。
 - 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）除实验 51 外，都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；细节统一以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 为准。
 - 实验 38-40 的 CF 支线已确认主要依赖 ID-aware side channel，不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / appendix 讨论。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
@@ -120,6 +121,7 @@
 - `exp/q-conditioned-local-mastery-readout` 已形成暂停判断，不作为当前优先继续线。
 - `exp/difficulty-weighted-propagation` 已形成暂停判断，不作为当前优先继续线。
 - `exp/student-pairwise-ranking-loss` 已形成暂停判断，不作为当前优先继续线。
+- `exp/multi-hop-propagation` 已形成暂停判断，不作为当前优先继续线。
 - `exp/cf-residual*` 当前暂停，不作为纯 CDM 主线推进。
 - `exp/multi-concept-interaction`、`exp/concept-conditioned-prop`、`exp/qrepr-score-residual`、`exp/none-seen-calibration-bias`、`exp/history-concept-stats-adapter` 当前都已形成暂停判断；如需复访，先以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目为准。
 
