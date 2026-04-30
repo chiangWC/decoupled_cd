@@ -67,6 +67,7 @@
   - 实验 53: softer routing regularizer 也没能超过实验 51 原版 full-trigger，不继续沿这条 routing regularization 扩线
   - 实验 54: Q-conditioned local mastery readout 复访后仍弱于实验 51 主线，不继续沿这条“local mastery 主 readout”扩线
   - 实验 55: difficulty-weighted propagation 只带来极小 AUC 正向，但 `ACC/RMSE/Brier/ECE` 副作用明显，不继续沿这条 propagation weighting 扩线
+  - 实验 56: student-wise pairwise ranking loss 也没把 overall 指标做成，不继续沿这条 ranking-loss 训练线扩权重或扩 seed
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -513,6 +514,56 @@
     - 不继续沿这条 difficulty-weighted propagation 扩线
     - 若后续还要 revisit propagation weighting，优先考虑更局部、更学生条件化的证据强度，而不是当前这种按题目全局共享的 difficulty multiplier
 
+- 实验 56: student-wise pairwise ranking loss
+  - 分支: `exp/student-pairwise-ranking-loss`
+  - 提交: `7c90eb9`
+  - 做法:
+    - 不改模型结构，只在 BCE 外叠加同学生内的 pairwise logistic ranking loss
+    - 对每个学生，把 train 交互拆成正样本集合和负样本集合，约束 `score_pos > score_neg`
+    - ranking score 使用最终预测概率的 `logit(prob)`
+    - 只测试 `weight=0.05` 和 `weight=0.02`
+  - 工程验证:
+    - 训练集约 `19.4` 万交互，总 student-wise 正负配对约 `922` 万
+    - 单测通过，1 epoch smoke 通过，训练耗时与当前 full-batch 主线同量级，没有出现不可接受的额外成本
+  - 结果:
+    - `weight=0.05`, `seed=2024`:
+      - `AUC 0.763793`
+      - `ACC 0.726370`
+      - `RMSE 0.428940`
+      - `Brier 0.183989`
+      - `ECE 0.053809`
+    - `weight=0.02`, `seed=2024`:
+      - `AUC 0.763271`
+      - `ACC 0.728120`
+      - `RMSE 0.428567`
+      - `Brier 0.183670`
+      - `ECE 0.051483`
+  - 相对实验 51 `seed=2024`:
+    - `weight=0.05`:
+      - `AUC -0.000258`
+      - `ACC -0.002302`
+      - `RMSE +0.000645`
+      - `Brier +0.000552`
+      - `ECE +0.003144`
+    - `weight=0.02`:
+      - `AUC -0.000780`
+      - `ACC -0.000552`
+      - `RMSE +0.000272`
+      - `Brier +0.000233`
+      - `ECE +0.000818`
+  - 切片:
+    - `weight=0.02`, `concept_count=2`: `AUC 0.750245`, `ACC 0.718592`, `ECE 0.065355`
+    - `weight=0.02`, `concept_count=3`: `AUC 0.704542`, `ACC 0.687708`, `ECE 0.083009`
+    - `weight=0.02`, `concept_count=4+`: `AUC 0.741598`, `ACC 0.680441`, `ECE 0.081981`
+    - `weight=0.02`, `none_seen`: `AUC 0.809586`, `ACC 0.803378`, `ECE 0.106477`
+  - 判断:
+    - 这条线确实会把验证 AUC 往上推一点，但在 test 上没有超过实验 51 主线；`0.05` 和 `0.02` 都没形成 overall 正向
+    - `0.05` 的副作用更明显，`0.02` 更温和，但仍然是 “`ACC/RMSE/Brier/ECE` 小幅变差，AUC 也没赢主线” 的折中
+    - 切片上也没有出现足够强的多知识点 clean win，说明 ranking loss 没有把结构剩余瓶颈直接转成更强结果
+  - 结论:
+    - 不继续沿这条 ranking-loss 训练线扩权重或扩 seed
+    - 若后续还要 revisit ranking-oriented 目标，应优先建立在某个已经有明确结构正向的底座之上，而不是单独把 ranking loss 当成默认下一步
+
 ### 语义更干净，但不值得主线吸收
 
 - 实验 24: 多知识点题按知识点数分摊
@@ -590,6 +641,12 @@
 - 但当前这版按题目共享的 global difficulty multiplier 太粗，容易把正误历史证据整体推偏，结果是排序收益远小于误差与校准代价
 - 因此如果以后再回到 propagation 侧，优先级不应是继续扫同类全局 weighting，而应转向更局部、更学生条件化的证据重权方式
 
+### 实验 56 后的补充判断
+
+- “直接叠 ranking loss”在当前主线下没有形成预期中的 AUC clean win，说明现阶段的主要瓶颈不是“BCE 过于 calibration-oriented”这么简单
+- 这条线更像轻度改变排序偏好，但不足以弥补主模型本身的结构限制；即使 validation AUC 略有上行，test overall 仍没赢过实验 51
+- 因此不建议把 ranking loss 当成当前默认训练升级方向；除非后续先有更强的结构正向底座，否则这类目标层 tweak 的优先级仍然偏低
+
 ## 默认下一步
 
 如果没有用户明确指定路线，默认按下面优先级思考:
@@ -600,8 +657,9 @@
 4. 若再访实验 51 这条线，默认需要先有更明确的 slice 假设或更局部的引导目标，不再把全局 gate regularizer 视为高优先级默认下一步。
 5. “local mastery 主 readout” 这条线也已复访过一次；在新的概念交互或聚合假设出现前，不再视为当前高优先级默认路线。
 6. propagation 侧 difficulty weighting 也已试过一版；在更细粒度的 student-conditioned 假设出现前，不再视为当前高优先级默认路线。
-7. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
-8. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
-9. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
-10. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
-11. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。
+7. 单独的 student-wise ranking loss 也已试过一轮；在更强结构底座出现前，不再视为当前高优先级默认训练路线。
+8. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
+9. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
+10. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
+11. 默认先把单因素证据立住；只有当单因素已出现明确的 overall 正向信号，或两个因素彼此正交、分别给出可解释的互补证据时，才少量做双因素组合验证。
+12. 若目标是继续累积到 `1e-2` 量级改善，可以少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但仍要严格限制组合数。
