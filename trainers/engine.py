@@ -20,6 +20,12 @@ class TrainResult:
     best_checkpoint_path: str | None
 
 
+@dataclass
+class EpochTrainStats:
+    mean_loss: float
+    optimizer_steps: int
+
+
 def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, torch.Tensor | None]:
     return {
         "q_matrix": bundle.q_matrix_tensor.to(device),
@@ -98,7 +104,9 @@ def train_model(
     model: DecoupledCDM,
     valid_bundle: StepDataBundle | None = None,
     epochs: int = 5,
+    batch_size: int | None = None,
     learning_rate: float = 1e-3,
+    training_mode: str = "full_batch",
     device: str = "cpu",
     early_stop_patience: int = 5,
     lr_scheduler_patience: int = 10,
@@ -106,6 +114,15 @@ def train_model(
     min_learning_rate: float = 1e-5,
     checkpoint_path: str | None = None,
 ) -> TrainResult:
+    if training_mode not in {"full_batch", "recompute_minibatch"}:
+        raise ValueError(f"Unsupported training_mode: {training_mode}")
+    if batch_size is not None and batch_size <= 0:
+        raise ValueError("batch_size must be positive when provided.")
+    if training_mode == "full_batch" and batch_size is not None:
+        raise ValueError("full_batch training does not consume --batch-size; use --training-mode recompute_minibatch.")
+    if training_mode == "recompute_minibatch" and batch_size is None:
+        raise ValueError("recompute_minibatch training requires --batch-size.")
+
     torch_device = torch.device(device)
     model = model.to(torch_device)
     train_tensors = _bundle_tensors(train_bundle, torch_device)
@@ -125,30 +142,22 @@ def train_model(
     patience_counter = 0
 
     for epoch in range(1, epochs + 1):
-        model.train()
-        optimizer.zero_grad()
-
-        output = model(
-            q_matrix=train_tensors["q_matrix"],
-            concept_graph=train_tensors["concept_graph"],
-            prerequisite_graph=train_tensors["prerequisite_graph"],
-            similarity_graph=train_tensors["similarity_graph"],
-            student_exercise_mask=train_tensors["student_exercise_mask"],
-            response_matrix=train_tensors["response_matrix"],
-            student_tkc_mask=train_tensors["student_tkc_mask"],
-            student_ukc_mask=train_tensors["student_ukc_mask"],
-            target_student_ids=train_tensors["interaction_student_ids"],
-            target_exercise_ids=train_tensors["interaction_exercise_ids"],
-        )
-        loss = F.binary_cross_entropy(output.probs, train_tensors["interaction_labels"])
-        loss.backward()
-        optimizer.step()
-
-        mean_loss = float(loss.item())
+        if training_mode == "full_batch":
+            train_stats = _train_full_batch_epoch(model=model, tensors=train_tensors, optimizer=optimizer)
+        else:
+            train_stats = _train_recompute_minibatch_epoch(
+                model=model,
+                tensors=train_tensors,
+                optimizer=optimizer,
+                batch_size=int(batch_size),
+                device=torch_device,
+            )
         row = {
             "epoch": float(epoch),
-            "train_loss": float(mean_loss),
+            "train_loss": float(train_stats.mean_loss),
             "learning_rate": float(optimizer.param_groups[0]["lr"]),
+            "training_mode": training_mode,
+            "optimizer_steps": float(train_stats.optimizer_steps),
         }
 
         if valid_bundle is not None:
@@ -191,3 +200,69 @@ def train_model(
         best_epoch=best_epoch,
         best_checkpoint_path=checkpoint_path if best_state is not None else None,
     )
+
+
+def _train_full_batch_epoch(
+    *,
+    model: DecoupledCDM,
+    tensors: dict[str, torch.Tensor | None],
+    optimizer: torch.optim.Optimizer,
+) -> EpochTrainStats:
+    model.train()
+    optimizer.zero_grad()
+
+    output = model(
+        q_matrix=tensors["q_matrix"],
+        concept_graph=tensors["concept_graph"],
+        prerequisite_graph=tensors["prerequisite_graph"],
+        similarity_graph=tensors["similarity_graph"],
+        student_exercise_mask=tensors["student_exercise_mask"],
+        response_matrix=tensors["response_matrix"],
+        student_tkc_mask=tensors["student_tkc_mask"],
+        student_ukc_mask=tensors["student_ukc_mask"],
+        target_student_ids=tensors["interaction_student_ids"],
+        target_exercise_ids=tensors["interaction_exercise_ids"],
+    )
+    loss = F.binary_cross_entropy(output.probs, tensors["interaction_labels"])
+    loss.backward()
+    optimizer.step()
+    return EpochTrainStats(mean_loss=float(loss.item()), optimizer_steps=1)
+
+
+def _train_recompute_minibatch_epoch(
+    *,
+    model: DecoupledCDM,
+    tensors: dict[str, torch.Tensor | None],
+    optimizer: torch.optim.Optimizer,
+    batch_size: int,
+    device: torch.device,
+) -> EpochTrainStats:
+    model.train()
+    num_targets = int(tensors["interaction_labels"].size(0))
+    permutation = torch.randperm(num_targets, device=device)
+    total_loss = 0.0
+    optimizer_steps = 0
+
+    for start in range(0, num_targets, batch_size):
+        batch_indices = permutation[start : start + batch_size]
+        batch_labels = tensors["interaction_labels"][batch_indices]
+        optimizer.zero_grad()
+        output = model(
+            q_matrix=tensors["q_matrix"],
+            concept_graph=tensors["concept_graph"],
+            prerequisite_graph=tensors["prerequisite_graph"],
+            similarity_graph=tensors["similarity_graph"],
+            student_exercise_mask=tensors["student_exercise_mask"],
+            response_matrix=tensors["response_matrix"],
+            student_tkc_mask=tensors["student_tkc_mask"],
+            student_ukc_mask=tensors["student_ukc_mask"],
+            target_student_ids=tensors["interaction_student_ids"][batch_indices],
+            target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
+        )
+        loss = F.binary_cross_entropy(output.probs, batch_labels)
+        loss.backward()
+        optimizer.step()
+        total_loss += float(loss.item()) * float(batch_labels.numel())
+        optimizer_steps += 1
+
+    return EpochTrainStats(mean_loss=total_loss / float(num_targets), optimizer_steps=optimizer_steps)

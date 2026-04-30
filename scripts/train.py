@@ -51,8 +51,19 @@ def parse_args() -> argparse.Namespace:
         help="Use 'single' for the current mainline. 'dual' is kept only for historical ablations.",
     )
     parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--batch-size", type=int, default=512)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Mini-batch size used only when --training-mode recompute_minibatch.",
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument(
+        "--training-mode",
+        choices=["full_batch", "recompute_minibatch"],
+        default="full_batch",
+        help="Training loop semantics. full_batch preserves the current mainline; recompute_minibatch makes --batch-size effective.",
+    )
     parser.add_argument("--concept-dim", type=int, default=32)
     parser.add_argument(
         "--student-gate-prior-alpha",
@@ -296,7 +307,9 @@ def main() -> None:
         valid_bundle=valid_bundle,
         model=model,
         epochs=args.epochs,
+        batch_size=args.batch_size,
         learning_rate=args.learning_rate,
+        training_mode=args.training_mode,
         device=resolved_device,
         early_stop_patience=args.early_stop_patience,
         lr_scheduler_patience=args.lr_scheduler_patience,
@@ -323,6 +336,7 @@ def main() -> None:
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
+        "training_mode": args.training_mode,
         "gs_mode": args.gs_mode,
         "graph_mode": args.graph_mode,
         "student_gate_prior_alpha": args.student_gate_prior_alpha,
@@ -357,7 +371,9 @@ def main() -> None:
         "valid_interactions": args.valid_interactions,
         "test_interactions": args.test_interactions or args.interactions,
         "epochs": args.epochs,
+        "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
+        "training_mode": args.training_mode,
         "lr_scheduler_patience": args.lr_scheduler_patience,
         "lr_scheduler_factor": args.lr_scheduler_factor,
         "min_learning_rate": args.min_learning_rate,
