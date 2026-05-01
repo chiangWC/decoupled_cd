@@ -676,33 +676,49 @@
   - 工程备注:
     - 直接在 full split 上做单次前向会 OOM，因此最终实现改成“full-batch 语义 + chunked gradient accumulation”: 仍然每个 epoch 只做 `1` 次 optimizer step，但 target-conditioned 前向按子批次累积梯度
     - 完整数据 `1 epoch` smoke 已在远端跑通；`300 epoch` 正式单 seed 也已跑通
-  - 结果: `seed=2024`
-    - `best_epoch = 192`
-    - `AUC 0.765170`
-    - `ACC 0.728539`
-    - `RMSE 0.428619`
-    - `Brier 0.183714`
-    - `ECE 0.053582`
-  - 相对实验 60 baseline:
-    - `AUC +0.001119`
-    - `ACC -0.000133`
-    - `RMSE +0.000324`
-    - `Brier +0.000277`
-    - `ECE +0.002917`
-  - 相对实验 60 pairwise-only target exclusion:
-    - `AUC +0.001088`
-    - `ACC +0.001656`
-    - `RMSE -0.000419`
-    - `Brier -0.000359`
-    - `ECE -0.000466`
+  - 三 seed 结果:
+    - `seed=2024`, `best_epoch=192`:
+      - `AUC 0.765170`
+      - `ACC 0.728539`
+      - `RMSE 0.428619`
+      - `Brier 0.183714`
+      - `ECE 0.053582`
+    - `seed=2025`, `best_epoch=197`:
+      - `AUC 0.766096`
+      - `ACC 0.726674`
+      - `RMSE 0.428169`
+      - `Brier 0.183329`
+      - `ECE 0.053421`
+    - `seed=2026`, `best_epoch=182`:
+      - `AUC 0.764803`
+      - `ACC 0.730157`
+      - `RMSE 0.427572`
+      - `Brier 0.182818`
+      - `ECE 0.048511`
+  - 三 seed 均值:
+    - `AUC 0.765356`
+    - `ACC 0.728457`
+    - `RMSE 0.428120`
+    - `Brier 0.183287`
+    - `ECE 0.051838`
+  - 相对实验 51 当前主线三 seed 均值:
+    - `AUC +0.001467`
+    - `ACC -0.000494`
+    - `RMSE +0.000168`
+    - `Brier +0.000144`
+    - `ECE +0.002439`
+  - 相对实验 51 同 seed:
+    - `seed=2024`: `AUC +0.001119`, `ACC -0.000133`, `RMSE +0.000324`, `Brier +0.000277`, `ECE +0.002917`
+    - `seed=2025`: `AUC +0.001385`, `ACC -0.001713`, `RMSE +0.000074`, `Brier +0.000064`, `ECE +0.001592`
+    - `seed=2026`: `AUC +0.001899`, `ACC +0.000362`, `RMSE +0.000106`, `Brier +0.000091`, `ECE +0.002808`
   - 判断:
-    - 和实验 60 不同，完整 target exclusion 这次确实把 `AUC` 推到了 `+1e-3` 量级以上，说明“训练/测试 propagation history mismatch”不是纯方法学噪声，修正后会真实改变排序行为
-    - 但这仍不是 clean overall win: `ACC` 基本持平略降，`RMSE/Brier/ECE` 都变差，当前更像“排序提升换误差与校准回退”的折中
-    - 因此它还不足以直接改写主线默认训练口径，但也不该再被简单归类成“和 pairwise-only exclusion 一样无效”
+    - 完整 target exclusion 的 `AUC` 正向在三 seed 上稳定复现，说明“训练/测试 propagation history mismatch”不是纯方法学噪声，修正后会持续改变排序行为
+    - 但三 seed 下依然没有形成 clean overall win: `ACC` 均值小幅回落，`RMSE/Brier/ECE` 均值也都变差
+    - 因此它现在更像稳定的 ranking-oriented 训练口径，而不是可直接替换当前主线的默认训练定义
   - 结论:
-    - 先把“full target exclusion 有真实 AUC 正向，但不是 clean overall gain”固化为当前判断
+    - 先把“full target exclusion 带来稳定 `AUC` 正向，但会牺牲误差与校准”固化为当前判断
     - 暂不直接吸收到 `master`
-    - 若后续目标明确偏向 `AUC`，这条线值得作为有根据的 follow-up 候选；下一步应优先补 `2-3` 个 seed 看它是否稳定，而不是继续只做新的单 seed 变体
+    - 若后续目标明确偏向 `AUC`，这条线可以作为正式候选保留；若主线仍坚持 `AUC/ACC` 与校准并重，则当前不继续沿这条训练口径扩线
 
 ## 旧口径的历史参考
 
