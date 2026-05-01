@@ -9,6 +9,7 @@
 - 默认 `origin` 指向远端运行机上的项目仓库。
 - 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
 - `master` 只保留当前认可状态；探索性实验默认在 `exp/*` 分支进行。
+- 任何会引入代码改动的验证、测试、排查或辅助性修改，默认也先在非 `master` 分支完成；即使改动只是为了远端执行测试，也不要先直接提交到 `master`。
 - 远端执行默认跟随当前本地分支；本地改动先 `git commit`，再 `git push origin <current-branch>`。
 
 ## 最常用命令

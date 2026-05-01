@@ -22,6 +22,7 @@
 - 本地不要直接跑项目代码；如需验证，先把本地提交推到远端，再通过 SSH 执行命令。
 - 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
 - `master` 只保留当前认可状态；探索性实验默认在 `exp/*` 分支进行。
+- 任何会引入代码改动的验证、测试、排查或辅助性修改，默认也先在非 `master` 分支完成；即使改动只是为了让远端能够执行测试，也不要先直接提交到 `master`。
 - 远端执行任何项目命令前，先激活 `decoupled_cd` 环境。
 - 远端目录保留 `git` 工作树，仅用于接收已推送代码并直接运行。
 - 远端执行跟随当前本地分支；未推送的本地改动不会被远端看到。
@@ -64,6 +65,7 @@ bash scripts/remote_exec.sh python scripts/train.py
 
 - `master` 只保留当前认可状态，不把探索性实验直接堆到主线。
 - 新实验默认从最新 `master` 切出 `exp/<short-name>` 分支。
+- 若一次验证需要先改代码再上远端运行，这类验证分支也按非 `master` 分支处理；确认需要保留后再整理合回 `master`。
 - 实验效果不好时，保留或删除对应 `exp/*` 分支即可，不需要用回退提交污染 `master`。
 - 实验效果成立后，再整理提交并合回 `master`。
 - `git push origin "$(git branch --show-current)"` 会把当前本地分支推到远端同名分支。
