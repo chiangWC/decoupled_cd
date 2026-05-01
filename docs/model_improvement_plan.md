@@ -658,6 +658,52 @@
     - 当前更值得单独处理的是 `--batch-size` 名义生效、实际无效的训练工程问题
     - 若以后一定要把这条线彻底判死，只应再做一次“pairwise + propagation 同时 target-excluded”的单 seed 最终判定实验；在那之前，不默认继续推进这条方向
 
+- 实验 61: full target-excluded training audit
+  - 分支: `exp/full-target-exclusion-audit`
+  - 提交:
+    - `4fa628d`: 加入 propagation + pairwise 同时 target-excluded 的训练路径与单测
+    - `bb32578`: 去掉 exclusion 训练时多余的全局 propagation 前向，修复首轮 OOM
+    - `ca14a6d`: 收紧 target-conditioned propagation 内部 chunk
+    - `cf8c47f`: 把 full-batch exclusion 改成单 optimizer step 的梯度累积，实现完整数据可运行
+  - 动机:
+    - 对实验 60 留下的未决问题做最终复验
+    - 验证“训练时同时去掉 propagation history 与 pairwise history 的 target self-inclusion”后，是否能得到比 pairwise-only exclusion 更干净的收益
+  - 做法:
+    - 保持当前实验 51 主线结构与超参数不变
+    - 只在 train loss 路径上开启 `--exclude-target-from-train-history`
+    - 对每个 train target，预测时把该条 `(stu_id, exer_id, label)` 自身从 target-conditioned propagation history 与 pairwise history 统计中扣除
+    - `valid/test` 仍固定复用 `train` history，不改 evaluation 口径
+  - 工程备注:
+    - 直接在 full split 上做单次前向会 OOM，因此最终实现改成“full-batch 语义 + chunked gradient accumulation”: 仍然每个 epoch 只做 `1` 次 optimizer step，但 target-conditioned 前向按子批次累积梯度
+    - 完整数据 `1 epoch` smoke 已在远端跑通；`300 epoch` 正式单 seed 也已跑通
+  - 结果: `seed=2024`
+    - `best_epoch = 192`
+    - `AUC 0.765170`
+    - `ACC 0.728539`
+    - `RMSE 0.428619`
+    - `Brier 0.183714`
+    - `ECE 0.053582`
+  - 相对实验 60 baseline:
+    - `AUC +0.001119`
+    - `ACC -0.000133`
+    - `RMSE +0.000324`
+    - `Brier +0.000277`
+    - `ECE +0.002917`
+  - 相对实验 60 pairwise-only target exclusion:
+    - `AUC +0.001088`
+    - `ACC +0.001656`
+    - `RMSE -0.000419`
+    - `Brier -0.000359`
+    - `ECE -0.000466`
+  - 判断:
+    - 和实验 60 不同，完整 target exclusion 这次确实把 `AUC` 推到了 `+1e-3` 量级以上，说明“训练/测试 propagation history mismatch”不是纯方法学噪声，修正后会真实改变排序行为
+    - 但这仍不是 clean overall win: `ACC` 基本持平略降，`RMSE/Brier/ECE` 都变差，当前更像“排序提升换误差与校准回退”的折中
+    - 因此它还不足以直接改写主线默认训练口径，但也不该再被简单归类成“和 pairwise-only exclusion 一样无效”
+  - 结论:
+    - 先把“full target exclusion 有真实 AUC 正向，但不是 clean overall gain”固化为当前判断
+    - 暂不直接吸收到 `master`
+    - 若后续目标明确偏向 `AUC`，这条线值得作为有根据的 follow-up 候选；下一步应优先补 `2-3` 个 seed 看它是否稳定，而不是继续只做新的单 seed 变体
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。
