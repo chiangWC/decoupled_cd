@@ -1,5 +1,8 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pandas as pd
 import torch
@@ -19,10 +22,11 @@ class _BiasOnlyModel(nn.Module):
         return SimpleNamespace(probs=probs)
 
 
-def _build_toy_bundle(num_interactions: int = 5) -> StepDataBundle:
+def _build_toy_bundle(num_interactions: int = 5, labels: list[float] | None = None) -> StepDataBundle:
+    resolved_labels = labels or [float(index % 2) for index in range(num_interactions)]
     interactions = pd.DataFrame(
         [
-            {"stu_id": 1, "exer_id": 11 + index, "label": float(index % 2), "cpt_seq": "A"}
+            {"stu_id": 1, "exer_id": 11 + index, "label": resolved_labels[index], "cpt_seq": "A"}
             for index in range(num_interactions)
         ]
     )
@@ -81,6 +85,46 @@ class RecomputeMinibatchTrainingTest(unittest.TestCase):
         self.assertEqual(len(result.history), 1)
         self.assertEqual(result.history[0]["training_mode"], "recompute_minibatch")
         self.assertEqual(result.history[0]["optimizer_steps"], 3.0)
+
+    def test_train_model_restores_best_validation_state(self) -> None:
+        train_bundle = _build_toy_bundle(num_interactions=4, labels=[1.0, 1.0, 1.0, 1.0])
+        valid_bundle = _build_toy_bundle(num_interactions=4)
+        model = _BiasOnlyModel()
+        observed_logits: list[float] = []
+        val_aucs = iter([0.8, 0.7])
+
+        def _fake_evaluate_model(*, bundle: StepDataBundle, model: _BiasOnlyModel, device: str):
+            del bundle, device
+            observed_logits.append(float(model.logit.detach().cpu().item()))
+            return {
+                "loss": 0.0,
+                "auc": next(val_aucs),
+                "acc": 0.0,
+                "rmse": 0.0,
+                "brier": 0.0,
+                "ece": 0.0,
+            }
+
+        with TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "best.pt"
+            with patch("trainers.engine.evaluate_model", side_effect=_fake_evaluate_model):
+                result = train_model(
+                    train_bundle=train_bundle,
+                    valid_bundle=valid_bundle,
+                    model=model,
+                    epochs=2,
+                    learning_rate=1.0,
+                    checkpoint_path=str(checkpoint_path),
+                )
+
+            self.assertEqual(result.best_epoch, 1)
+            self.assertEqual(result.best_checkpoint_path, str(checkpoint_path))
+            self.assertEqual(len(observed_logits), 2)
+            self.assertGreater(observed_logits[1], observed_logits[0])
+            self.assertAlmostEqual(float(model.logit.detach().cpu().item()), observed_logits[0], places=6)
+
+            checkpoint_state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+            self.assertAlmostEqual(float(checkpoint_state["logit"].item()), observed_logits[0], places=6)
 
 
 if __name__ == "__main__":
