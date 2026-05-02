@@ -49,7 +49,13 @@
   - 收益主要来自真正 mini-batch SGD 的整体校准/泛化改善，不是彻底解决 `concept_count=4+` 或 `none_seen` 校准问题。
   - 它属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不适合作为 `master` 默认训练协议。
   - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 37 为准。
-  - 后续若继续优化训练策略，默认从 `exp/training-modes` 出发。
+- 分支: `exp/full-target-exclusion-opt`
+- 判断:
+  - 这是当前 target-exclusion 训练口径的正式候选；`2026-05-02` 三 seed 复跑均值为 `AUC 0.765495`、`ACC 0.729256`、`RMSE 0.427883`、`Brier 0.183084`、`ECE 0.051331`。
+  - 相对当前正式主线，收益更偏 ranking-oriented: `AUC` 稳定更高，`ACC/RMSE/Brier` 基本持平到 very small 正向，但 `ECE` 仍更差。
+  - 原始实验 61 最大的问题是训练成本过高；工程优化后，远端 train-only `1 epoch` median runtime 已从约 `8.845s` 降到约 `2.002s`，不再因为成本直接降级。
+  - 当前将它暂定为主线候选，但仍不作为 `master` 默认训练协议。
+  - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 61 为准。
 
 当前结构主线补充:
 
@@ -91,6 +97,7 @@
 - 诊断 1 表明主线的主要剩余误差集中在多知识点题和 `none_seen` 校准。
 - 实验 34 证明“多知识点题 targeted residual + guess/slip difficulty residual”可以在三 seed 上同时改善 `AUC/ACC/RMSE/Brier/ECE`，这一步已经吸收到当前 `master`。
 - 实验 37 证明 `recompute_minibatch bs=8192 lr=1e-4` 是当前最强的 calibration-oriented 训练协议候选；但它属于纯训练工程优化，运行成本更高，且在 `AUC/ACC` 上仍弱于当前主线，因此暂不推广为 `master` 默认训练口径。
+- 实验 61 在 `2026-05-02` 的工程优化复跑后，已经从“训练成本过高的审计分支”升级为正式候选：`AUC` 稳定高于当前主线，`ACC/RMSE/Brier` 基本持平到 very small 正向，但 `ECE` 仍更差，因此当前只暂定为主线候选，不直接切成默认训练口径。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 61。
 - 实验 48 证明“显式历史概念统计”对多知识点题确有局部信号，但 original form 的三 seed overall 不稳定；这条路如再访，应改成更局部的 targeted trigger / mixture，而不是继续推进统一 residual。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 48。
 - 实验 49 证明 history-carrier pairwise interaction residual 能把“显式历史概念统计”稳定转成 overall 正收益，并且 `none_seen` 也形成 clean win；这是实验 51 之前的结构主线更新，已经吸收到 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 49。
 - 实验 50 证明 learned pair aggregation 没有额外收益，主线保留简单均值聚合。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 50。
@@ -114,7 +121,8 @@
 
 - `exp/*` 分支只作为实验代码和复验参考，不直接代表当前主线。
 - 具体分支以 `git branch -a` 为准；每条路线的定位和结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的详细条目与 D 部分快速索引为准。
-- 若继续优化训练协议，优先从 `exp/training-modes` 出发；它是当前唯一仍值得继续的训练策略支线。
+- 若继续优化 calibration-oriented 训练协议，优先从 `exp/training-modes` 出发。
+- 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续做结构主线，默认直接从最新 `master` 切新 `exp/*` 分支；实验 51 代码已吸收到主线，不需要回到 `exp/interpretable-readout-experts` 继续堆改动。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先回看 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目，确认是否真的出现了新的 slice 假设或机制假设，再决定是否重开。
 

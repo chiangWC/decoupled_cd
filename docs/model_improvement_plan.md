@@ -52,6 +52,11 @@
     - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前主线，不作为默认 `master` 训练口径
     - 补充: 这条线属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不优先合入主线
     - 详细指标见下文“实验 37”
+  - 实验 61
+    - branch: `exp/full-target-exclusion-opt`
+    - 判断: 它是当前更强的 ranking-oriented target-exclusion 训练候选，工程优化后运行成本已从“明显过高”降到“可接受”，暂定为主线候选，但仍不作为默认 `master` 训练口径
+    - 补充: `2026-05-02` 复跑三 seed 后，`AUC` 稳定高于当前主线，`ACC/RMSE/Brier/ECE` 只形成 very small mixed deltas，因此更适合作为正式候选保留，而不是直接替换当前默认训练定义
+    - 详细指标见下文“实验 61”
 
 - 暂停中的 CF 支线:
   - 实验 38 `exp/cf-residual`: ranking-oriented 候选，但依赖学生内随机 split 的 ID-aware side channel，不作为纯 CDM 主线
@@ -719,6 +724,63 @@
     - 先把“full target exclusion 带来稳定 `AUC` 正向，但会牺牲误差与校准”固化为当前判断
     - 暂不直接吸收到 `master`
     - 若后续目标明确偏向 `AUC`，这条线可以作为正式候选保留；若主线仍坚持 `AUC/ACC` 与校准并重，则当前不继续沿这条训练口径扩线
+  - `2026-05-02` 工程优化复跑:
+    - 优化分支: `exp/full-target-exclusion-opt`
+    - 关键提交:
+      - `92cae0f`: 让 target-excluded history stats cache 成为可复用路径
+      - `dc7cbee`: 把 target-excluded propagation 改成 baseline + 局部 delta 更新
+      - `501612d`: full-batch exclusion 按 epoch 复用 propagation reference
+      - `041f902`: target-exclusion inner chunk 跟外层训练批次对齐
+    - 工程结果:
+      - 在远端 `xph-pc`、完整 `assist_09_ordered/train.csv`、`epochs=1`、只测 train 不测 eval 的 benchmark 下，原始审计分支 `fe0c114` 的 median runtime 约 `8.845s`
+      - 同口径下，优化分支 `041f902` 的 median runtime 约 `2.002s`
+      - 端到端训练耗时约 `4.4x` 加速，降幅约 `77%`
+      - benchmark 中 `train_loss` 保持一致，说明这轮工程优化没有改变训练语义
+    - 正式三 seed 复跑结果:
+      - `seed=2024`, `best_epoch=184`:
+        - `AUC 0.765258`
+        - `ACC 0.729643`
+        - `RMSE 0.427945`
+        - `Brier 0.183137`
+        - `ECE 0.050238`
+      - `seed=2025`, `best_epoch=206`:
+        - `AUC 0.766181`
+        - `ACC 0.726903`
+        - `RMSE 0.428576`
+        - `Brier 0.183677`
+        - `ECE 0.056064`
+      - `seed=2026`, `best_epoch=178`:
+        - `AUC 0.765046`
+        - `ACC 0.731222`
+        - `RMSE 0.427128`
+        - `Brier 0.182439`
+        - `ECE 0.047690`
+    - 三 seed 均值:
+      - `AUC 0.765495`
+      - `ACC 0.729256`
+      - `RMSE 0.427883`
+      - `Brier 0.183084`
+      - `ECE 0.051331`
+    - 相对实验 51 当前主线三 seed 均值:
+      - `AUC +0.001606`
+      - `ACC +0.000305`
+      - `RMSE -0.000069`
+      - `Brier -0.000059`
+      - `ECE +0.001932`
+    - 相对实验 61 原始审计版三 seed 均值:
+      - `AUC +0.000139`
+      - `ACC +0.000799`
+      - `RMSE -0.000237`
+      - `Brier -0.000203`
+      - `ECE -0.000507`
+    - 更新判断:
+      - exp61 的主要工程障碍已经解除，不再因为训练成本过高而降级
+      - 优化后复跑结果没有变坏，`AUC` 正向依旧稳定，且 `ACC/RMSE/Brier` 已从原始审计版的轻微负向回到基本持平或 very small 正向
+      - 但它仍不是 clean overall win: 相对当前主线最明确的收益仍是 `AUC`，`ECE` 仍有代价
+    - 更新结论:
+      - 将 `exp/full-target-exclusion-opt` 暂定为主线候选保留
+      - 当前不直接把它吸收到 `master` 默认训练口径
+      - 若后续要做正式主线切换比较，这条线应作为与实验 37 并列的训练候选，而不是继续视作仅供归档的 ranking-only 审计分支
 
 ## 旧口径的历史参考
 
