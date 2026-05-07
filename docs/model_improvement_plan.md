@@ -782,6 +782,105 @@
       - 当前不直接把它吸收到 `master` 默认训练口径
       - 若后续要做正式主线切换比较，这条线应作为与实验 37 并列的训练候选，而不是继续视作仅供归档的 ranking-only 审计分支
 
+- 实验 62: constrained `guess/slip` probability budget
+  - 分支: `exp/guess-slip-diagnostics`
+  - 提交:
+    - `e8b04fe`: 增加 `guess/slip` 分布诊断脚本
+    - `f0f43fd`: 将 `guess/slip` 改为共享概率预算的耦合参数化，并补单测
+  - 动机:
+    - 当前输出层使用 `p = (1 - slip) * cognitive + guess * (1 - cognitive)`
+    - 若 `guess + slip > 1`，则 `dp / dcognitive = 1 - guess - slip < 0`，会出现“认知越高，最终答对概率反而越低”的语义反转
+  - 诊断:
+    - 旧实现里 `guess_probs` 与 `slip_probs` 是彼此独立的 `sigmoid`，没有任何 `guess + slip <= 1` 约束
+    - 对实验 51 同口径的已有 checkpoint 做只读审计后发现，这个问题已经真实发生，而不是纯理论风险
+    - `exp_interpretable_readout_experts_seed2025` test split:
+      - `guess_plus_slip_mean = 1.945274`
+      - `guess_plus_slip_max = 1.999997`
+      - `guess_plus_slip_p95 = 1.999303`
+      - `ratio(guess_plus_slip > 1) = 0.999638`
+    - `exp_interpretable_readout_experts_seed2026` test split:
+      - `guess_plus_slip_mean = 1.872332`
+      - `guess_plus_slip_max = 1.999906`
+      - `guess_plus_slip_p95 = 1.992325`
+      - `ratio(guess_plus_slip > 1) = 0.999486`
+  - 做法:
+    - 保持 `guess_logit / slip_logit` 两条分支和所有上游输入不变
+    - 只把最终 `guess/slip` 概率映射改成三元 softmax:
+      - `guess = softmax([guess_logit, slip_logit, 0])[0]`
+      - `slip = softmax([guess_logit, slip_logit, 0])[1]`
+    - 这样可显式保证 `guess >= 0`、`slip >= 0` 且 `guess + slip <= 1`
+  - 验证:
+    - 远端单测 `python -m unittest tests.test_decoupled_cdm` 通过
+    - 旧 checkpoint 在新前向下重新审计后，`ratio(guess_plus_slip > 1)` 已回到 `0`
+    - `exp_guess_slip_constraint_seed2024` 训练后 test split:
+      - `guess_plus_slip_mean = 0.101998`
+      - `guess_plus_slip_max = 0.998407`
+      - `guess_plus_slip_p95 = 0.554550`
+      - `ratio(guess_plus_slip > 1) = 0.0`
+  - 单 seed 结果:
+    - `seed=2024`, `best_epoch=181`:
+      - `AUC 0.764666`
+      - `ACC 0.726712`
+      - `RMSE 0.428926`
+      - `Brier 0.183978`
+      - `ECE 0.054151`
+  - 相对实验 51 同 seed baseline:
+    - `AUC +0.000615`
+    - `ACC -0.001960`
+    - `RMSE +0.000631`
+    - `Brier +0.000541`
+    - `ECE +0.003486`
+  - 判断:
+    - 这次修复确实清除了输出层的语义违例，且不是只在极少数样本上起作用
+    - 但在当前形式下，它更像“修正 non-cognitive 分支后改变了排序偏好”，没有形成 clean overall win
+    - 修复后模型把 `guess/slip` 总量显著压低到更保守区间，说明旧主线里一部分性能确实依赖了无约束 `guess/slip` 提供的额外自由度
+  - 结论:
+    - 先保留这条线的机制结论和诊断工具，不直接吸收到 `master`
+    - 若后续继续推进这类语义修复，更合理的下一步不是直接扩 seed，而是考虑给 constrained `guess/slip` 增加更有表达力的参数化或配套训练补偿，再看能否保住 `ACC/Brier/ECE`
+
+- 实验 63: constrained `guess/slip` on top of exp61
+  - 分支: `exp/exp61-guess-slip-constraint`
+  - 提交:
+    - `c9e7a98`: 在 `exp61` 基座上把 `guess/slip` 改为共享概率预算的耦合参数化，并补单测
+  - 动机:
+    - 验证“约束 `guess + slip <= 1`”是否能和 experiment 61 的 full target-exclusion 训练口径形成互补
+    - 重点看它能否在保留 exp61 的 ranking 收益同时，缓解 exp61 原本的 `ACC/Brier/ECE` 代价
+  - 做法:
+    - 保持 exp61 的 target-exclusion 训练语义、缓存优化和其余主线结构不变
+    - 只把最终 `guess/slip` 概率映射改成三元 softmax:
+      - `guess = softmax([guess_logit, slip_logit, 0])[0]`
+      - `slip = softmax([guess_logit, slip_logit, 0])[1]`
+    - 从而显式保证 `guess >= 0`、`slip >= 0` 且 `guess + slip <= 1`
+  - 验证:
+    - 远端单测 `python -m unittest tests.test_decoupled_cdm` 通过
+    - `epochs=1, max_rows=2000` 的 target-exclusion smoke 已跑通
+    - 正式 `seed=2024` 训练后，test split 上:
+      - `guess_plus_slip_mean = 0.124655`
+      - `guess_plus_slip_max = 0.998527`
+      - `guess_plus_slip_p95 = 0.604326`
+      - `ratio(guess_plus_slip > 1) = 0.0`
+  - 单 seed 结果:
+    - `seed=2024`, `best_epoch=186`:
+      - `AUC 0.764602`
+      - `ACC 0.726275`
+      - `RMSE 0.429523`
+      - `Brier 0.184490`
+      - `ECE 0.055939`
+  - 相对 exp61 优化版同 seed (`exp61_opt_seed2024`):
+    - `AUC -0.000656`
+    - `ACC -0.003368`
+    - `RMSE +0.001579`
+    - `Brier +0.001354`
+    - `ECE +0.005701`
+  - 判断:
+    - 在 exp61 口径上，这个约束确实修掉了输出层语义违例，但没有和 target-exclusion 形成互补
+    - 它不仅没有把 exp61 的校准代价拉回来，反而让 `AUC/ACC/RMSE/Brier/ECE` 同时更差
+    - 这说明 exp61 当前的 ranking 收益同样部分依赖了无约束 `guess/slip` 提供的额外自由度
+  - 结论:
+    - 不继续在 exp61 基座上扩 seed
+    - 若后续还要推进 constrained `guess/slip`，应把重点放在“如何补回表达能力或训练补偿”上，而不是简单叠加到已有 ranking-oriented 训练口径
+    - 当前这条组合不作为主线候选
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。
