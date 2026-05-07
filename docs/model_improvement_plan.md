@@ -881,6 +881,63 @@
     - 若后续还要推进 constrained `guess/slip`，应把重点放在“如何补回表达能力或训练补偿”上，而不是简单叠加到已有 ranking-oriented 训练口径
     - 当前这条组合不作为主线候选
 
+- 实验 64: decoupled non-cognitive budget and guess/slip split
+  - 分支: `exp/decoupled-gs-budget`
+  - 提交:
+    - `267886a`: 增加可切换的 `guess/slip` 概率参数化、补回分布诊断脚本并补单测
+  - 动机:
+    - 复访实验 62 的失败机制，验证问题是否主要来自“三元 softmax 把非认知总预算和 guess/slip 分配比例绑死”
+    - 重点看在继续满足 `guess + slip <= 1` 的前提下，把“总量”和“分配”解耦后，能否补回实验 62 丢失的 `ACC/Brier/ECE`
+  - 做法:
+    - 保持实验 51 主线结构、训练协议和 `guess/slip` 上游输入不变
+    - 把最终概率映射扩成可切换的 `gs_probability_mode`
+    - 新增的 `budget_split_sigmoid` 形式为:
+      - `m = sigmoid(budget_logit)`
+      - `r = sigmoid(split_logit)`
+      - `guess = m * r`
+      - `slip = m * (1 - r)`
+    - 从而显式保证 `guess >= 0`、`slip >= 0` 且 `guess + slip = m <= 1`
+  - 验证:
+    - 远端单测 `python -m unittest tests.test_decoupled_cdm` 通过
+    - `epochs=1, max_rows=2000` 的 smoke 已跑通
+    - 正式 `seed=2024` 训练后，test split 上:
+      - `guess_mean = 0.032703`
+      - `slip_mean = 0.106389`
+      - `guess_plus_slip_mean = 0.139092`
+      - `guess_plus_slip_max = 0.999999`
+      - `guess_plus_slip_p95 = 0.946891`
+      - `ratio(guess_plus_slip > 1) = 0.0`
+    - 对照同口径 test split:
+      - 实验 51 `guess_plus_slip_mean = 0.244109`
+      - 实验 62 `guess_plus_slip_mean = 0.101998`
+  - 单 seed 结果:
+    - `seed=2024`, `best_epoch=182`:
+      - `AUC 0.756794`
+      - `ACC 0.727074`
+      - `RMSE 0.432131`
+      - `Brier 0.186737`
+      - `ECE 0.054287`
+  - 相对实验 62 同 seed:
+    - `AUC -0.007872`
+    - `ACC +0.000362`
+    - `RMSE +0.003205`
+    - `Brier +0.002759`
+    - `ECE +0.000136`
+  - 相对实验 51 同 seed baseline:
+    - `AUC -0.007257`
+    - `ACC -0.001598`
+    - `RMSE +0.003836`
+    - `Brier +0.003300`
+    - `ECE +0.003622`
+  - 判断:
+    - 这次改动确实把 `guess/slip` 总预算从实验 62 的 `0.1020` 拉回到 `0.1391`，说明“共享 softmax 过度压缩非认知总量”这个机制判断并不是空的
+    - 但它没有把预算补回到实验 51 的量级，更没有把 overall 指标救回来；相反，`AUC` 明显下滑，`RMSE/Brier/ECE` 也继续变差
+    - 因此“只做总量-分配解耦”还不足以恢复 constrained `guess/slip` 的表达能力；实验 62 的失败不能只归因于参数化过硬
+  - 结论:
+    - 不继续扩 seed
+    - 若后续再访 constrained `guess/slip`，应优先考虑更直接补回总预算表达力的方案，例如显式 `null` 通道建模或额外训练补偿，而不是停留在当前这版两头 `sigmoid` 的 budget/split 重参数化
+    - 当前这条 follow-up 不作为主线候选
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。
