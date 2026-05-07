@@ -938,6 +938,83 @@
     - 若后续再访 constrained `guess/slip`，应优先考虑更直接补回总预算表达力的方案，例如显式 `null` 通道建模或额外训练补偿，而不是停留在当前这版两头 `sigmoid` 的 budget/split 重参数化
     - 当前这条 follow-up 不作为主线候选
 
+- 实验 65: uncertainty-conditioned constrained non-cognitive mixture
+  - 分支: `exp/uncertainty-conditioned-gs-budget`
+  - 提交:
+    - `6f0c658`: 增加 uncertainty-conditioned `budget + fallback` 非认知 mixture、补回分布诊断脚本并补单测
+  - 动机:
+    - 在实验 64 的基础上再往前走一级，不再只改 `guess/slip` 参数化
+    - 重点验证“把 constrained non-cognitive 分支直接重写成显式 `budget + fallback` mixture，并让 budget 读取 coverage / concept_count / dispersion / target history 统计”后，能否补回实验 62/64 丢掉的表达力
+  - 做法:
+    - 保持实验 51 主线结构与训练协议不变
+    - 将最终非认知分支改写为:
+      - `m = sigmoid(budget_logit)`
+      - `r = sigmoid(fallback_logit)`
+      - `guess = m * r`
+      - `slip = m * (1 - r)`
+      - `p = (1 - m) * p_cog + m * r`
+    - 与实验 64 不同，`budget_logit` 不再只由单一旧 logit 承担，而是用 `guess_logit + slip_logit` 作为 base，再叠加读取以下特征的 residual:
+      - `difficulty`
+      - `concept_count`
+      - `coverage`
+      - `dispersion`
+      - 目标题相关概念的 `mean_accuracy / mean_log_attempts`
+      - `cognitive_uncertainty`
+    - `fallback_logit` 同样使用 `guess_logit - slip_logit` 的 base 加 uncertainty-conditioned residual
+  - 验证:
+    - 远端单测 `python -m unittest tests.test_decoupled_cdm` 通过
+    - `epochs=1, max_rows=2000` 的 smoke 已跑通
+    - smoke `seed=2024` test split:
+      - `guess_plus_slip_mean = 0.502403`
+      - `guess_plus_slip_p95 = 0.852836`
+      - `ratio(guess_plus_slip > 1) = 0.0`
+    - 正式 `seed=2024` 训练后，test split 上:
+      - `guess_mean = 0.162202`
+      - `slip_mean = 0.133380`
+      - `guess_plus_slip_mean = 0.295582`
+      - `guess_plus_slip_max = 0.998884`
+      - `guess_plus_slip_p95 = 0.905642`
+      - `ratio(guess_plus_slip > 1) = 0.0`
+    - 对照同口径 test split:
+      - 实验 51 `guess_plus_slip_mean = 0.244109`
+      - 实验 62 `guess_plus_slip_mean = 0.101998`
+      - 实验 64 `guess_plus_slip_mean = 0.139092`
+  - 单 seed 结果:
+    - `seed=2024`, `best_epoch=158`:
+      - `AUC 0.758493`
+      - `ACC 0.727245`
+      - `RMSE 0.431253`
+      - `Brier 0.185979`
+      - `ECE 0.056210`
+  - 相对实验 64 同 seed:
+    - `AUC +0.001699`
+    - `ACC +0.000171`
+    - `RMSE -0.000878`
+    - `Brier -0.000758`
+    - `ECE +0.001923`
+  - 相对实验 51 同 seed baseline:
+    - `AUC -0.005558`
+    - `ACC -0.001427`
+    - `RMSE +0.002958`
+    - `Brier +0.002542`
+    - `ECE +0.005545`
+  - 切片:
+    - `concept_count=4+`:
+      - 实验 51 `AUC 0.739185`, `ACC 0.674931`, `RMSE 0.459865`, `ECE 0.082999`
+      - 实验 65 `AUC 0.740835`, `ACC 0.680441`, `RMSE 0.459807`, `ECE 0.079169`
+    - `none_seen`:
+      - 实验 51 `AUC 0.812949`, `ACC 0.805187`, `RMSE 0.376444`, `ECE 0.109546`
+      - 实验 65 `AUC 0.794008`, `ACC 0.766586`, `RMSE 0.397493`, `ECE 0.147647`
+  - 判断:
+    - 这次 stronger 方案确实把 constrained non-cognitive 总预算补回到比实验 51 更高的区间，也明显优于实验 62/64 的“预算被压瘪”形态
+    - 相对实验 64，它带来了小幅 recovery，说明“显式 budget/fallback mixture + uncertainty-conditioned budget residual”这条机制方向不是完全无效
+    - 但它仍没有形成 enough overall recovery；更关键的是，它把 `none_seen` 显著做坏了，而这正是当前最敏感的目标 slice 之一
+    - `concept_count=4+` 虽有轻微改善，但幅度不足以支撑继续做 rescue sweep
+  - 结论:
+    - 不继续扩 seed，也不进入 rescue sweep
+    - 若后续还要继续探索更强一级 constrained non-cognitive 模块，重点应转向“为 fallback 分支引入更显式的可解释状态或 expert routing”，而不是继续只围绕 scalar budget 做增强
+    - 当前这条 stronger follow-up 同样不作为主线候选
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。
