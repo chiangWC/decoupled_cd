@@ -17,25 +17,12 @@
 
 ## 当前快照
 
-- 当前 `master` 正式主线是实验 51:
-  - ordered ASSIST09
-  - `transition_graph/propagation_graph.csv`
-  - `graph_mode = single`
-  - `learning_rate = 1e-3`
-  - `concept_dim = 64`
-  - `gs_mode = conditional`
-  - `TKC/UKC` 结构传播参数独立
-  - `TKC` 行为消息使用正误双通道
-  - `TKC/UKC` 学生级融合使用自适应 gate
-  - 已修正 `TKC` 行为项的全局二次缩小
-  - 吸收实验 33 的 zero-init cognitive difficulty adapter
-  - `high_concept_logit_adapter = true`
-  - `high_concept_logit_min_count = 2`
-  - `pairwise_history_interaction_adapter = true`
-  - `pairwise_history_interaction_min_count = 2`
-  - `gs_difficulty_adapter = true`
-  - `interpretable_readout_expert_adapter = true`
-  - `interpretable_readout_expert_count = 3`
+- 当前 `master` 正式主线沿用 [docs/session_bootstrap.md](./session_bootstrap.md) 里的“当前主线”口径。
+- 从这份归档的实验视角看，它对应实验 51 主线:
+  - 以实验 34 为底座
+  - 吸收实验 49 的 history-carrier pairwise interaction residual
+  - 再吸收实验 51 的 interpretable readout expert residual
+- 这里不再重复维护与 `session_bootstrap.md` 等价的数据、图、超参数和 adapter 开关清单；需要确认默认运行口径时，优先回看 `session_bootstrap.md`
 - 当前主线三 seed 参考均值:
   - `test_auc = 0.763889`
   - `test_acc = 0.728951`
@@ -390,13 +377,9 @@
       - `AUC 0.761346`, `ACC 0.726655`, `RMSE 0.429885`, `Brier 0.184801`, `ECE 0.053194`
     - `seed=2024`, `topk=2`:
       - `AUC 0.763301`, `ACC 0.727036`, `RMSE 0.428496`, `Brier 0.183609`, `ECE 0.050861`
-  - 判断:
-    - `topk=2` 虽然比 dense 好，但仍弱于实验 51 原版 full-trigger `seed=2024` 的 `AUC 0.764051 / ACC 0.728672 / RMSE 0.428295 / Brier 0.183437 / ECE 0.050665`
-    - 相对实验 49 control，`topk=2` 只保住了小幅 `AUC` 正向，但 `ACC/RMSE/Brier/ECE` 全部回撤，不满足继续扩 seed 的条件
-    - 这说明“更可解释的 gate 统计 + 稀疏 top-k 路由”没有把实验 51 的容量利用进一步变干净，反而削弱了原有收益
   - 结论:
-    - 不继续沿这条 routing 设计扩 seed
-    - 实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
+    - `topk=2` 虽然比 dense 好，但仍弱于实验 51 原版 full-trigger；相对实验 49 control 也只是保住了小幅 `AUC` 正向，`ACC/RMSE/Brier/ECE` 全部回撤
+    - 不继续沿这条 routing 设计扩 seed；实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
     - 若后续还要 revisit selective routing，优先考虑更软的路由约束或训练正则，而不是显式 top-k 稀疏化
 
 - 实验 53: soft routing regularizer for readout experts
@@ -434,13 +417,9 @@
     - `RMSE +0.000282`
     - `Brier +0.000241`
     - `ECE +0.000130`
-  - 判断:
-    - `seed=2024` 虽然略优于实验 51 同 seed，但 `seed=2025/2026` 没有复现，均值回到全面弱于当前主线
-    - 这说明“更软的 routing regularization”至少在当前这版 `MI-weight=0.05` 设定下，没有把实验 51 的 expert 容量利用稳定推高
-    - 相比实验 52 的硬 routing/稀疏 routing，这条线副作用更小，但仍不足以形成新的主线证据
   - 结论:
-    - 不继续沿这条 soft routing regularizer 扩线
-    - 实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
+    - `seed=2024` 虽然略优于实验 51 同 seed，但 `seed=2025/2026` 没有复现，三 seed 均值回到全面弱于当前主线
+    - 不继续沿这条 soft routing regularizer 扩线；实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
     - 若后续还要 revisit routing，优先考虑更局部的软引导或更明确的 slice 目标，而不是继续围绕同一种全局 gate regularizer 小步扫参
 
 - 实验 54: Q-conditioned local mastery readout revisit
@@ -475,11 +454,8 @@
     - `concept_count=3`: `AUC 0.698639`, `ACC 0.682171`, `ECE 0.082560`
     - `concept_count=4+`: `AUC 0.731486`, `ACC 0.680441`, `ECE 0.125002`
     - `none_seen`: `AUC 0.808718`, `ACC 0.800362`, `ECE 0.112099`
-  - 判断:
-    - 这次复访已经不是实验 35 那种“局部概念状态均值 residual”，而是更接近主 readout 的逐概念打分再聚合版本
-    - 即便如此，它仍没有把“local mastery 更贴近 CD 语义”转成 overall `AUC/ACC` 收益；单 seed 已明显低于继续扩 seed 的门槛
-    - 切片上也没有出现足够强的多知识点 clean win，`concept_count=3/4+` 和 `none_seen` 仍然偏弱
   - 结论:
+    - 这次复访已经不是实验 35 那种“局部概念状态均值 residual”，而是更接近主 readout 的逐概念打分再聚合版本；即便如此，overall `AUC/ACC` 仍明显不成立，切片上也没有出现足够强的多知识点 clean win
     - 不继续沿这条 local mastery main-readout 设计扩线
     - 若后续再访，必须带着更强的概念交互假设或更明确的聚合归纳偏置，而不是再重复“逐概念打分 + 简单聚合”框架
 
@@ -512,12 +488,8 @@
     - `concept_count=3`: `AUC 0.705193`, `ACC 0.673311`, `ECE 0.102832`
     - `concept_count=4+`: `AUC 0.747586`, `ACC 0.669421`, `ECE 0.091158`
     - `none_seen`: `AUC 0.810439`, `ACC 0.769602`, `ECE 0.151766`
-  - 判断:
-    - 这条线确实证明“把 difficulty 前移到 propagation”会改变排序行为，单 seed `AUC` 有极小正向
-    - 但代价过大：`ACC/RMSE/Brier/ECE` 全部明显回撤，尤其 `ECE` 恶化接近 `+0.011`
-    - 切片也没有形成足够干净的多知识点收益；`concept_count=3/4+` 和 `none_seen` 仍然保留明显校准问题
-    - 它比实验 47 那类 final-logit calibration bias 更贴近语义，但在当前形式下更像“排序微升换整体误差和校准显著变差”的折中
   - 结论:
+    - 这条线确实证明“把 difficulty 前移到 propagation”会改变排序行为，单 seed `AUC` 有极小正向；但代价过大，`ACC/RMSE/Brier/ECE` 全部明显回撤，切片也没有形成足够干净的多知识点收益
     - 不继续沿这条 difficulty-weighted propagation 扩线
     - 若后续还要 revisit propagation weighting，优先考虑更局部、更学生条件化的证据强度，而不是当前这种按题目全局共享的 difficulty multiplier
 
@@ -563,11 +535,8 @@
     - `weight=0.02`, `concept_count=3`: `AUC 0.704542`, `ACC 0.687708`, `ECE 0.083009`
     - `weight=0.02`, `concept_count=4+`: `AUC 0.741598`, `ACC 0.680441`, `ECE 0.081981`
     - `weight=0.02`, `none_seen`: `AUC 0.809586`, `ACC 0.803378`, `ECE 0.106477`
-  - 判断:
-    - 这条线确实会把验证 AUC 往上推一点，但在 test 上没有超过实验 51 主线；`0.05` 和 `0.02` 都没形成 overall 正向
-    - `0.05` 的副作用更明显，`0.02` 更温和，但仍然是 “`ACC/RMSE/Brier/ECE` 小幅变差，AUC 也没赢主线” 的折中
-    - 切片上也没有出现足够强的多知识点 clean win，说明 ranking loss 没有把结构剩余瓶颈直接转成更强结果
   - 结论:
+    - 这条线确实会把验证 AUC 往上推一点，但在 test 上没有超过实验 51 主线；`0.05` 和 `0.02` 都没形成 overall 正向，切片上也没有出现足够强的多知识点 clean win
     - 不继续沿这条 ranking-loss 训练线扩权重或扩 seed
     - 若后续还要 revisit ranking-oriented 目标，应优先建立在某个已经有明确结构正向的底座之上，而不是单独把 ranking loss 当成默认下一步
 
@@ -581,10 +550,8 @@
     - 最好的 overall 只达到 `seed=2024: AUC 0.764542`
     - 但对应 `ACC 0.725475 / RMSE 0.428501 / Brier 0.183613 / ECE 0.053370`
     - 更轻的 `2-hop only` 版本也只是 `AUC 0.764388 / ACC 0.728387 / ECE 0.053974`
-  - 判断:
-    - 这条线反复呈现“很小的 AUC 正向，换来 ACC 或校准回撤”的模式
-    - `none_seen` 与 `4+` 多知识点题没有形成足够干净的收益；coverage-conditioned 版本还会把多跳权重学成“高覆盖更强”
   - 结论:
+    - 这条线反复呈现“很小的 AUC 正向，换来 ACC 或校准回撤”的模式；`none_seen` 与 `4+` 多知识点题也没有形成足够干净的收益
     - 不继续沿 propagation 主干做 multi-hop mixing 扩线
     - 若以后再访，应只在更明确的局部 slice 假设下做 targeted readout / mixture，而不是继续修改 propagation 主干
 
@@ -605,10 +572,8 @@
     - 远端 `python -m unittest tests.test_decoupled_cdm` 通过
     - 但 `2 epoch + max_rows=5000` smoke 在验证阶段触发 CUDA device-side assert；根因表现为 BCE 输入超出 `[0, 1]`
     - 修过一轮输入维度与 `nan_to_num`/无效行归零后，smoke 仍然不稳定
-  - 判断:
-    - 这不是“指标略差但可继续调参”的情况，而是当前实现本身在数值上就不稳，尚未达到可比较 overall 指标的最小门槛
-    - 说明“并联 local context residual”即使比实验 58 的回写主状态更保守，在当前这版非约束 readout 设定下仍然过于激进
   - 结论:
+    - 这不是“指标略差但可继续调参”的情况，而是当前实现本身在数值上就不稳，尚未达到可比较 overall 指标的最小门槛
     - 不继续沿这版 parallel local context readout 实现扩线，也不进入 rescue sweep
     - 若以后还要 revisit 更大一级 local-context 模块，优先先加显式幅度约束或更保守的 mixture 结构，再决定是否值得进入正式比较
 
@@ -654,14 +619,10 @@
   - 额外观察:
     - 开启 target exclusion 后，test 上 `guess_plus_slip` 均值从 `0.244109` 升到 `0.320332`
     - 这说明只削弱 pairwise history 自举信号后，模型明显把更多解释压力转移到了 `guess/slip` 分支
-  - 判断:
-    - “history mismatch 存在”这件事已经坐实，但“只修 pairwise residual”没有带来 clean 正收益
-    - 这次负结果不能直接推出“完整 leave-one-out 一定无效”，因为 propagation 训练口径仍保持 target-visible
-    - 但它已经足够说明：当前不应把 propagation target exclusion 当作默认高优先 follow-up
   - 结论:
+    - “history mismatch 存在”这件事已经坐实，但“只修 pairwise residual”没有带来 clean 正收益；这次负结果也不能直接推出“完整 leave-one-out 一定无效”，因为 propagation 训练口径仍保持 target-visible
     - 先把这次审计结论固化为负向证据，不继续沿 pairwise-only target exclusion 扩 seed
-    - 当前更值得单独处理的是 `--batch-size` 名义生效、实际无效的训练工程问题
-    - 若以后一定要把这条线彻底判死，只应再做一次“pairwise + propagation 同时 target-excluded”的单 seed 最终判定实验；在那之前，不默认继续推进这条方向
+    - 当前更值得单独处理的是 `--batch-size` 名义生效、实际无效的训练工程问题；若以后一定要把这条线彻底判死，只应再做一次“pairwise + propagation 同时 target-excluded”的单 seed 最终判定实验
 
 - 实验 61: full target-excluded training audit
   - 分支: `exp/full-target-exclusion-audit`
@@ -716,12 +677,8 @@
     - `seed=2024`: `AUC +0.001119`, `ACC -0.000133`, `RMSE +0.000324`, `Brier +0.000277`, `ECE +0.002917`
     - `seed=2025`: `AUC +0.001385`, `ACC -0.001713`, `RMSE +0.000074`, `Brier +0.000064`, `ECE +0.001592`
     - `seed=2026`: `AUC +0.001899`, `ACC +0.000362`, `RMSE +0.000106`, `Brier +0.000091`, `ECE +0.002808`
-  - 判断:
-    - 完整 target exclusion 的 `AUC` 正向在三 seed 上稳定复现，说明“训练/测试 propagation history mismatch”不是纯方法学噪声，修正后会持续改变排序行为
-    - 但三 seed 下依然没有形成 clean overall win: `ACC` 均值小幅回落，`RMSE/Brier/ECE` 均值也都变差
-    - 因此它现在更像稳定的 ranking-oriented 训练口径，而不是可直接替换当前主线的默认训练定义
   - 结论:
-    - 先把“full target exclusion 带来稳定 `AUC` 正向，但会牺牲误差与校准”固化为当前判断
+    - 完整 target exclusion 的 `AUC` 正向在三 seed 上稳定复现，说明“训练/测试 propagation history mismatch”不是纯方法学噪声；但它仍没有形成 clean overall win，更像稳定的 ranking-oriented 训练口径
     - 暂不直接吸收到 `master`
     - 若后续目标明确偏向 `AUC`，这条线可以作为正式候选保留；若主线仍坚持 `AUC/ACC` 与校准并重，则当前不继续沿这条训练口径扩线
   - `2026-05-02` 工程优化复跑:
@@ -773,13 +730,9 @@
       - `RMSE -0.000237`
       - `Brier -0.000203`
       - `ECE -0.000507`
-    - 更新判断:
-      - exp61 的主要工程障碍已经解除，不再因为训练成本过高而降级
-      - 优化后复跑结果没有变坏，`AUC` 正向依旧稳定，且 `ACC/RMSE/Brier` 已从原始审计版的轻微负向回到基本持平或 very small 正向
-      - 但它仍不是 clean overall win: 相对当前主线最明确的收益仍是 `AUC`，`ECE` 仍有代价
     - 更新结论:
-      - 将 `exp/full-target-exclusion-opt` 暂定为主线候选保留
-      - 当前不直接把它吸收到 `master` 默认训练口径
+      - exp61 的主要工程障碍已经解除，优化后复跑结果也没有变坏；`AUC` 正向依旧稳定，且 `ACC/RMSE/Brier` 已从原始审计版的轻微负向回到基本持平或 very small 正向
+      - 将 `exp/full-target-exclusion-opt` 暂定为主线候选保留，但当前不直接把它吸收到 `master` 默认训练口径
       - 若后续要做正式主线切换比较，这条线应作为与实验 37 并列的训练候选，而不是继续视作仅供归档的 ranking-only 审计分支
 
 - 实验 62: constrained `guess/slip` probability budget
@@ -830,11 +783,8 @@
     - `RMSE +0.000631`
     - `Brier +0.000541`
     - `ECE +0.003486`
-  - 判断:
-    - 这次修复确实清除了输出层的语义违例，且不是只在极少数样本上起作用
-    - 但在当前形式下，它更像“修正 non-cognitive 分支后改变了排序偏好”，没有形成 clean overall win
-    - 修复后模型把 `guess/slip` 总量显著压低到更保守区间，说明旧主线里一部分性能确实依赖了无约束 `guess/slip` 提供的额外自由度
   - 结论:
+    - 这次修复确实清除了输出层的语义违例，且不是只在极少数样本上起作用；但在当前形式下，它更像“修正 non-cognitive 分支后改变了排序偏好”，没有形成 clean overall win
     - 先保留这条线的机制结论和诊断工具，不直接吸收到 `master`
     - 若后续继续推进这类语义修复，更合理的下一步不是直接扩 seed，而是考虑给 constrained `guess/slip` 增加更有表达力的参数化或配套训练补偿，再看能否保住 `ACC/Brier/ECE`
 
@@ -872,14 +822,10 @@
     - `RMSE +0.001579`
     - `Brier +0.001354`
     - `ECE +0.005701`
-  - 判断:
-    - 在 exp61 口径上，这个约束确实修掉了输出层语义违例，但没有和 target-exclusion 形成互补
-    - 它不仅没有把 exp61 的校准代价拉回来，反而让 `AUC/ACC/RMSE/Brier/ECE` 同时更差
-    - 这说明 exp61 当前的 ranking 收益同样部分依赖了无约束 `guess/slip` 提供的额外自由度
   - 结论:
+    - 在 exp61 口径上，这个约束确实修掉了输出层语义违例，但没有和 target-exclusion 形成互补，反而让 `AUC/ACC/RMSE/Brier/ECE` 同时更差
     - 不继续在 exp61 基座上扩 seed
-    - 若后续还要推进 constrained `guess/slip`，应把重点放在“如何补回表达能力或训练补偿”上，而不是简单叠加到已有 ranking-oriented 训练口径
-    - 当前这条组合不作为主线候选
+    - 若后续还要推进 constrained `guess/slip`，应把重点放在“如何补回表达能力或训练补偿”上，而不是简单叠加到已有 ranking-oriented 训练口径；当前这条组合不作为主线候选
 
 - 实验 64: decoupled non-cognitive budget and guess/slip split
   - 分支: `exp/decoupled-gs-budget`
@@ -929,14 +875,10 @@
     - `RMSE +0.003836`
     - `Brier +0.003300`
     - `ECE +0.003622`
-  - 判断:
-    - 这次改动确实把 `guess/slip` 总预算从实验 62 的 `0.1020` 拉回到 `0.1391`，说明“共享 softmax 过度压缩非认知总量”这个机制判断并不是空的
-    - 但它没有把预算补回到实验 51 的量级，更没有把 overall 指标救回来；相反，`AUC` 明显下滑，`RMSE/Brier/ECE` 也继续变差
-    - 因此“只做总量-分配解耦”还不足以恢复 constrained `guess/slip` 的表达能力；实验 62 的失败不能只归因于参数化过硬
   - 结论:
+    - 这次改动确实把 `guess/slip` 总预算从实验 62 的 `0.1020` 拉回到 `0.1391`，说明“共享 softmax 过度压缩非认知总量”这个机制判断并不是空的；但它没有把预算补回到实验 51 的量级，也没有把 overall 指标救回来
     - 不继续扩 seed
-    - 若后续再访 constrained `guess/slip`，应优先考虑更直接补回总预算表达力的方案，例如显式 `null` 通道建模或额外训练补偿，而不是停留在当前这版两头 `sigmoid` 的 budget/split 重参数化
-    - 当前这条 follow-up 不作为主线候选
+    - 若后续再访 constrained `guess/slip`，应优先考虑更直接补回总预算表达力的方案，例如显式 `null` 通道建模或额外训练补偿，而不是停留在当前这版两头 `sigmoid` 的 budget/split 重参数化；当前这条 follow-up 不作为主线候选
 
 - 实验 65: uncertainty-conditioned constrained non-cognitive mixture
   - 分支: `exp/uncertainty-conditioned-gs-budget`
@@ -1005,15 +947,10 @@
     - `none_seen`:
       - 实验 51 `AUC 0.812949`, `ACC 0.805187`, `RMSE 0.376444`, `ECE 0.109546`
       - 实验 65 `AUC 0.794008`, `ACC 0.766586`, `RMSE 0.397493`, `ECE 0.147647`
-  - 判断:
-    - 这次 stronger 方案确实把 constrained non-cognitive 总预算补回到比实验 51 更高的区间，也明显优于实验 62/64 的“预算被压瘪”形态
-    - 相对实验 64，它带来了小幅 recovery，说明“显式 budget/fallback mixture + uncertainty-conditioned budget residual”这条机制方向不是完全无效
-    - 但它仍没有形成 enough overall recovery；更关键的是，它把 `none_seen` 显著做坏了，而这正是当前最敏感的目标 slice 之一
-    - `concept_count=4+` 虽有轻微改善，但幅度不足以支撑继续做 rescue sweep
   - 结论:
-    - 不继续扩 seed，也不进入 rescue sweep
-    - 若后续还要继续探索更强一级 constrained non-cognitive 模块，重点应转向“为 fallback 分支引入更显式的可解释状态或 expert routing”，而不是继续只围绕 scalar budget 做增强
-    - 当前这条 stronger follow-up 同样不作为主线候选
+    - 这次 stronger 方案确实把 constrained non-cognitive 总预算补回到比实验 51 更高的区间，也优于实验 62/64 的“预算被压瘪”形态；相对实验 64 也带来了小幅 recovery
+    - 但它仍没有形成 enough overall recovery，更关键的是把 `none_seen` 显著做坏了；`concept_count=4+` 的改善也不足以支撑继续做 rescue sweep
+    - 不继续扩 seed，也不进入 rescue sweep；若后续还要继续探索更强一级 constrained non-cognitive 模块，重点应转向“为 fallback 分支引入更显式的可解释状态或 expert routing”，而不是继续只围绕 scalar budget 做增强
 
 ## 旧口径的历史参考
 
@@ -1030,7 +967,7 @@
 
 ## 近线 follow-up
 
-这部分只保留当前最值得记住的候选和最近诊断。
+这部分只保留正文之外仍值得额外记住的元判断，不再重复逐实验结论。
 
 ### 实验 28. `guess/slip` 显式引入题目难度特征
 
@@ -1049,69 +986,33 @@
   - `none_seen` 更适合作为后续单独校准问题，而不是当前第一优先结构问题
   - exact-3 aggressive residual/readout 已单 seed 验证到头，不再继续深挖同类结构
 
-### 实验 47 后的补充判断
+### 主题归纳 1. `none_seen` 与校准
 
-- `none_seen` 的确可以单独当校准问题做，但“对所有样本共享的 final-logit bias”过于粗糙
-- 即便输入里放入 target coverage / `concept_count` / `difficulty`，模型也可能拿 overall ECE 换掉 `none_seen` 自身校准
-- 如果后续还要回到 `none_seen`，优先考虑更局部、更显式的触发方式，而不是继续扩这一类全局共享 bias
+- 实验 47 已说明: `none_seen` 可以单独当校准问题做，但“对所有样本共享的 final-logit bias”过于粗糙
+- 即便输入里放入 target coverage / `concept_count` / `difficulty`，模型也可能拿 overall ECE 去换 `none_seen` 自身校准
+- 如果后续还要回到 `none_seen`，优先考虑更局部、更显式的触发方式，而不是继续扩这类全局共享 bias
 
-### 实验 51 后的补充判断
+### 主题归纳 2. 实验 51 读出侧后续
 
 - “可解释 gate + 专家 residual” 这条线是成立的，说明读出侧适度增容本身有真实信号
-- 但第一版最优解并没有自动把容量集中到高知识点数题；如果强行把 trigger 收窄到 `concept_count>=3`，overall `AUC` 反而回落
-- 这说明当前目标不是证明“高知识点数一定要硬分流”，而是继续寻找更干净的 selective routing，让专家容量既保住 full-trigger 的 overall 收益，又更准确服务目标 slice
+- 但实验 52/53/54 共同说明: 无论是更硬的 selective routing、更软的 gate regularization，还是 local-first 的 readout 复访，都还没有形成比实验 51 更强的 clean overall 增益
+- 因此若后续还要继续挖实验 51，前提应是出现更明确的 targeted slice 假设或更局部的引导目标，而不是默认继续扫 routing / local mastery 近邻变体
 
-### 实验 52 后的补充判断
+### 主题归纳 3. propagation 与目标层 tweak
 
-- 从 `seen_count / unseen_count` 这类更直观的可解释统计出发，并不会自动得到更强的 routing；至少在当前 readout expert 设定下，它比实验 51 原版更容易伤到 `ACC` 与校准
-- 显式 `top-k` 稀疏路由也没有带来更干净的专家分工，反而更像过早限制容量共享
-- 因此实验 51 后文档里提到的“继续寻找更干净的 selective routing”暂时不再优先指向结构性硬 routing，而应更偏向软约束或训练层面的轻量引导
-
-### 实验 53 后的补充判断
-
-- 把方向从“更硬的 selective routing”换成“更软的 gate regularization”后，副作用确实变小了，但仍没有形成稳定的三 seed overall 增益
-- 这说明实验 51 的剩余空间不太像“给当前 gate 再加一个全局共享正则项”就能拿到；至少现阶段，这条线的提升空间没有想象中大
-- 因此若后续还要继续挖实验 51，优先级应降到“明确有新 slice 假设时再访”，而不是把 routing regularizer 当成默认下一步
-
-### 实验 54 后的补充判断
-
-- “先做逐概念 local mastery，再聚合成题目级认知 logit”在语义上很合理，但当前这版共享 scorer + 几何均值聚合并没有胜过实验 51 主线
-- 这说明当前瓶颈未必只是“global student_state 把局部信息平均掉了”；至少在现有概念表示质量下，把 readout 改成 local-first 还不足以自然得到更强排序
-- 因此不建议把这条线当作当前默认下一步，也不建议在它本身已经负向时继续直接叠 ranking loss
-
-### 实验 55 后的补充判断
-
-- “difficulty 应该前移进 propagation”这个直觉并不是错的；至少单 seed 的 `AUC` 确实出现了极小正向
-- 但当前这版按题目共享的 global difficulty multiplier 太粗，容易把正误历史证据整体推偏，结果是排序收益远小于误差与校准代价
-- 因此如果以后再回到 propagation 侧，优先级不应是继续扫同类全局 weighting，而应转向更局部、更学生条件化的证据重权方式
-
-### 实验 56 后的补充判断
-
-- “直接叠 ranking loss”在当前主线下没有形成预期中的 AUC clean win，说明现阶段的主要瓶颈不是“BCE 过于 calibration-oriented”这么简单
-- 这条线更像轻度改变排序偏好，但不足以弥补主模型本身的结构限制；即使 validation AUC 略有上行，test overall 仍没赢过实验 51
-- 因此不建议把 ranking loss 当成当前默认训练升级方向；除非后续先有更强的结构正向底座，否则这类目标层 tweak 的优先级仍然偏低
-
-### 实验 57 后的补充判断
-
-- single-graph multi-hop propagation 这条思路在语义上成立，但当前几版实现都没有把它转成 clean overall 增益
-- 问题不在于“完全没学到多跳”，而在于它更像轻度改变排序偏好，同时持续伤到 `ACC/ECE`
-- 因此 propagation 侧后续优先级应继续下调；若再回到这条线，前提应是已有非常明确的局部 slice 假设
+- 实验 55/56/57 共同说明: difficulty 前移、直接叠 ranking loss、single-graph multi-hop propagation 都更像轻度改变排序偏好，而不是 clean overall 增益
+- 这些方向的常见模式是 `AUC` 有时略正，但 `ACC/RMSE/Brier/ECE` 更容易回撤
+- 因此 propagation 侧与目标层 tweak 的优先级应继续下调；若再回到这些方向，前提应是已有更明确的局部 slice 假设，或已有更强的结构正向底座
 
 ## 默认下一步
 
-如果没有用户明确指定路线，默认按下面优先级思考:
+通用协作、运行与分支规则沿用 [docs/session_bootstrap.md](./session_bootstrap.md)；这里仅补充历史台账导出的默认优先级:
 
-1. 先从当前 `master` 主线出发；新假设默认先只改一个结构因素，用单因素实验先把证据立住。
-2. 当前已进入单因素边际收益放缓的平台期；单因素实验默认只作为新假设准入，不再视为完整推进节奏。
-3. 结构主线仍优先解决多知识点题表示/读出偏弱；`none_seen` 默认视为后续单独处理的校准问题，不作为当前第一优先结构目标。
-4. 默认允许少量测试“已各自成立”的正交组合；优先考虑结构改动和训练协议这类职责分离的组合，但前提是各因素已先单独证明有效。
-5. 组合验证仍应严格限量，默认只测最强的 `1-2` 组候选，不做组合爆炸；若组合本身没有达到主指标门槛，也不要因为局部次要指标改善而继续扩线。
-6. 也允许探索更大一级、真正改变表示瓶颈的模块改动；优先考虑能直接作用于多知识点交互、学生状态形成或 propagation/readout 主干语义的结构，而不是继续在最终 logit 附近堆局部补丁。
-7. 主线默认仍锁定当前超参数口径；但若是更大一级模块改动，且单次结果表现为“overall 未过门槛但目标 slice 有明显改善”，可额外允许一次很小的 rescue sweep，再决定是否淘汰。
-8. 这类 rescue sweep 默认只用于更大一级模块，不用于普通 sidecar / residual；范围也应严格收敛，优先只看 `learning_rate`、保守容量版本，或更局部的激活阈值。
-9. 若继续沿实验 51 的 readout expert 底座推进，默认保留原版 full-trigger 作为基座；只有在出现更明确的 targeted slice 假设或更局部的引导目标时，才再访这条线。
-10. 对已经系统复访但未形成 clean overall gain 的 readout / propagation / ranking-loss 路线，默认不再高优先级继续；只有在出现明确的新假设、且机制上明显区别于已失败版本时，才考虑重开。
-11. 若用户明确要继续训练协议优化，当前唯一仍值得优先复访的候选是实验 37 那条 `exp/training-modes` 支线；否则默认优先继续模型结构改动。
-12. 新结构先跑单次；单次值得继续时再补 `2-3` 个 seed。
-13. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善。
-14. `RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用；若主指标不成立，通常不要因次要指标小幅改善而继续扩线。
+1. 仍从当前 `master` 主线出发；新假设优先单改一个结构因素，单次成立后再补 `2-3` 个 seed。
+2. 当前处于单因素边际收益放缓的平台期；结构主线仍优先解决多知识点题表示/读出偏弱，`none_seen` 默认视为后续单独处理的校准问题。
+3. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；优先考虑结构改动和训练协议这类职责分离的组合。
+4. 允许探索更大一级、真正改变表示瓶颈的模块；若单次结果表现为“overall 未过门槛但目标 slice 有明显改善”，可额外允许一次很小的 rescue sweep；普通 sidecar / residual 默认不进入这类 sweep。
+5. 若继续沿实验 51 的 readout expert 底座推进，默认保留原版 full-trigger 作为基座；只有在出现更明确的 targeted slice 假设或更局部的引导目标时，才再访这条线。
+6. 对已经系统复访但未形成 clean overall gain 的 readout / propagation / ranking-loss 路线，默认不再高优先级继续；只有在出现明确新假设、且机制上明显区别于已失败版本时，才考虑重开。
+7. 若用户明确要继续训练协议优化，当前优先候选是实验 37 与实验 61 两条支线；否则默认优先继续模型结构改动。
+8. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善；`RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用。
