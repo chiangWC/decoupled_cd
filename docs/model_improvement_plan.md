@@ -633,332 +633,44 @@
     - 当前更值得单独处理的是 `--batch-size` 名义生效、实际无效的训练工程问题；若以后一定要把这条线彻底判死，只应再做一次“pairwise + propagation 同时 target-excluded”的单 seed 最终判定实验
 
 - 实验 61: full target-excluded training audit
-  - 分支: `exp/full-target-exclusion-audit`
-  - 提交:
-    - `4fa628d`: 加入 propagation + pairwise 同时 target-excluded 的训练路径与单测
-    - `bb32578`: 去掉 exclusion 训练时多余的全局 propagation 前向，修复首轮 OOM
-    - `ca14a6d`: 收紧 target-conditioned propagation 内部 chunk
-    - `cf8c47f`: 把 full-batch exclusion 改成单 optimizer step 的梯度累积，实现完整数据可运行
-  - 动机:
-    - 对实验 60 留下的未决问题做最终复验
-    - 验证“训练时同时去掉 propagation history 与 pairwise history 的 target self-inclusion”后，是否能得到比 pairwise-only exclusion 更干净的收益
-  - 做法:
-    - 保持当前实验 51 主线结构与超参数不变
-    - 只在 train loss 路径上开启 `--exclude-target-from-train-history`
-    - 对每个 train target，预测时把该条 `(stu_id, exer_id, label)` 自身从 target-conditioned propagation history 与 pairwise history 统计中扣除
-    - `valid/test` 仍固定复用 `train` history，不改 evaluation 口径
-  - 工程备注:
-    - 直接在 full split 上做单次前向会 OOM，因此最终实现改成“full-batch 语义 + chunked gradient accumulation”: 仍然每个 epoch 只做 `1` 次 optimizer step，但 target-conditioned 前向按子批次累积梯度
-    - 完整数据 `1 epoch` smoke 已在远端跑通；`300 epoch` 正式单 seed 也已跑通
-  - 三 seed 结果:
-    - `seed=2024`, `best_epoch=192`:
-      - `AUC 0.765170`
-      - `ACC 0.728539`
-      - `RMSE 0.428619`
-      - `Brier 0.183714`
-      - `ECE 0.053582`
-    - `seed=2025`, `best_epoch=197`:
-      - `AUC 0.766096`
-      - `ACC 0.726674`
-      - `RMSE 0.428169`
-      - `Brier 0.183329`
-      - `ECE 0.053421`
-    - `seed=2026`, `best_epoch=182`:
-      - `AUC 0.764803`
-      - `ACC 0.730157`
-      - `RMSE 0.427572`
-      - `Brier 0.182818`
-      - `ECE 0.048511`
-  - 三 seed 均值:
-    - `AUC 0.765356`
-    - `ACC 0.728457`
-    - `RMSE 0.428120`
-    - `Brier 0.183287`
-    - `ECE 0.051838`
-  - 相对实验 51 当前主线三 seed 均值:
-    - `AUC +0.001467`
-    - `ACC -0.000494`
-    - `RMSE +0.000168`
-    - `Brier +0.000144`
-    - `ECE +0.002439`
-  - 相对实验 51 同 seed:
-    - `seed=2024`: `AUC +0.001119`, `ACC -0.000133`, `RMSE +0.000324`, `Brier +0.000277`, `ECE +0.002917`
-    - `seed=2025`: `AUC +0.001385`, `ACC -0.001713`, `RMSE +0.000074`, `Brier +0.000064`, `ECE +0.001592`
-    - `seed=2026`: `AUC +0.001899`, `ACC +0.000362`, `RMSE +0.000106`, `Brier +0.000091`, `ECE +0.002808`
+  - 分支: `exp/full-target-exclusion-audit` -> `exp/full-target-exclusion-opt`
+  - 做法: 训练 loss 路径开启 `--exclude-target-from-train-history`，同时对 propagation history 与 pairwise history 扣除当前 target；`valid/test` 仍复用 `train` history
+  - 关键工程: 原始 full target-exclusion 路径已优化为 baseline + 局部 delta 更新，train-only `1 epoch` median runtime 从约 `8.845s` 降到约 `2.002s`，语义保持一致
+  - 优化后三 seed 均值:
+    - `AUC 0.765495`
+    - `ACC 0.729256`
+    - `RMSE 0.427883`
+    - `Brier 0.183084`
+    - `ECE 0.051331`
+  - 相对实验 51 三 seed 均值:
+    - `AUC +0.001606`
+    - `ACC +0.000305`
+    - `RMSE -0.000069`
+    - `Brier -0.000059`
+    - `ECE +0.001932`
   - 结论:
-    - 完整 target exclusion 的 `AUC` 正向在三 seed 上稳定复现，说明“训练/测试 propagation history mismatch”不是纯方法学噪声；但它仍没有形成 clean overall win，更像稳定的 ranking-oriented 训练口径
-    - 暂不直接吸收到 `master`
-    - 若后续目标明确偏向 `AUC`，这条线可以作为正式候选保留；若主线仍坚持 `AUC/ACC` 与校准并重，则当前不继续沿这条训练口径扩线
-  - `2026-05-02` 工程优化复跑:
-    - 优化分支: `exp/full-target-exclusion-opt`
-    - 关键提交:
-      - `92cae0f`: 让 target-excluded history stats cache 成为可复用路径
-      - `dc7cbee`: 把 target-excluded propagation 改成 baseline + 局部 delta 更新
-      - `501612d`: full-batch exclusion 按 epoch 复用 propagation reference
-      - `041f902`: target-exclusion inner chunk 跟外层训练批次对齐
-    - 工程结果:
-      - 在远端 `xph-pc`、完整 `assist_09_ordered/train.csv`、`epochs=1`、只测 train 不测 eval 的 benchmark 下，原始审计分支 `fe0c114` 的 median runtime 约 `8.845s`
-      - 同口径下，优化分支 `041f902` 的 median runtime 约 `2.002s`
-      - 端到端训练耗时约 `4.4x` 加速，降幅约 `77%`
-      - benchmark 中 `train_loss` 保持一致，说明这轮工程优化没有改变训练语义
-    - 正式三 seed 复跑结果:
-      - `seed=2024`, `best_epoch=184`:
-        - `AUC 0.765258`
-        - `ACC 0.729643`
-        - `RMSE 0.427945`
-        - `Brier 0.183137`
-        - `ECE 0.050238`
-      - `seed=2025`, `best_epoch=206`:
-        - `AUC 0.766181`
-        - `ACC 0.726903`
-        - `RMSE 0.428576`
-        - `Brier 0.183677`
-        - `ECE 0.056064`
-      - `seed=2026`, `best_epoch=178`:
-        - `AUC 0.765046`
-        - `ACC 0.731222`
-        - `RMSE 0.427128`
-        - `Brier 0.182439`
-        - `ECE 0.047690`
-    - 三 seed 均值:
-      - `AUC 0.765495`
-      - `ACC 0.729256`
-      - `RMSE 0.427883`
-      - `Brier 0.183084`
-      - `ECE 0.051331`
-    - 相对实验 51 当前主线三 seed 均值:
-      - `AUC +0.001606`
-      - `ACC +0.000305`
-      - `RMSE -0.000069`
-      - `Brier -0.000059`
-      - `ECE +0.001932`
-    - 相对实验 61 原始审计版三 seed 均值:
-      - `AUC +0.000139`
-      - `ACC +0.000799`
-      - `RMSE -0.000237`
-      - `Brier -0.000203`
-      - `ECE -0.000507`
-    - 更新结论:
-      - exp61 的主要工程障碍已经解除，优化后复跑结果也没有变坏；`AUC` 正向依旧稳定，且 `ACC/RMSE/Brier` 已从原始审计版的轻微负向回到基本持平或 very small 正向
-      - 将 `exp/full-target-exclusion-opt` 暂定为主线候选保留，但当前不直接把它吸收到 `master` 默认训练口径
-      - 若后续要做正式主线切换比较，这条线应作为与实验 37 并列的训练候选，而不是继续视作仅供归档的 ranking-only 审计分支
+    - 完整 target exclusion 的 `AUC` 正向在三 seed 上稳定复现，说明训练/测试 history mismatch 不是纯方法学噪声
+    - 工程障碍已解除，当前保留为 ranking-oriented 训练候选，但因 `ECE` 仍更差，不直接吸收到 `master`
+    - 实验 71 已验证它和实验 70 直接组合不是 clean win；若未来明确只追求 `AUC`，可作为 ablation 或候选训练口径
 
-- 实验 62: constrained `guess/slip` probability budget
-  - 分支: `exp/guess-slip-diagnostics`
-  - 提交:
-    - `e8b04fe`: 增加 `guess/slip` 分布诊断脚本
-    - `f0f43fd`: 将 `guess/slip` 改为共享概率预算的耦合参数化，并补单测
-  - 动机:
-    - 当前输出层使用 `p = (1 - slip) * cognitive + guess * (1 - cognitive)`
-    - 若 `guess + slip > 1`，则 `dp / dcognitive = 1 - guess - slip < 0`，会出现“认知越高，最终答对概率反而越低”的语义反转
-  - 诊断:
-    - 旧实现里 `guess_probs` 与 `slip_probs` 是彼此独立的 `sigmoid`，没有任何 `guess + slip <= 1` 约束
-    - 对实验 51 同口径的已有 checkpoint 做只读审计后发现，这个问题已经真实发生，而不是纯理论风险
-    - `exp_interpretable_readout_experts_seed2025` test split:
-      - `guess_plus_slip_mean = 1.945274`
-      - `guess_plus_slip_max = 1.999997`
-      - `guess_plus_slip_p95 = 1.999303`
-      - `ratio(guess_plus_slip > 1) = 0.999638`
-    - `exp_interpretable_readout_experts_seed2026` test split:
-      - `guess_plus_slip_mean = 1.872332`
-      - `guess_plus_slip_max = 1.999906`
-      - `guess_plus_slip_p95 = 1.992325`
-      - `ratio(guess_plus_slip > 1) = 0.999486`
-  - 做法:
-    - 保持 `guess_logit / slip_logit` 两条分支和所有上游输入不变
-    - 只把最终 `guess/slip` 概率映射改成三元 softmax:
-      - `guess = softmax([guess_logit, slip_logit, 0])[0]`
-      - `slip = softmax([guess_logit, slip_logit, 0])[1]`
-    - 这样可显式保证 `guess >= 0`、`slip >= 0` 且 `guess + slip <= 1`
-  - 验证:
-    - 远端单测 `python -m unittest tests.test_decoupled_cdm` 通过
-    - 旧 checkpoint 在新前向下重新审计后，`ratio(guess_plus_slip > 1)` 已回到 `0`
-    - `exp_guess_slip_constraint_seed2024` 训练后 test split:
-      - `guess_plus_slip_mean = 0.101998`
-      - `guess_plus_slip_max = 0.998407`
-      - `guess_plus_slip_p95 = 0.554550`
-      - `ratio(guess_plus_slip > 1) = 0.0`
-  - 单 seed 结果:
-    - `seed=2024`, `best_epoch=181`:
-      - `AUC 0.764666`
-      - `ACC 0.726712`
-      - `RMSE 0.428926`
-      - `Brier 0.183978`
-      - `ECE 0.054151`
-  - 相对实验 51 同 seed baseline:
-    - `AUC +0.000615`
-    - `ACC -0.001960`
-    - `RMSE +0.000631`
-    - `Brier +0.000541`
-    - `ECE +0.003486`
+- 实验 62-65: constrained `guess/slip` 系列
+  - 分支:
+    - `exp/guess-slip-diagnostics`
+    - `exp/exp61-guess-slip-constraint`
+    - `exp/decoupled-gs-budget`
+    - `exp/uncertainty-conditioned-gs-budget`
+  - 核心发现:
+    - 旧 `guess/slip` 使用独立 `sigmoid`，实际 checkpoint 中大量样本出现 `guess + slip > 1`，会导致 `dp / dcognitive < 0` 的语义反转
+    - 三元 softmax、budget/split sigmoid、uncertainty-conditioned mixture 都能把 `ratio(guess_plus_slip > 1)` 压到 `0`
+    - 但约束后整体指标没有恢复；越强的 non-cognitive budget 补偿越容易伤害 `none_seen`
+  - 代表结果:
+    - 实验 62 三元 softmax 相对实验 51 同 seed: `AUC +0.000615`, `ACC -0.001960`, `RMSE +0.000631`, `Brier +0.000541`, `ECE +0.003486`
+    - 实验 63 叠到 exp61 后相对 exp61 opt 同 seed: `AUC -0.000656`, `ACC -0.003368`, `RMSE +0.001579`, `Brier +0.001354`, `ECE +0.005701`
+    - 实验 64 budget/split 相对实验 51 同 seed: `AUC -0.007257`, `ACC -0.001598`, `RMSE +0.003836`, `Brier +0.003300`, `ECE +0.003622`
+    - 实验 65 uncertainty-conditioned mixture 相对实验 51 同 seed: `AUC -0.005558`, `ACC -0.001427`, `RMSE +0.002958`, `Brier +0.002542`, `ECE +0.005545`
   - 结论:
-    - 这次修复确实清除了输出层的语义违例，且不是只在极少数样本上起作用；但在当前形式下，它更像“修正 non-cognitive 分支后改变了排序偏好”，没有形成 clean overall win
-    - 先保留这条线的机制结论和诊断工具，不直接吸收到 `master`
-    - 若后续继续推进这类语义修复，更合理的下一步不是直接扩 seed，而是考虑给 constrained `guess/slip` 增加更有表达力的参数化或配套训练补偿，再看能否保住 `ACC/Brier/ECE`
-
-- 实验 63: constrained `guess/slip` on top of exp61
-  - 分支: `exp/exp61-guess-slip-constraint`
-  - 提交:
-    - `c9e7a98`: 在 `exp61` 基座上把 `guess/slip` 改为共享概率预算的耦合参数化，并补单测
-  - 动机:
-    - 验证“约束 `guess + slip <= 1`”是否能和 experiment 61 的 full target-exclusion 训练口径形成互补
-    - 重点看它能否在保留 exp61 的 ranking 收益同时，缓解 exp61 原本的 `ACC/Brier/ECE` 代价
-  - 做法:
-    - 保持 exp61 的 target-exclusion 训练语义、缓存优化和其余主线结构不变
-    - 只把最终 `guess/slip` 概率映射改成三元 softmax:
-      - `guess = softmax([guess_logit, slip_logit, 0])[0]`
-      - `slip = softmax([guess_logit, slip_logit, 0])[1]`
-    - 从而显式保证 `guess >= 0`、`slip >= 0` 且 `guess + slip <= 1`
-  - 验证:
-    - 远端单测 `python -m unittest tests.test_decoupled_cdm` 通过
-    - `epochs=1, max_rows=2000` 的 target-exclusion smoke 已跑通
-    - 正式 `seed=2024` 训练后，test split 上:
-      - `guess_plus_slip_mean = 0.124655`
-      - `guess_plus_slip_max = 0.998527`
-      - `guess_plus_slip_p95 = 0.604326`
-      - `ratio(guess_plus_slip > 1) = 0.0`
-  - 单 seed 结果:
-    - `seed=2024`, `best_epoch=186`:
-      - `AUC 0.764602`
-      - `ACC 0.726275`
-      - `RMSE 0.429523`
-      - `Brier 0.184490`
-      - `ECE 0.055939`
-  - 相对 exp61 优化版同 seed (`exp61_opt_seed2024`):
-    - `AUC -0.000656`
-    - `ACC -0.003368`
-    - `RMSE +0.001579`
-    - `Brier +0.001354`
-    - `ECE +0.005701`
-  - 结论:
-    - 在 exp61 口径上，这个约束确实修掉了输出层语义违例，但没有和 target-exclusion 形成互补，反而让 `AUC/ACC/RMSE/Brier/ECE` 同时更差
-    - 不继续在 exp61 基座上扩 seed
-    - 若后续还要推进 constrained `guess/slip`，应把重点放在“如何补回表达能力或训练补偿”上，而不是简单叠加到已有 ranking-oriented 训练口径；当前这条组合不作为主线候选
-
-- 实验 64: decoupled non-cognitive budget and guess/slip split
-  - 分支: `exp/decoupled-gs-budget`
-  - 提交:
-    - `267886a`: 增加可切换的 `guess/slip` 概率参数化、补回分布诊断脚本并补单测
-  - 动机:
-    - 复访实验 62 的失败机制，验证问题是否主要来自“三元 softmax 把非认知总预算和 guess/slip 分配比例绑死”
-    - 重点看在继续满足 `guess + slip <= 1` 的前提下，把“总量”和“分配”解耦后，能否补回实验 62 丢失的 `ACC/Brier/ECE`
-  - 做法:
-    - 保持实验 51 主线结构、训练协议和 `guess/slip` 上游输入不变
-    - 把最终概率映射扩成可切换的 `gs_probability_mode`
-    - 新增的 `budget_split_sigmoid` 形式为:
-      - `m = sigmoid(budget_logit)`
-      - `r = sigmoid(split_logit)`
-      - `guess = m * r`
-      - `slip = m * (1 - r)`
-    - 从而显式保证 `guess >= 0`、`slip >= 0` 且 `guess + slip = m <= 1`
-  - 验证:
-    - 远端单测 `python -m unittest tests.test_decoupled_cdm` 通过
-    - `epochs=1, max_rows=2000` 的 smoke 已跑通
-    - 正式 `seed=2024` 训练后，test split 上:
-      - `guess_mean = 0.032703`
-      - `slip_mean = 0.106389`
-      - `guess_plus_slip_mean = 0.139092`
-      - `guess_plus_slip_max = 0.999999`
-      - `guess_plus_slip_p95 = 0.946891`
-      - `ratio(guess_plus_slip > 1) = 0.0`
-    - 对照同口径 test split:
-      - 实验 51 `guess_plus_slip_mean = 0.244109`
-      - 实验 62 `guess_plus_slip_mean = 0.101998`
-  - 单 seed 结果:
-    - `seed=2024`, `best_epoch=182`:
-      - `AUC 0.756794`
-      - `ACC 0.727074`
-      - `RMSE 0.432131`
-      - `Brier 0.186737`
-      - `ECE 0.054287`
-  - 相对实验 62 同 seed:
-    - `AUC -0.007872`
-    - `ACC +0.000362`
-    - `RMSE +0.003205`
-    - `Brier +0.002759`
-    - `ECE +0.000136`
-  - 相对实验 51 同 seed baseline:
-    - `AUC -0.007257`
-    - `ACC -0.001598`
-    - `RMSE +0.003836`
-    - `Brier +0.003300`
-    - `ECE +0.003622`
-  - 结论:
-    - 这次改动确实把 `guess/slip` 总预算从实验 62 的 `0.1020` 拉回到 `0.1391`，说明“共享 softmax 过度压缩非认知总量”这个机制判断并不是空的；但它没有把预算补回到实验 51 的量级，也没有把 overall 指标救回来
-    - 不继续扩 seed
-    - 若后续再访 constrained `guess/slip`，应优先考虑更直接补回总预算表达力的方案，例如显式 `null` 通道建模或额外训练补偿，而不是停留在当前这版两头 `sigmoid` 的 budget/split 重参数化；当前这条 follow-up 不作为主线候选
-
-- 实验 65: uncertainty-conditioned constrained non-cognitive mixture
-  - 分支: `exp/uncertainty-conditioned-gs-budget`
-  - 提交:
-    - `6f0c658`: 增加 uncertainty-conditioned `budget + fallback` 非认知 mixture、补回分布诊断脚本并补单测
-  - 动机:
-    - 在实验 64 的基础上再往前走一级，不再只改 `guess/slip` 参数化
-    - 重点验证“把 constrained non-cognitive 分支直接重写成显式 `budget + fallback` mixture，并让 budget 读取 coverage / concept_count / dispersion / target history 统计”后，能否补回实验 62/64 丢掉的表达力
-  - 做法:
-    - 保持实验 51 主线结构与训练协议不变
-    - 将最终非认知分支改写为:
-      - `m = sigmoid(budget_logit)`
-      - `r = sigmoid(fallback_logit)`
-      - `guess = m * r`
-      - `slip = m * (1 - r)`
-      - `p = (1 - m) * p_cog + m * r`
-    - 与实验 64 不同，`budget_logit` 不再只由单一旧 logit 承担，而是用 `guess_logit + slip_logit` 作为 base，再叠加读取以下特征的 residual:
-      - `difficulty`
-      - `concept_count`
-      - `coverage`
-      - `dispersion`
-      - 目标题相关概念的 `mean_accuracy / mean_log_attempts`
-      - `cognitive_uncertainty`
-    - `fallback_logit` 同样使用 `guess_logit - slip_logit` 的 base 加 uncertainty-conditioned residual
-  - 验证:
-    - 远端单测 `python -m unittest tests.test_decoupled_cdm` 通过
-    - `epochs=1, max_rows=2000` 的 smoke 已跑通
-    - smoke `seed=2024` test split:
-      - `guess_plus_slip_mean = 0.502403`
-      - `guess_plus_slip_p95 = 0.852836`
-      - `ratio(guess_plus_slip > 1) = 0.0`
-    - 正式 `seed=2024` 训练后，test split 上:
-      - `guess_mean = 0.162202`
-      - `slip_mean = 0.133380`
-      - `guess_plus_slip_mean = 0.295582`
-      - `guess_plus_slip_max = 0.998884`
-      - `guess_plus_slip_p95 = 0.905642`
-      - `ratio(guess_plus_slip > 1) = 0.0`
-    - 对照同口径 test split:
-      - 实验 51 `guess_plus_slip_mean = 0.244109`
-      - 实验 62 `guess_plus_slip_mean = 0.101998`
-      - 实验 64 `guess_plus_slip_mean = 0.139092`
-  - 单 seed 结果:
-    - `seed=2024`, `best_epoch=158`:
-      - `AUC 0.758493`
-      - `ACC 0.727245`
-      - `RMSE 0.431253`
-      - `Brier 0.185979`
-      - `ECE 0.056210`
-  - 相对实验 64 同 seed:
-    - `AUC +0.001699`
-    - `ACC +0.000171`
-    - `RMSE -0.000878`
-    - `Brier -0.000758`
-    - `ECE +0.001923`
-  - 相对实验 51 同 seed baseline:
-    - `AUC -0.005558`
-    - `ACC -0.001427`
-    - `RMSE +0.002958`
-    - `Brier +0.002542`
-    - `ECE +0.005545`
-  - 切片:
-    - `concept_count=4+`:
-      - 实验 51 `AUC 0.739185`, `ACC 0.674931`, `RMSE 0.459865`, `ECE 0.082999`
-      - 实验 65 `AUC 0.740835`, `ACC 0.680441`, `RMSE 0.459807`, `ECE 0.079169`
-    - `none_seen`:
-      - 实验 51 `AUC 0.812949`, `ACC 0.805187`, `RMSE 0.376444`, `ECE 0.109546`
-      - 实验 65 `AUC 0.794008`, `ACC 0.766586`, `RMSE 0.397493`, `ECE 0.147647`
-  - 结论:
-    - 这次 stronger 方案确实把 constrained non-cognitive 总预算补回到比实验 51 更高的区间，也优于实验 62/64 的“预算被压瘪”形态；相对实验 64 也带来了小幅 recovery
-    - 但它仍没有形成 enough overall recovery，更关键的是把 `none_seen` 显著做坏了；`concept_count=4+` 的改善也不足以支撑继续做 rescue sweep
-    - 不继续扩 seed，也不进入 rescue sweep；若后续还要继续探索更强一级 constrained non-cognitive 模块，重点应转向“为 fallback 分支引入更显式的可解释状态或 expert routing”，而不是继续只围绕 scalar budget 做增强
+    - 语义诊断成立，诊断工具值得保留；但这些参数化改动不作为主线候选
+    - 后续若再访，不能只继续调 scalar budget，应引入更显式的可解释状态、expert routing 或配套训练补偿
 
 - 实验 66: evidence-aware TKC propagation
   - 分支: `exp/evidence-aware-tkc`
@@ -980,131 +692,27 @@
     - `reliability` 和 `student fusion` 不是主增益源，单独或组合开启都没有形成稳定提升
     - 当前不进入主线候选；若后续再访，应只做更局部的 behavior gate 调节，例如只改 bias / temperature，或只作用于 `concept_count>=2` / low-evidence concept
 
-- 实验 67: learned multi-concept exercise attribution
+- 实验 67-68: learned multi-concept exercise attribution
   - 分支: `exp/learned-exercise-attribution`
-  - 提交:
-    - `22e49b3`: 增加 learned attribution propagation 入口、CLI/summary 字段、实验脚本和单测
-    - `bd38fe2`: 收紧 scorer chunk，缓解第一版 dense scorer 的显存峰值
-    - `1f9b7f0`: 只对 observed history `(u,e)` 计算 attribution，避免对所有 `student x exercise` 组合构图
-  - 动机:
-    - 多知识点题的历史作答证据不应等量污染所有相关概念
-    - 实验 24 只是按知识点数做静态分摊；这次改成 `student-conditioned / response-conditioned / history-conditioned` 的动态归因
-  - 做法:
-    - 在 propagation 的 correct/incorrect exercise message 聚合处启用 `--learned-exercise-attribution`
-    - 对每条 observed history `(u,e,y)` 和 `k in Q_e` 用 scorer 读取 `exercise_emb_e / concept_emb_k / difficulty_e / y / history_stats_{u,k}`
-    - 在 `Q_e` 内做 softmax 得到 `a_{u,e,k}`，并用 `a_{u,e,k} * exercise_message_e` 写回对应 `(u,k)` numerator
-    - correct 与 incorrect 使用独立 scorer；correct 额外保留 `correct_attribution_uniform_mix=0.5`，使正证据更接近均匀，incorrect 完全 learned
-    - 单知识点题保持原主线聚合；默认不开启该模块，旧 checkpoint 兼容
-  - 工程验证:
-    - 本地 `python3 -m py_compile models/hetero_propagation.py models/decoupled_cdm.py scripts/train.py scripts/evaluate.py scripts/analyze_prediction_slices.py` 通过
-    - 远端 `python -m unittest tests.test_hetero_propagation tests.test_decoupled_cdm` 通过
-    - `max_rows=5000, epochs=2` smoke 通过
-    - 第一版 full run 在 dense scorer 输入上 OOM；改为 observed-history scorer 后，全量 `epochs=1` smoke 通过
-  - 单 seed 结果:
-    - `seed=2024`, `best_epoch=170`:
-      - `AUC 0.758642`
-      - `ACC 0.723629`
-      - `RMSE 0.431140`
-      - `Brier 0.185881`
-      - `ECE 0.052279`
-  - 相对实验 51 同 seed baseline:
-    - `AUC -0.005409`
-    - `ACC -0.005043`
-    - `RMSE +0.002845`
-    - `Brier +0.002444`
-    - `ECE +0.001614`
-  - 切片:
-    - `concept_count=2`: `AUC 0.751928`, `ACC 0.717125`, `RMSE 0.434819`, `ECE 0.063822`
-    - `concept_count=3`: `AUC 0.712713`, `ACC 0.694352`, `RMSE 0.462118`, `ECE 0.093332`
-    - `concept_count=4+`: `AUC 0.739735`, `ACC 0.663912`, `RMSE 0.459902`, `ECE 0.087559`
-    - `none_seen`: `AUC 0.810125`, `ACC 0.744873`, `RMSE 0.419803`, `ECE 0.208710`
+  - 做法: 在 propagation 的 correct/incorrect exercise message 聚合处，用 `student-conditioned / response-conditioned / history-conditioned` scorer 为多知识点题动态归因；后续 rescue 测了 scale-preserving、`concept_count=4+`、incorrect-only 版本
+  - 代表结果:
+    - 原版相对实验 51 同 seed: `AUC -0.005409`, `ACC -0.005043`, `RMSE +0.002845`, `Brier +0.002444`, `ECE +0.001614`
+    - scale-preserving rescue 相对实验 51 同 seed: `AUC -0.003315`, `ACC -0.000837`, `RMSE +0.000937`, `Brier +0.000803`, `ECE -0.002072`
+    - `min4` 与 incorrect-only 也未恢复主线；`4+` 只有小幅 mixed signal，样本数 `363`，不足以抵消 overall 回撤
   - 结论:
-    - 该方案在机制上确实不同于实验 24 的静态分摊，但当前实现把 propagation 行为证据整体削弱了，overall 明显低于实验 51
-    - 多知识点目标切片没有形成足够干净的收益；`concept_count=4+` 只有极小 AUC 波动，ACC/ECE 反而回撤
-    - `none_seen` 被显著做坏，说明这类 attribution 前移会加剧未见概念的低估/校准问题
-    - 不扩 seed，不进入 rescue sweep；若以后再访，应避免直接替换主聚合，优先考虑 residual 化或只对 incorrect 通道/高 concept-count 题做局部温度调节
-
-- 实验 68: learned attribution rescue variants
-  - 分支: `exp/learned-exercise-attribution`
-  - 提交:
-    - `644eafc`: 增加 `--preserve-attribution-message-scale`
-    - `8b8ab58`: 增加 `--attribution-min-concept-count` 和 `min4` 实验脚本
-  - 动机:
-    - 实验 67 的主要失败机制不是 OOM，而是 softmax attribution 把多知识点题的 behavior message 从“每个概念一份”改成“多个概念共享一份”，相当于削弱 propagation 行为证据
-    - 因此先做 scale-preserving 版本: `softmax(a) * |Q_e|`，使零初始化 / uniform attribution 严格退化回当前主线
-    - 再测试两个更局部的 rescue: 只作用 `concept_count=4+`，以及 correct 完全均匀、只让 incorrect 通道学习
-  - 工程验证:
-    - 本地 `py_compile` 通过
-    - 远端 `python -m unittest tests.test_hetero_propagation tests.test_decoupled_cdm` 通过
-    - scale-preserving 与 `min4` 的全量 `epochs=1` smoke 均通过
-  - 结果:
-    - scale-preserving, `correct_uniform_mix=0.5`, `min_count=2`, `seed=2024`:
-      - `AUC 0.760736`
-      - `ACC 0.727835`
-      - `RMSE 0.429232`
-      - `Brier 0.184240`
-      - `ECE 0.048593`
-    - scale-preserving + `min_count=4`, `seed=2024`:
-      - `AUC 0.760321`
-      - `ACC 0.725171`
-      - `RMSE 0.430100`
-      - `Brier 0.184986`
-      - `ECE 0.051095`
-    - incorrect-only attribution, 即 `correct_uniform_mix=1.0`, `min_count=2`, `seed=2024`:
-      - `AUC 0.760257`
-      - `ACC 0.726141`
-      - `RMSE 0.429444`
-      - `Brier 0.184422`
-      - `ECE 0.048451`
-  - 相对实验 51 同 seed baseline:
-    - scale-preserving: `AUC -0.003315`, `ACC -0.000837`, `RMSE +0.000937`, `Brier +0.000803`, `ECE -0.002072`
-    - `min4`: `AUC -0.003730`, `ACC -0.003501`, `RMSE +0.001805`, `Brier +0.001549`, `ECE +0.000430`
-    - incorrect-only: `AUC -0.003794`, `ACC -0.002531`, `RMSE +0.001149`, `Brier +0.000985`, `ECE -0.002214`
-  - 切片观察:
-    - scale-preserving 的 `concept_count=4+`: `AUC 0.744623`, `ACC 0.674931`, `RMSE 0.456292`, `ECE 0.086045`
-    - `min4` 的 `concept_count=4+`: `AUC 0.743615`, `ACC 0.680441`, `RMSE 0.457104`, `ECE 0.086191`
-    - 两者相对实验 51 在 `4+` 上只有小幅 mixed signal，样本数仅 `363`，不足以抵消 overall 回撤
-    - `none_seen` 在 scale-preserving 仍显著校准偏差: `ECE 0.187543`
-  - 结论:
-    - scale-preserving 修掉了实验 67 最大的证据削弱问题，但仍没有恢复到实验 51 主线；说明问题不只是 message scale，而是“用 attribution 替换主聚合”本身没有把信号转成稳定收益
-    - `min4` 没能把局部 4+ 信号做干净，incorrect-only 也没有形成原假设期待的 blame assignment 收益
-    - 不继续扩 seed，也不再沿 attribution 主聚合替换路线做 rescue
-    - 若以后必须复访，只应作为 additive residual / calibration sidecar，而不是替换 propagation 主聚合
+    - 动态归因机制区别于实验 24 的静态分摊，但直接替换 propagation 主聚合会削弱行为证据，并显著伤害 `none_seen` 校准
+    - 不继续沿 attribution 主聚合替换路线 rescue；若以后必须复访，只应作为 additive residual / calibration sidecar，而不是替换主聚合
 
 - 实验 69: student-conditioned UKC imputation
   - 分支: `exp/student-conditioned-ukc-imputation`
-  - 提交:
-    - `8cc55d1`: 增加 `--student-conditioned-ukc-imputation`
-  - 动机:
-    - 实验 47 已证明 final-logit shared calibration bias 太钝，不能解决 `none_seen` 校准
-    - 这次把调整前移到 UKC 状态形成: 对每个学生、每个未测 concept，从图上直接邻接的已测 TKC states 聚合一个 student-specific prior，再用可学习 gate 与静态 UKC graph prior 融合
-    - gate 输入只使用可解释统计: student coverage、邻接已测 concept 数、邻接权重质量、平均邻接权重、邻居历史强度
-    - 为避免把实验 66 已未成立的完整 evidence-aware TKC 替换式改动重新混入，本实验直接消费当前主线已有 TKC states，仅测试 student-conditioned UKC 这个单因素
-  - 工程验证:
-    - 远端 `python -m unittest tests.test_hetero_propagation tests.test_decoupled_cdm tests.test_history_visibility tests.test_training_modes` 通过
+  - 做法: 对未测 concept 用图邻接已测 TKC states 聚合 student-specific prior，并与静态 UKC graph prior 融合，直接改 UKC 状态形成
   - 结果:
-    - `seed=2024`, `best_epoch=180`:
-      - `AUC 0.762949`
-      - `ACC 0.726693`
-      - `RMSE 0.429449`
-      - `Brier 0.184427`
-      - `ECE 0.054935`
-  - 相对实验 51 同 seed baseline:
-    - `AUC -0.001102`
-    - `ACC -0.001979`
-    - `RMSE +0.001154`
-    - `Brier +0.000990`
-    - `ECE +0.004270`
-  - 切片观察:
-    - `none_seen`: `AUC 0.815686`, `ACC 0.763571`, `RMSE 0.402774`, `ECE 0.174336`
-    - 相对实验 51 的 `none_seen`: `AUC +0.002737`, 但 `ACC -0.041616`, `RMSE +0.026330`, `ECE +0.064790`
-    - `concept_count=4+`: `AUC 0.736955`, `ACC 0.674931`, `RMSE 0.462518`, `ECE 0.095583`
-    - 相对实验 51 的 `concept_count=4+`: `AUC -0.002230`, `ACC +0.000000`, `RMSE +0.002653`, `ECE +0.012584`
+    - `seed=2024`: `AUC 0.762949`, `ACC 0.726693`, `RMSE 0.429449`, `Brier 0.184427`, `ECE 0.054935`
+    - 相对实验 51 同 seed: `AUC -0.001102`, `ACC -0.001979`, `RMSE +0.001154`, `Brier +0.000990`, `ECE +0.004270`
+    - `none_seen` 排序略变好但校准明显变坏: `AUC +0.002737`, `ACC -0.041616`, `RMSE +0.026330`, `ECE +0.064790`
   - 结论:
-    - 这个方向确实让 `none_seen` 排序略有变化，但没有解决核心校准问题，反而造成明显低估/误差副作用
-    - 直接把 UKC 静态 prior 替换为 student-conditioned TKC 邻域聚合，容易把已测概念的个体状态传播到未测概念后放大 under-confidence
-    - 不扩 seed，不作为主线候选
-    - 若未来再访，应避免替换 UKC 主状态；更合理的形态是只读的 diagnostic/residual sidecar，或只在 target readout 上对 `none_seen` 做非常局部的校准约束
+    - 直接替换 UKC 主状态会放大 `none_seen` under-confidence，不扩 seed
+    - 这个负结果导向实验 70 的设计: 不替换主状态，只做 target-local readout sidecar
 
 - 实验 70: student-conditioned UKC readout sidecar
   - 分支: `exp/student-conditioned-ukc-readout-sidecar`
@@ -1143,7 +751,7 @@
   - 结论:
     - 这是当前第一条把 `none_seen` 学生条件化信号稳定转成三 seed overall 正收益的结构路线
     - 和实验 47 的区别在于它不是全局共享 final-logit bias；和实验 69 的区别在于它不替换 UKC 主状态，只作为 target-local readout sidecar
-    - 已合入 `master` 并成为当前默认主线；后续探索默认从实验 70 口径出发，优先验证它与实验 61 target-exclusion 训练口径是否互补
+    - 已合入 `master` 并成为当前默认主线；后续探索默认从实验 70 口径出发，实验 70 + 实验 61 target-exclusion 的直接组合已由实验 71 判定为不 clean
 
 - 实验 71: exp70 + full target-excluded training combo
   - 分支: `exp/exp70-target-exclusion-combo`
