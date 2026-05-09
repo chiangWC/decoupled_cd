@@ -18,27 +18,26 @@
 ## 当前快照
 
 - 当前 `master` 正式主线沿用 [docs/session_bootstrap.md](./session_bootstrap.md) 里的“当前主线”口径。
-- 从这份归档的实验视角看，它对应实验 51 主线:
+- 从这份归档的实验视角看，它对应实验 70 主线:
   - 以实验 34 为底座
   - 吸收实验 49 的 history-carrier pairwise interaction residual
   - 再吸收实验 51 的 interpretable readout expert residual
+  - 再吸收实验 70 的 student-conditioned UKC `none_seen` readout sidecar
 - 这里不再重复维护与 `session_bootstrap.md` 等价的数据、图、超参数和 adapter 开关清单；需要确认默认运行口径时，优先回看 `session_bootstrap.md`
 - 当前主线三 seed 参考均值:
-  - `test_auc = 0.763889`
-  - `test_acc = 0.728951`
-  - `test_rmse = 0.427952`
-  - `test_brier = 0.183143`
-  - `test_ece = 0.049399`
+  - `test_auc = 0.765517`
+  - `test_acc = 0.729104`
+  - `test_rmse = 0.427350`
+  - `test_brier = 0.182628`
+  - `test_ece = 0.049044`
 - 当前结果报告默认主看 `AUC/ACC`
 - `RMSE/Brier/ECE/分桶校准` 默认作为次要指标
 - 若目标是推进主线，默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级；达不到时，通常需要很强的 slice 证据才值得继续
 
+- 当前已吸收的最新结构更新:
+  - 实验 70: student-conditioned UKC `none_seen` readout sidecar 已进入 `master` 默认主线；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
+
 - 当前正向支线候选:
-  - 实验 70
-    - branch: `exp/student-conditioned-ukc-readout-sidecar`
-    - 判断: 当前最强的 non-ID-aware 结构候选；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
-    - 补充: 收益主要来自把 student-conditioned UKC 信号做成 `none_seen` readout sidecar，并在训练态为该 sidecar 单独使用 leave-target-out coverage proxy；它不是替换 UKC 主状态
-    - 详细指标见下文“实验 70”
   - 实验 37
     - branch: `exp/training-modes`
     - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前主线，不作为默认 `master` 训练口径
@@ -46,8 +45,8 @@
     - 详细指标见下文“实验 37”
   - 实验 61
     - branch: `exp/full-target-exclusion-opt`
-    - 判断: 它是当前更强的 ranking-oriented target-exclusion 训练候选，工程优化后运行成本已从“明显过高”降到“可接受”，暂定为主线候选，但仍不作为默认 `master` 训练口径
-    - 补充: `2026-05-02` 复跑三 seed 后，`AUC` 稳定高于当前主线，`ACC/RMSE/Brier/ECE` 只形成 very small mixed deltas，因此更适合作为正式候选保留，而不是直接替换当前默认训练定义
+    - 判断: 它是当前最值得和实验 70 新主线做组合验证的 ranking-oriented target-exclusion 训练候选，工程优化后运行成本已从“明显过高”降到“可接受”，但仍不作为默认 `master` 训练口径
+    - 补充: `2026-05-02` 复跑三 seed 后，它相对实验 51 有稳定 `AUC` 正向；在实验 70 已合入后，单独训练口径不再明显强于当前主线，价值转为验证两条已成立候选是否互补
     - 详细指标见下文“实验 61”
 
 - 暂停中的 CF 支线:
@@ -1143,7 +1142,7 @@
   - 结论:
     - 这是当前第一条把 `none_seen` 学生条件化信号稳定转成三 seed overall 正收益的结构路线
     - 和实验 47 的区别在于它不是全局共享 final-logit bias；和实验 69 的区别在于它不替换 UKC 主状态，只作为 target-local readout sidecar
-    - 当前可作为新的主线候选，但合入 `master` 前建议再做一次代码整理: 命名强调 `none_seen` sidecar、保留 chunk 计算、避免把 leave-target-out proxy 扩散到其他模块
+    - 已合入 `master` 并成为当前默认主线；后续探索默认从实验 70 口径出发，优先验证它与实验 61 target-exclusion 训练口径是否互补
 
 ## 旧口径的历史参考
 
@@ -1205,10 +1204,10 @@
 通用协作、运行与分支规则沿用 [docs/session_bootstrap.md](./session_bootstrap.md)；这里仅补充历史台账导出的默认优先级:
 
 1. 仍从当前 `master` 主线出发；新假设优先单改一个结构因素，单次成立后再补 `2-3` 个 seed。
-2. 当前处于单因素边际收益放缓的平台期；结构主线仍优先解决多知识点题表示/读出偏弱，`none_seen` 默认视为后续单独处理的校准问题。
-3. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；优先考虑结构改动和训练协议这类职责分离的组合。
+2. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益，但多知识点题仍不是 clean win。
+3. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；当前优先组合是实验 70 主线 + 实验 61 target-exclusion 训练口径。
 4. 允许探索更大一级、真正改变表示瓶颈的模块；若单次结果表现为“overall 未过门槛但目标 slice 有明显改善”，可额外允许一次很小的 rescue sweep；普通 sidecar / residual 默认不进入这类 sweep。
-5. 若继续沿实验 51 的 readout expert 底座推进，默认保留原版 full-trigger 作为基座；只有在出现更明确的 targeted slice 假设或更局部的引导目标时，才再访这条线。
+5. 若继续沿实验 51/70 的 readout 底座推进，默认保留实验 51 full-trigger expert 与实验 70 `none_seen` sidecar；只有在出现更明确的 targeted slice 假设或更局部的引导目标时，才再访 routing / local mastery 近邻变体。
 6. 对已经系统复访但未形成 clean overall gain 的 readout / propagation / ranking-loss 路线，默认不再高优先级继续；只有在出现明确新假设、且机制上明显区别于已失败版本时，才考虑重开。
 7. 若用户明确要继续训练协议优化，当前优先候选是实验 37 与实验 61 两条支线；否则默认优先继续模型结构改动。
 8. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善；`RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用。

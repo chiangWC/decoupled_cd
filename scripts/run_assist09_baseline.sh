@@ -38,6 +38,7 @@ fi
   --gs-difficulty-adapter \
   --interpretable-readout-expert-adapter \
   --interpretable-readout-expert-count 3 \
+  --student-conditioned-ukc-readout-residual \
   --seed "${SEED:-2024}" \
-  --output "${OUTPUT:-results/assist_09_tkc_dual_channel_300ep.json}" \
+  --output "${OUTPUT:-results/assist_09_mainline_300ep.json}" \
   "$@"

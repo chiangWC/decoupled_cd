@@ -26,20 +26,20 @@
   - `results/exp_tkc_exercise_aggregation/`
   - 三 seed 均值约 `test_auc = 0.7597`
 - 当前正式主线结果目录:
-  - 代码口径已吸收实验 51；详细三 seed 指标以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 51 为准
+  - 代码口径已吸收实验 70；详细三 seed 指标以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 70 为准
   - 三 seed 均值:
-    - `test_auc = 0.763889`
-    - `test_acc = 0.728951`
-    - `test_rmse = 0.427952`
-    - `test_brier = 0.183143`
-    - `test_ece = 0.049399`
+    - `test_auc = 0.765517`
+    - `test_acc = 0.729104`
+    - `test_rmse = 0.427350`
+    - `test_brier = 0.182628`
+    - `test_ece = 0.049044`
 - 当前正式主线相对实验 23 基座均值差:
-  - `AUC +0.004199`
-  - `ACC +0.004167`
-  - `RMSE -0.003436`
-  - `Brier -0.002953`
-  - `ECE -0.012877`
-- 详细背景见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 34、实验 49、实验 50 和实验 51。
+  - `AUC +0.005827`
+  - `ACC +0.004320`
+  - `RMSE -0.004038`
+  - `Brier -0.003468`
+  - `ECE -0.013232`
+- 详细背景见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 34、实验 49、实验 50、实验 51 和实验 70。
 
 当前正向训练策略支线:
 
@@ -52,7 +52,7 @@
 - 分支: `exp/full-target-exclusion-opt`
 - 判断:
   - 这是当前 target-exclusion 训练口径的正式候选；`2026-05-02` 三 seed 复跑均值为 `AUC 0.765495`、`ACC 0.729256`、`RMSE 0.427883`、`Brier 0.183084`、`ECE 0.051331`。
-  - 相对当前正式主线，收益更偏 ranking-oriented: `AUC` 稳定更高，`ACC/RMSE/Brier` 基本持平到 very small 正向，但 `ECE` 仍更差。
+  - 它相对实验 51 有稳定 `AUC` 正向；实验 70 合入后，单独 target-exclusion 口径不再明显强于当前主线，当前价值转为验证结构更新与训练协议是否互补。
   - 原始实验 61 最大的问题是训练成本过高；工程优化后，远端 train-only `1 epoch` median runtime 已从约 `8.845s` 降到约 `2.002s`，不再因为成本直接降级。
   - 当前将它暂定为主线候选，但仍不作为 `master` 默认训练协议。
   - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 61 为准。
@@ -60,9 +60,11 @@
 当前结构主线补充:
 
 - 实验 51 的 full-trigger 三专家 readout residual 已吸收到当前 `master`。
+- 实验 70 的 student-conditioned UKC `none_seen` readout sidecar 已吸收到当前 `master`，它不替换 `TKC/UKC/student_state` 主状态，只作为 target-local cognitive-logit residual。
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
+  - `--student-conditioned-ukc-readout-residual`
 - `min_count>=2` 和 `min_count>=3` 的 targeted 变体没有吸收；它们都弱于 full-trigger 版本。
 - 后续 `exp/clean-readout-routing` 的 `seen/unseen` gate 统计和 `top-k` 稀疏路由也未超过当前主线，因此实验 51 原版 full-trigger 仍是这条线的正式保留版本。
 - 再后续的 `exp/readout-routing-soft-regularizer` 也未超过当前主线；soft routing regularizer 在单 seed 有轻微正信号，但三 seed 均值仍全面弱于实验 51 原版。
@@ -102,6 +104,7 @@
 - 实验 49 证明 history-carrier pairwise interaction residual 能把“显式历史概念统计”稳定转成 overall 正收益，并且 `none_seen` 也形成 clean win；这是实验 51 之前的结构主线更新，已经吸收到 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 49。
 - 实验 50 证明 learned pair aggregation 没有额外收益，主线保留简单均值聚合。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 50。
 - 实验 51 证明 interpretable readout expert residual 已形成稳定的非 ID-aware 结构更新；当前最强版本是 full-trigger 三专家，targeted 硬 trigger 反而更弱，这一步已经吸收到当前 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 51。
+- 实验 70 证明 student-conditioned UKC 信号以 `none_seen` readout sidecar 形式可以稳定转成三 seed overall 正收益；这一步已经吸收到当前 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 70。
 - 实验 52 证明在实验 51 底座上继续加入更显式的 `seen/unseen` routing 统计或 `top-k` 稀疏路由，并没有带来更强结果；这条 selective routing follow-up 暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 52。
 - 实验 53 证明在实验 51 底座上继续加入全局 soft routing regularizer，也没有形成稳定三 seed 增益；这条 routing-regularization follow-up 同样暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 53。
 - 实验 54 证明 “Q-conditioned local mastery 主 readout” 即使按更贴近 CD 语义的逐概念打分方式重做，单 seed 仍弱于当前主线，且没有留下足够强的多知识点 clean win；这条 readout 复访也暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 54。
@@ -123,7 +126,7 @@
 - 具体分支以 `git branch -a` 为准；每条路线的定位和结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的详细条目与 D 部分快速索引为准。
 - 若继续优化 calibration-oriented 训练协议，优先从 `exp/training-modes` 出发。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
-- 若继续做结构主线，默认直接从最新 `master` 切新 `exp/*` 分支；实验 51 代码已吸收到主线，不需要回到 `exp/interpretable-readout-experts` 继续堆改动。
+- 若继续做结构主线，默认直接从最新 `master` 切新 `exp/*` 分支；实验 51 与实验 70 代码已吸收到主线，不需要回到旧 `exp/*` 分支继续堆改动。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先回看 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目，确认是否真的出现了新的 slice 假设或机制假设，再决定是否重开。
 
 ## 当前关键文件

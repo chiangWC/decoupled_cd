@@ -60,10 +60,12 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - `pairwise_history_interaction_adapter` 默认开启，且 `pairwise_history_interaction_min_count = 2`
 - `gs_difficulty_adapter` 默认开启
 - `interpretable_readout_expert_adapter` 默认开启，且 `interpretable_readout_expert_count = 3`
-- 当前主线对应实验 51 口径:
+- `student_conditioned_ukc_readout_residual` 默认开启
+- 当前主线对应实验 70 口径:
   - 以实验 34 为底座
   - 再吸收“显式历史概念统计 carrier + shared pairwise concept interaction residual”
   - 再吸收“可解释 gate + readout expert residual”
+  - 再吸收“student-conditioned UKC `none_seen` readout sidecar”
 - 结构比较默认看 `300 epoch`
 - 实验报告默认主看 `AUC/ACC`
 - `RMSE/Brier/ECE/分桶校准` 仍保留，但默认作为次要指标用于判断误差与校准副作用
