@@ -89,6 +89,9 @@ def load_model(
         gs_difficulty_adapter=bool(summary.get("gs_difficulty_adapter", False)),
         interpretable_readout_expert_adapter=bool(summary.get("interpretable_readout_expert_adapter", False)),
         interpretable_readout_expert_count=int(summary.get("interpretable_readout_expert_count", 3)),
+        student_conditioned_ukc_readout_residual=bool(
+            summary.get("student_conditioned_ukc_readout_residual", False)
+        ),
     )
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state)
