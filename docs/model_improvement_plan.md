@@ -825,6 +825,34 @@
   - `none_seen` 更适合作为后续单独校准问题，而不是当前第一优先结构问题
   - exact-3 aggressive residual/readout 已单 seed 验证到头，不再继续深挖同类结构
 
+### 诊断 2. 实验 51 底座压制交叉复验
+
+- 动机:
+  - 当前主线吸收链是实验 34 -> 49 -> 51 -> 70；近期很多语义更干净的 readout / propagation 结构都只带来 `0.001-0.002` 量级甚至更小的收益
+  - 为验证是否存在“某个历史主线底座吸收后，导致后续语义干净结构难以发挥”，先把两个在实验 51 底座上失败的结构放回实验 49 底座单 seed 复验
+- 口径:
+  - seed 固定 `2024`
+  - 训练口径仍为 ASSIST09 ordered + single propagation graph + `300 epoch` + `lr=1e-3` + `concept_dim=64`
+  - 实验 49 底座保留 `high_concept_logit_adapter / pairwise_history_interaction_adapter / gs_difficulty_adapter`
+  - 关闭实验 51 的 `interpretable_readout_expert_adapter`，也不启用实验 70 的 `student_conditioned_ukc_readout_residual`
+  - 实验 49 control 的 seed=2024 指标由实验 51 条目中的“实验 51 相对实验 49 control”反推，约为 `AUC 0.762503 / ACC 0.729490 / RMSE 0.428295 / Brier 0.183436 / ECE 0.049692`
+- `q-conditioned local mastery readout` 放回实验 49 底座:
+  - 分支: `exp/q-conditioned-local-mastery-readout`
+  - 输出: `results/base_suppression/q_local_mastery_on_exp49_seed2024_300ep.json`
+  - 结果: `AUC 0.763445`, `ACC 0.729510`, `RMSE 0.427901`, `Brier 0.183099`, `ECE 0.048967`
+  - 相对实验 49 control 约为 `AUC +0.000942`, `ACC +0.000020`, `RMSE -0.000394`, `Brier -0.000337`, `ECE -0.000725`
+  - 对照实验 54 在实验 51 底座上的结果: 相对实验 51 为 `AUC -0.002073`, `ACC -0.001998`, `RMSE +0.000278`, `Brier +0.000238`, `ECE -0.003823`
+- `difficulty-weighted behavior propagation` 放回实验 49 底座:
+  - 分支: `exp/difficulty-weighted-propagation`
+  - 输出: `results/base_suppression/difficulty_weighted_behavior_on_exp49_seed2024_300ep.json`
+  - 结果: `AUC 0.762906`, `ACC 0.730842`, `RMSE 0.427684`, `Brier 0.182914`, `ECE 0.047218`
+  - 相对实验 49 control 约为 `AUC +0.000403`, `ACC +0.001352`, `RMSE -0.000611`, `Brier -0.000522`, `ECE -0.002474`
+  - 对照实验 55 在实验 51 底座上的结果: 相对实验 51 为 `AUC +0.000122`, `ACC -0.004548`, `RMSE +0.001907`, `Brier +0.001636`, `ECE +0.010659`
+- 判断:
+  - 这不是多 seed 定论，但它已经支持一个更具体的嫌疑: 实验 51 full-trigger readout expert residual 很可能改变了后续 readout / propagation clean structure 的边际表现，尤其会让本来在实验 49 上至少不伤整体误差与校准的结构，在实验 51 底座上转成 `ACC/RMSE/Brier/ECE` 回撤
+  - 当前证据不支持把实验 49 判为更强正式主线；实验 51 自身三 seed 仍有稳定 `AUC` 正向
+  - 后续若要验证“错误底座”假设，应优先做少量交叉矩阵，而不是继续只在最新主线堆模块: 对同一个新结构至少比较 `实验 49 底座` 与 `实验 51/70 底座` 的单 seed 边际收益；只有在旧底座正向、新底座负向时，再考虑是否重设主线吸收顺序或做 distillation / residual isolation
+
 ### 主题归纳 1. `none_seen` 与校准
 
 - 实验 47 已说明: `none_seen` 可以单独当校准问题做，但“对所有样本共享的 final-logit bias”过于粗糙
@@ -854,7 +882,7 @@
 2. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益，但多知识点题仍不是 clean win。
 3. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
 4. 允许探索更大一级、真正改变表示瓶颈的模块；若单次结果表现为“overall 未过门槛但目标 slice 有明显改善”，可额外允许一次很小的 rescue sweep；普通 sidecar / residual 默认不进入这类 sweep。
-5. 若继续沿实验 51/70 的 readout 底座推进，默认保留实验 51 full-trigger expert 与实验 70 `none_seen` sidecar；只有在出现更明确的 targeted slice 假设或更局部的引导目标时，才再访 routing / local mastery 近邻变体。
+5. 若继续沿实验 51/70 的 readout 底座推进，默认保留实验 51 full-trigger expert 与实验 70 `none_seen` sidecar；但诊断 2 已提示实验 51 可能压制部分后续 clean structure 的边际表现，因此新结构若在最新主线上表现为轻微负向、但语义足够干净，可优先追加一次实验 49 底座单 seed 交叉复验，再决定是否淘汰。
 6. 对已经系统复访但未形成 clean overall gain 的 readout / propagation / ranking-loss 路线，默认不再高优先级继续；只有在出现明确新假设、且机制上明显区别于已失败版本时，才考虑重开。
 7. 若用户明确要继续训练协议优化，当前优先候选是实验 37 与实验 61 两条支线；否则默认优先继续模型结构改动。
 8. 判断是否值得继续时，默认主看 `AUC/ACC`，并优先寻找至少 `1e-3` 量级的改善；`RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用。
