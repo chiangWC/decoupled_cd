@@ -45,8 +45,8 @@
     - 详细指标见下文“实验 37”
   - 实验 61
     - branch: `exp/full-target-exclusion-opt`
-    - 判断: 它是当前最值得和实验 70 新主线做组合验证的 ranking-oriented target-exclusion 训练候选，工程优化后运行成本已从“明显过高”降到“可接受”，但仍不作为默认 `master` 训练口径
-    - 补充: `2026-05-02` 复跑三 seed 后，它相对实验 51 有稳定 `AUC` 正向；在实验 70 已合入后，单独训练口径不再明显强于当前主线，价值转为验证两条已成立候选是否互补
+    - 判断: 它仍是 ranking-oriented target-exclusion 训练候选，工程优化后运行成本已从“明显过高”降到“可接受”，但仍不作为默认 `master` 训练口径
+    - 补充: `2026-05-02` 复跑三 seed 后，它相对实验 51 有稳定 `AUC` 正向；实验 71 已验证它与实验 70 的直接组合不是 clean win，不默认继续扩组合 seed
     - 详细指标见下文“实验 61”
 
 - 暂停中的 CF 支线:
@@ -69,6 +69,7 @@
   - 实验 67: learned multi-concept exercise attribution 机制上区别于实验 24 的静态分摊，但单 seed overall 明显弱于实验 51，且多知识点/`none_seen` 切片没有 clean win，不继续扩 seed
   - 实验 68: scale-preserving / high-count-only / incorrect-only attribution rescue 都没有恢复到实验 51；最强只是 `ECE` 小幅改善但 `AUC/ACC` 仍回撤，不继续沿 attribution 主聚合替换路线扩线
   - 实验 69: student-conditioned UKC imputation 没有解决 `none_seen` 校准，反而显著做坏 `none_seen` 的 `ACC/RMSE/ECE`，不扩 seed
+  - 实验 71: 实验 70 主线 + 实验 61 target-exclusion 训练口径只带来单 seed `AUC +0.000950`，但 `RMSE/Brier/ECE` 回撤，不扩 seed
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -1144,6 +1145,44 @@
     - 和实验 47 的区别在于它不是全局共享 final-logit bias；和实验 69 的区别在于它不替换 UKC 主状态，只作为 target-local readout sidecar
     - 已合入 `master` 并成为当前默认主线；后续探索默认从实验 70 口径出发，优先验证它与实验 61 target-exclusion 训练口径是否互补
 
+- 实验 71: exp70 + full target-excluded training combo
+  - 分支: `exp/exp70-target-exclusion-combo`
+  - 提交:
+    - `d58eec8`: 在实验 70 主线底座上合入实验 61 的 `--exclude-target-from-train-history` 训练路径，并让 target-exclusion reference 复用 sidecar 所需的只读 TKC/UKC states
+  - 动机:
+    - 实验 70 是当前最强 non-ID-aware 结构主线，实验 61 是 ranking-oriented 训练候选；二者职责相对分离，适合作为少量正交组合验证
+  - 工程验证:
+    - 远端 `python -m unittest tests.test_decoupled_cdm tests.test_hetero_propagation tests.test_history_visibility tests.test_training_modes` 通过
+    - 远端 `epochs=1, max_rows=2000` smoke 通过
+  - 结果:
+    - `seed=2024`, `best_epoch=196`:
+      - `AUC 0.766318`
+      - `ACC 0.729129`
+      - `RMSE 0.428091`
+      - `Brier 0.183262`
+      - `ECE 0.055403`
+  - 相对实验 70 同 seed:
+    - `AUC +0.000950`
+    - `ACC +0.000571`
+    - `RMSE +0.000211`
+    - `Brier +0.000180`
+    - `ECE +0.003393`
+  - 相对实验 61 opt 同 seed:
+    - `AUC +0.001060`
+    - `ACC -0.000514`
+    - `RMSE +0.000146`
+    - `Brier +0.000125`
+    - `ECE +0.005165`
+  - 切片观察:
+    - `none_seen`: `AUC 0.815324`, `ACC 0.823884`, `RMSE 0.357460`, `Brier 0.127778`, `ECE 0.069456`
+    - 相对实验 70 同 seed，`none_seen` 的 `AUC/ACC/RMSE/Brier` 小幅正向，但 `ECE` 基本持平略差
+    - `concept_count=4+`: `AUC 0.738085`, `ACC 0.663912`, `RMSE 0.461673`, `Brier 0.213142`, `ECE 0.087995`
+    - 相对实验 70 同 seed，`4+` 的 `ECE` 改善，但 `AUC/ACC/RMSE/Brier` 明显回撤；该 slice 样本数仍只有 `363`
+  - 结论:
+    - 组合确实继续把排序往上推，但 `AUC` 增量未达到默认 `1e-3` 门槛，且整体 `RMSE/Brier/ECE` 副作用比收益更清楚
+    - 不扩 seed，不把 target-exclusion 训练口径叠到实验 70 默认主线
+    - 若未来明确只追求 `AUC`，可把它作为 ranking-oriented ablation；若继续推进主线，优先寻找新的结构假设，而不是继续扩实验 61 组合
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。
@@ -1205,7 +1244,7 @@
 
 1. 仍从当前 `master` 主线出发；新假设优先单改一个结构因素，单次成立后再补 `2-3` 个 seed。
 2. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益，但多知识点题仍不是 clean win。
-3. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；当前优先组合是实验 70 主线 + 实验 61 target-exclusion 训练口径。
+3. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
 4. 允许探索更大一级、真正改变表示瓶颈的模块；若单次结果表现为“overall 未过门槛但目标 slice 有明显改善”，可额外允许一次很小的 rescue sweep；普通 sidecar / residual 默认不进入这类 sweep。
 5. 若继续沿实验 51/70 的 readout 底座推进，默认保留实验 51 full-trigger expert 与实验 70 `none_seen` sidecar；只有在出现更明确的 targeted slice 假设或更局部的引导目标时，才再访 routing / local mastery 近邻变体。
 6. 对已经系统复访但未形成 clean overall gain 的 readout / propagation / ranking-loss 路线，默认不再高优先级继续；只有在出现明确新假设、且机制上明显区别于已失败版本时，才考虑重开。

@@ -52,7 +52,8 @@
 - 分支: `exp/full-target-exclusion-opt`
 - 判断:
   - 这是当前 target-exclusion 训练口径的正式候选；`2026-05-02` 三 seed 复跑均值为 `AUC 0.765495`、`ACC 0.729256`、`RMSE 0.427883`、`Brier 0.183084`、`ECE 0.051331`。
-  - 它相对实验 51 有稳定 `AUC` 正向；实验 70 合入后，单独 target-exclusion 口径不再明显强于当前主线，当前价值转为验证结构更新与训练协议是否互补。
+  - 它相对实验 51 有稳定 `AUC` 正向；实验 70 合入后，单独 target-exclusion 口径不再明显强于当前主线。
+  - 实验 71 已验证“实验 70 + target-exclusion”直接组合不是 clean win: `seed=2024` 只有 `AUC +0.000950`，但 `RMSE/Brier/ECE` 回撤，因此不默认扩 seed。
   - 原始实验 61 最大的问题是训练成本过高；工程优化后，远端 train-only `1 epoch` median runtime 已从约 `8.845s` 降到约 `2.002s`，不再因为成本直接降级。
   - 当前将它暂定为主线候选，但仍不作为 `master` 默认训练协议。
   - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 61 为准。
