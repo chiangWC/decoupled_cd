@@ -64,6 +64,7 @@
   - 实验 59: parallel local context readout 分支在 smoke 阶段就触发数值不稳定，当前实现不再继续
   - 实验 67: learned multi-concept exercise attribution 机制上区别于实验 24 的静态分摊，但单 seed overall 明显弱于实验 51，且多知识点/`none_seen` 切片没有 clean win，不继续扩 seed
   - 实验 68: scale-preserving / high-count-only / incorrect-only attribution rescue 都没有恢复到实验 51；最强只是 `ECE` 小幅改善但 `AUC/ACC` 仍回撤，不继续沿 attribution 主聚合替换路线扩线
+  - 实验 69: student-conditioned UKC imputation 没有解决 `none_seen` 校准，反而显著做坏 `none_seen` 的 `ACC/RMSE/ECE`，不扩 seed
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -1064,6 +1065,41 @@
     - `min4` 没能把局部 4+ 信号做干净，incorrect-only 也没有形成原假设期待的 blame assignment 收益
     - 不继续扩 seed，也不再沿 attribution 主聚合替换路线做 rescue
     - 若以后必须复访，只应作为 additive residual / calibration sidecar，而不是替换 propagation 主聚合
+
+- 实验 69: student-conditioned UKC imputation
+  - 分支: `exp/student-conditioned-ukc-imputation`
+  - 提交:
+    - `8cc55d1`: 增加 `--student-conditioned-ukc-imputation`
+  - 动机:
+    - 实验 47 已证明 final-logit shared calibration bias 太钝，不能解决 `none_seen` 校准
+    - 这次把调整前移到 UKC 状态形成: 对每个学生、每个未测 concept，从图上直接邻接的已测 TKC states 聚合一个 student-specific prior，再用可学习 gate 与静态 UKC graph prior 融合
+    - gate 输入只使用可解释统计: student coverage、邻接已测 concept 数、邻接权重质量、平均邻接权重、邻居历史强度
+    - 为避免把实验 66 已未成立的完整 evidence-aware TKC 替换式改动重新混入，本实验直接消费当前主线已有 TKC states，仅测试 student-conditioned UKC 这个单因素
+  - 工程验证:
+    - 远端 `python -m unittest tests.test_hetero_propagation tests.test_decoupled_cdm tests.test_history_visibility tests.test_training_modes` 通过
+  - 结果:
+    - `seed=2024`, `best_epoch=180`:
+      - `AUC 0.762949`
+      - `ACC 0.726693`
+      - `RMSE 0.429449`
+      - `Brier 0.184427`
+      - `ECE 0.054935`
+  - 相对实验 51 同 seed baseline:
+    - `AUC -0.001102`
+    - `ACC -0.001979`
+    - `RMSE +0.001154`
+    - `Brier +0.000990`
+    - `ECE +0.004270`
+  - 切片观察:
+    - `none_seen`: `AUC 0.815686`, `ACC 0.763571`, `RMSE 0.402774`, `ECE 0.174336`
+    - 相对实验 51 的 `none_seen`: `AUC +0.002737`, 但 `ACC -0.041616`, `RMSE +0.026330`, `ECE +0.064790`
+    - `concept_count=4+`: `AUC 0.736955`, `ACC 0.674931`, `RMSE 0.462518`, `ECE 0.095583`
+    - 相对实验 51 的 `concept_count=4+`: `AUC -0.002230`, `ACC +0.000000`, `RMSE +0.002653`, `ECE +0.012584`
+  - 结论:
+    - 这个方向确实让 `none_seen` 排序略有变化，但没有解决核心校准问题，反而造成明显低估/误差副作用
+    - 直接把 UKC 静态 prior 替换为 student-conditioned TKC 邻域聚合，容易把已测概念的个体状态传播到未测概念后放大 under-confidence
+    - 不扩 seed，不作为主线候选
+    - 若未来再访，应避免替换 UKC 主状态；更合理的形态是只读的 diagnostic/residual sidecar，或只在 target readout 上对 `none_seen` 做非常局部的校准约束
 
 ## 旧口径的历史参考
 
