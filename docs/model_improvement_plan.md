@@ -62,6 +62,8 @@
   - 实验 56: student-wise pairwise ranking loss 也没把 overall 指标做成，不继续沿这条 ranking-loss 训练线扩权重或扩 seed
   - 实验 57: single-graph multi-hop propagation 复访后仍只有轻微排序波动，未形成 clean overall 正向；全局、coverage-conditioned、`UKC-only` 与 `2-hop only` 变体都不继续扩线
   - 实验 59: parallel local context readout 分支在 smoke 阶段就触发数值不稳定，当前实现不再继续
+  - 实验 67: learned multi-concept exercise attribution 机制上区别于实验 24 的静态分摊，但单 seed overall 明显弱于实验 51，且多知识点/`none_seen` 切片没有 clean win，不继续扩 seed
+  - 实验 68: scale-preserving / high-count-only / incorrect-only attribution rescue 都没有恢复到实验 51；最强只是 `ECE` 小幅改善但 `AUC/ACC` 仍回撤，不继续沿 attribution 主聚合替换路线扩线
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -972,6 +974,97 @@
     - `reliability` 和 `student fusion` 不是主增益源，单独或组合开启都没有形成稳定提升
     - 当前不进入主线候选；若后续再访，应只做更局部的 behavior gate 调节，例如只改 bias / temperature，或只作用于 `concept_count>=2` / low-evidence concept
 
+- 实验 67: learned multi-concept exercise attribution
+  - 分支: `exp/learned-exercise-attribution`
+  - 提交:
+    - `22e49b3`: 增加 learned attribution propagation 入口、CLI/summary 字段、实验脚本和单测
+    - `bd38fe2`: 收紧 scorer chunk，缓解第一版 dense scorer 的显存峰值
+    - `1f9b7f0`: 只对 observed history `(u,e)` 计算 attribution，避免对所有 `student x exercise` 组合构图
+  - 动机:
+    - 多知识点题的历史作答证据不应等量污染所有相关概念
+    - 实验 24 只是按知识点数做静态分摊；这次改成 `student-conditioned / response-conditioned / history-conditioned` 的动态归因
+  - 做法:
+    - 在 propagation 的 correct/incorrect exercise message 聚合处启用 `--learned-exercise-attribution`
+    - 对每条 observed history `(u,e,y)` 和 `k in Q_e` 用 scorer 读取 `exercise_emb_e / concept_emb_k / difficulty_e / y / history_stats_{u,k}`
+    - 在 `Q_e` 内做 softmax 得到 `a_{u,e,k}`，并用 `a_{u,e,k} * exercise_message_e` 写回对应 `(u,k)` numerator
+    - correct 与 incorrect 使用独立 scorer；correct 额外保留 `correct_attribution_uniform_mix=0.5`，使正证据更接近均匀，incorrect 完全 learned
+    - 单知识点题保持原主线聚合；默认不开启该模块，旧 checkpoint 兼容
+  - 工程验证:
+    - 本地 `python3 -m py_compile models/hetero_propagation.py models/decoupled_cdm.py scripts/train.py scripts/evaluate.py scripts/analyze_prediction_slices.py` 通过
+    - 远端 `python -m unittest tests.test_hetero_propagation tests.test_decoupled_cdm` 通过
+    - `max_rows=5000, epochs=2` smoke 通过
+    - 第一版 full run 在 dense scorer 输入上 OOM；改为 observed-history scorer 后，全量 `epochs=1` smoke 通过
+  - 单 seed 结果:
+    - `seed=2024`, `best_epoch=170`:
+      - `AUC 0.758642`
+      - `ACC 0.723629`
+      - `RMSE 0.431140`
+      - `Brier 0.185881`
+      - `ECE 0.052279`
+  - 相对实验 51 同 seed baseline:
+    - `AUC -0.005409`
+    - `ACC -0.005043`
+    - `RMSE +0.002845`
+    - `Brier +0.002444`
+    - `ECE +0.001614`
+  - 切片:
+    - `concept_count=2`: `AUC 0.751928`, `ACC 0.717125`, `RMSE 0.434819`, `ECE 0.063822`
+    - `concept_count=3`: `AUC 0.712713`, `ACC 0.694352`, `RMSE 0.462118`, `ECE 0.093332`
+    - `concept_count=4+`: `AUC 0.739735`, `ACC 0.663912`, `RMSE 0.459902`, `ECE 0.087559`
+    - `none_seen`: `AUC 0.810125`, `ACC 0.744873`, `RMSE 0.419803`, `ECE 0.208710`
+  - 结论:
+    - 该方案在机制上确实不同于实验 24 的静态分摊，但当前实现把 propagation 行为证据整体削弱了，overall 明显低于实验 51
+    - 多知识点目标切片没有形成足够干净的收益；`concept_count=4+` 只有极小 AUC 波动，ACC/ECE 反而回撤
+    - `none_seen` 被显著做坏，说明这类 attribution 前移会加剧未见概念的低估/校准问题
+    - 不扩 seed，不进入 rescue sweep；若以后再访，应避免直接替换主聚合，优先考虑 residual 化或只对 incorrect 通道/高 concept-count 题做局部温度调节
+
+- 实验 68: learned attribution rescue variants
+  - 分支: `exp/learned-exercise-attribution`
+  - 提交:
+    - `644eafc`: 增加 `--preserve-attribution-message-scale`
+    - `8b8ab58`: 增加 `--attribution-min-concept-count` 和 `min4` 实验脚本
+  - 动机:
+    - 实验 67 的主要失败机制不是 OOM，而是 softmax attribution 把多知识点题的 behavior message 从“每个概念一份”改成“多个概念共享一份”，相当于削弱 propagation 行为证据
+    - 因此先做 scale-preserving 版本: `softmax(a) * |Q_e|`，使零初始化 / uniform attribution 严格退化回当前主线
+    - 再测试两个更局部的 rescue: 只作用 `concept_count=4+`，以及 correct 完全均匀、只让 incorrect 通道学习
+  - 工程验证:
+    - 本地 `py_compile` 通过
+    - 远端 `python -m unittest tests.test_hetero_propagation tests.test_decoupled_cdm` 通过
+    - scale-preserving 与 `min4` 的全量 `epochs=1` smoke 均通过
+  - 结果:
+    - scale-preserving, `correct_uniform_mix=0.5`, `min_count=2`, `seed=2024`:
+      - `AUC 0.760736`
+      - `ACC 0.727835`
+      - `RMSE 0.429232`
+      - `Brier 0.184240`
+      - `ECE 0.048593`
+    - scale-preserving + `min_count=4`, `seed=2024`:
+      - `AUC 0.760321`
+      - `ACC 0.725171`
+      - `RMSE 0.430100`
+      - `Brier 0.184986`
+      - `ECE 0.051095`
+    - incorrect-only attribution, 即 `correct_uniform_mix=1.0`, `min_count=2`, `seed=2024`:
+      - `AUC 0.760257`
+      - `ACC 0.726141`
+      - `RMSE 0.429444`
+      - `Brier 0.184422`
+      - `ECE 0.048451`
+  - 相对实验 51 同 seed baseline:
+    - scale-preserving: `AUC -0.003315`, `ACC -0.000837`, `RMSE +0.000937`, `Brier +0.000803`, `ECE -0.002072`
+    - `min4`: `AUC -0.003730`, `ACC -0.003501`, `RMSE +0.001805`, `Brier +0.001549`, `ECE +0.000430`
+    - incorrect-only: `AUC -0.003794`, `ACC -0.002531`, `RMSE +0.001149`, `Brier +0.000985`, `ECE -0.002214`
+  - 切片观察:
+    - scale-preserving 的 `concept_count=4+`: `AUC 0.744623`, `ACC 0.674931`, `RMSE 0.456292`, `ECE 0.086045`
+    - `min4` 的 `concept_count=4+`: `AUC 0.743615`, `ACC 0.680441`, `RMSE 0.457104`, `ECE 0.086191`
+    - 两者相对实验 51 在 `4+` 上只有小幅 mixed signal，样本数仅 `363`，不足以抵消 overall 回撤
+    - `none_seen` 在 scale-preserving 仍显著校准偏差: `ECE 0.187543`
+  - 结论:
+    - scale-preserving 修掉了实验 67 最大的证据削弱问题，但仍没有恢复到实验 51 主线；说明问题不只是 message scale，而是“用 attribution 替换主聚合”本身没有把信号转成稳定收益
+    - `min4` 没能把局部 4+ 信号做干净，incorrect-only 也没有形成原假设期待的 blame assignment 收益
+    - 不继续扩 seed，也不再沿 attribution 主聚合替换路线做 rescue
+    - 若以后必须复访，只应作为 additive residual / calibration sidecar，而不是替换 propagation 主聚合
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。
@@ -1022,6 +1115,8 @@
 
 - 实验 55/56/57 共同说明: difficulty 前移、直接叠 ranking loss、single-graph multi-hop propagation 都更像轻度改变排序偏好，而不是 clean overall 增益
 - 实验 66 进一步说明: 即便显式历史统计前移到 propagation 主干，若以共享 gate 方式大范围注入，也更容易得到脆弱的单 seed 正信号，而不是稳定提点
+- 实验 67 进一步说明: 动态归因虽然比静态分摊语义更强，但直接替换 exercise-to-concept 主聚合容易削弱行为证据并伤害 `none_seen` 校准
+- 实验 68 进一步排除了几个自然 rescue: 保持 message scale、只打高 concept-count、只学 incorrect blame 都没有恢复主线收益
 - 这些方向的常见模式是 `AUC` 有时略正，但 `ACC/RMSE/Brier/ECE` 更容易回撤
 - 因此 propagation 侧与目标层 tweak 的优先级应继续下调；若再回到这些方向，前提应是已有更明确的局部 slice 假设，或已有更强的结构正向底座
 
