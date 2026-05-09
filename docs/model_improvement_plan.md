@@ -34,6 +34,11 @@
 - 若目标是推进主线，默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级；达不到时，通常需要很强的 slice 证据才值得继续
 
 - 当前正向支线候选:
+  - 实验 70
+    - branch: `exp/student-conditioned-ukc-readout-sidecar`
+    - 判断: 当前最强的 non-ID-aware 结构候选；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
+    - 补充: 收益主要来自把 student-conditioned UKC 信号做成 `none_seen` readout sidecar，并在训练态为该 sidecar 单独使用 leave-target-out coverage proxy；它不是替换 UKC 主状态
+    - 详细指标见下文“实验 70”
   - 实验 37
     - branch: `exp/training-modes`
     - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前主线，不作为默认 `master` 训练口径
@@ -1100,6 +1105,45 @@
     - 直接把 UKC 静态 prior 替换为 student-conditioned TKC 邻域聚合，容易把已测概念的个体状态传播到未测概念后放大 under-confidence
     - 不扩 seed，不作为主线候选
     - 若未来再访，应避免替换 UKC 主状态；更合理的形态是只读的 diagnostic/residual sidecar，或只在 target readout 上对 `none_seen` 做非常局部的校准约束
+
+- 实验 70: student-conditioned UKC readout sidecar
+  - 分支: `exp/student-conditioned-ukc-readout-sidecar`
+  - 提交:
+    - `9b73a37`: 增加 `--student-conditioned-ukc-readout-residual`
+  - 动机:
+    - 实验 69 说明直接替换 UKC 主状态会放大 `none_seen` 低估；但 `none_seen` 仍能从学生条件化的图邻接 TKC 证据中获益
+    - 因此改成只读 readout sidecar: 不改 `TKC/UKC/student_state` 主状态，只在 `none_seen` 且存在图邻接 TKC 证据时，加一个 zero-init cognitive-logit residual
+    - residual 输入包含 `student_state/q_repr`、图邻接 TKC 聚合得到的 student-conditioned UKC summary、静态 UKC summary、二者差异、difficulty、concept count、coverage 与邻接证据统计；输入均 detached
+    - 关键修正: 当前 full-batch 训练历史包含目标本身，train 中真实 `none_seen=0`，sidecar 会完全学不到。因此训练态下仅对该 sidecar 使用 `student_concept_attempt_counts - target_q` 的 leave-target-out coverage proxy；评估态仍使用真实 train-history coverage
+    - 工程上按 target chunk 计算 sidecar，避免全训练集一次性展开目标题 graph rows 导致 OOM
+  - 工程验证:
+    - 远端 `python -m unittest tests.test_decoupled_cdm tests.test_hetero_propagation tests.test_history_visibility tests.test_training_modes` 通过
+    - 训练触发诊断: train leave-target-out proxy 下 `none_seen_proxy=5974`，其中 `5167` 个有邻接 TKC 证据；valid/test 的 eligible rate 约 `86%`
+  - 结果:
+    - `seed=2024`: `AUC 0.765368`, `ACC 0.728558`, `RMSE 0.427880`, `Brier 0.183082`, `ECE 0.052010`
+    - `seed=2025`: `AUC 0.766528`, `ACC 0.729605`, `RMSE 0.426968`, `Brier 0.182302`, `ECE 0.049967`
+    - `seed=2026`: `AUC 0.764655`, `ACC 0.729148`, `RMSE 0.427201`, `Brier 0.182501`, `ECE 0.045154`
+  - 三 seed 均值:
+    - `AUC 0.765517`
+    - `ACC 0.729104`
+    - `RMSE 0.427350`
+    - `Brier 0.182628`
+    - `ECE 0.049044`
+  - 相对实验 51 当前主线三 seed 均值:
+    - `AUC +0.001628`
+    - `ACC +0.000153`
+    - `RMSE -0.000602`
+    - `Brier -0.000515`
+    - `ECE -0.000355`
+  - 切片观察:
+    - `none_seen` 三 seed 均值: `AUC 0.817951`, `ACC 0.823482`, `RMSE 0.358966`, `ECE 0.062414`
+    - `seed=2024` 相对实验 51 的 `none_seen`: `AUC +0.001171`, `ACC +0.013269`, `RMSE -0.015090`, `ECE -0.040188`
+    - `concept_count=4+` 三 seed 均值: `AUC 0.746527`, `ACC 0.689624`, `RMSE 0.458434`, `ECE 0.089720`
+    - `4+` 多知识点不是纯 clean win: AUC/ACC/RMSE 有正向，但 `seed=2024` 的 ECE 比实验 51 更差；样本数仅 `363`，后续不应为它单独扩大复杂度
+  - 结论:
+    - 这是当前第一条把 `none_seen` 学生条件化信号稳定转成三 seed overall 正收益的结构路线
+    - 和实验 47 的区别在于它不是全局共享 final-logit bias；和实验 69 的区别在于它不替换 UKC 主状态，只作为 target-local readout sidecar
+    - 当前可作为新的主线候选，但合入 `master` 前建议再做一次代码整理: 命名强调 `none_seen` sidecar、保留 chunk 计算、避免把 leave-target-out proxy 扩散到其他模块
 
 ## 旧口径的历史参考
 
