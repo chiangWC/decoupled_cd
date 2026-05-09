@@ -829,29 +829,38 @@
 
 - 动机:
   - 当前主线吸收链是实验 34 -> 49 -> 51 -> 70；近期很多语义更干净的 readout / propagation 结构都只带来 `0.001-0.002` 量级甚至更小的收益
-  - 为验证是否存在“某个历史主线底座吸收后，导致后续语义干净结构难以发挥”，先把两个在实验 51 底座上失败的结构放回实验 49 底座单 seed 复验
+  - 为验证是否存在“某个历史主线底座吸收后，导致后续语义干净结构难以发挥”，把两个在实验 51 底座上失败的结构放回更早底座做交叉复验
 - 口径:
-  - seed 固定 `2024`
   - 训练口径仍为 ASSIST09 ordered + single propagation graph + `300 epoch` + `lr=1e-3` + `concept_dim=64`
   - 实验 49 底座保留 `high_concept_logit_adapter / pairwise_history_interaction_adapter / gs_difficulty_adapter`
-  - 关闭实验 51 的 `interpretable_readout_expert_adapter`，也不启用实验 70 的 `student_conditioned_ukc_readout_residual`
-  - 实验 49 control 的 seed=2024 指标由实验 51 条目中的“实验 51 相对实验 49 control”反推，约为 `AUC 0.762503 / ACC 0.729490 / RMSE 0.428295 / Brier 0.183436 / ECE 0.049692`
-- `q-conditioned local mastery readout` 放回实验 49 底座:
+  - 实验 51 底座在实验 49 基础上再打开 `interpretable_readout_expert_adapter`
+  - 实验 70 的 `student_conditioned_ukc_readout_residual` 本轮不纳入矩阵，先隔离实验 51 这个嫌疑点
+- `q-conditioned local mastery readout` 扩大复验:
   - 分支: `exp/q-conditioned-local-mastery-readout`
-  - 输出: `results/base_suppression/q_local_mastery_on_exp49_seed2024_300ep.json`
-  - 结果: `AUC 0.763445`, `ACC 0.729510`, `RMSE 0.427901`, `Brier 0.183099`, `ECE 0.048967`
-  - 相对实验 49 control 约为 `AUC +0.000942`, `ACC +0.000020`, `RMSE -0.000394`, `Brier -0.000337`, `ECE -0.000725`
-  - 对照实验 54 在实验 51 底座上的结果: 相对实验 51 为 `AUC -0.002073`, `ACC -0.001998`, `RMSE +0.000278`, `Brier +0.000238`, `ECE -0.003823`
-- `difficulty-weighted behavior propagation` 放回实验 49 底座:
+  - 输出: `results/base_suppression/q_local_mastery_matrix/`
+  - 实验 34 底座 `seed=2024`: `AUC +0.000233`, `ACC +0.001808`, `RMSE -0.000747`, `Brier -0.000640`, `ECE +0.000123`
+  - 实验 49 底座三 seed 差值:
+    - `seed=2024`: `AUC +0.000942`, `ACC +0.000019`, `RMSE -0.000394`, `Brier -0.000337`, `ECE -0.000725`
+    - `seed=2025`: `AUC +0.002195`, `ACC -0.000247`, `RMSE -0.000350`, `Brier -0.000300`, `ECE +0.001913`
+    - `seed=2026`: `AUC +0.002430`, `ACC -0.000058`, `RMSE -0.000715`, `Brier -0.000612`, `ECE -0.000914`
+    - 均值: `AUC +0.001856`, `ACC -0.000095`, `RMSE -0.000486`, `Brier -0.000416`, `ECE +0.000091`
+  - 实验 51 底座三 seed 差值:
+    - `seed=2024`: `AUC -0.002073`, `ACC -0.001998`, `RMSE +0.000278`, `Brier +0.000238`, `ECE -0.003823`
+    - `seed=2025`: `AUC -0.001573`, `ACC -0.000438`, `RMSE +0.000115`, `Brier +0.000099`, `ECE -0.001287`
+    - `seed=2026`: `AUC -0.000920`, `ACC -0.001503`, `RMSE +0.000182`, `Brier +0.000156`, `ECE -0.003454`
+    - 均值: `AUC -0.001522`, `ACC -0.001313`, `RMSE +0.000192`, `Brier +0.000164`, `ECE -0.002855`
+- `difficulty-weighted behavior propagation` 扩大复验:
   - 分支: `exp/difficulty-weighted-propagation`
-  - 输出: `results/base_suppression/difficulty_weighted_behavior_on_exp49_seed2024_300ep.json`
-  - 结果: `AUC 0.762906`, `ACC 0.730842`, `RMSE 0.427684`, `Brier 0.182914`, `ECE 0.047218`
-  - 相对实验 49 control 约为 `AUC +0.000403`, `ACC +0.001352`, `RMSE -0.000611`, `Brier -0.000522`, `ECE -0.002474`
-  - 对照实验 55 在实验 51 底座上的结果: 相对实验 51 为 `AUC +0.000122`, `ACC -0.004548`, `RMSE +0.001907`, `Brier +0.001636`, `ECE +0.010659`
+  - 输出: `results/base_suppression/difficulty_weighted_matrix/`
+  - 实验 34 底座 `seed=2024`: `AUC +0.000081`, `ACC +0.001731`, `RMSE +0.000034`, `Brier +0.000029`, `ECE -0.000443`
+  - 实验 49 底座三 seed 均值: `AUC +0.000212`, `ACC +0.000881`, `RMSE -0.000620`, `Brier -0.000530`, `ECE -0.003367`
+  - 实验 51 底座三 seed 均值: `AUC -0.000306`, `ACC -0.000926`, `RMSE +0.000609`, `Brier +0.000523`, `ECE +0.003129`
 - 判断:
-  - 这不是多 seed 定论，但它已经支持一个更具体的嫌疑: 实验 51 full-trigger readout expert residual 很可能改变了后续 readout / propagation clean structure 的边际表现，尤其会让本来在实验 49 上至少不伤整体误差与校准的结构，在实验 51 底座上转成 `ACC/RMSE/Brier/ECE` 回撤
+  - `q-conditioned local mastery` 已经形成强三 seed 反转: 在实验 49 底座上 `AUC` 三 seed 全正且均值达到 `+0.001856`，但在实验 51 底座上 `AUC` 三 seed 全负且均值为 `-0.001522`
+  - `difficulty-weighted behavior propagation` 不是强 AUC 路线，但也呈现底座敏感: 在实验 49 底座上均值改善 `ACC/RMSE/Brier/ECE`，在实验 51 底座上均值则 `AUC/ACC/RMSE/Brier/ECE` 全部转坏
+  - 因此“实验 51 full-trigger readout expert residual 可能压制部分后续语义干净结构”的判断，从单 seed 嫌疑升级为当前应默认纳入实验设计的风险
   - 当前证据不支持把实验 49 判为更强正式主线；实验 51 自身三 seed 仍有稳定 `AUC` 正向
-  - 后续若要验证“错误底座”假设，应优先做少量交叉矩阵，而不是继续只在最新主线堆模块: 对同一个新结构至少比较 `实验 49 底座` 与 `实验 51/70 底座` 的单 seed 边际收益；只有在旧底座正向、新底座负向时，再考虑是否重设主线吸收顺序或做 distillation / residual isolation
+  - 后续若新结构在最新主线上轻微负向但语义足够干净，应优先比较 `实验 49 底座` 与 `实验 51/70 底座` 的边际收益；只有在旧底座正向、新底座负向时，再考虑重设主线吸收顺序、隔离实验 51 residual、或做 distillation / residual isolation
 
 ### 主题归纳 1. `none_seen` 与校准
 
