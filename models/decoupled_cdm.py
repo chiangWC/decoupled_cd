@@ -48,6 +48,7 @@ class DecoupledCDM(nn.Module):
         gs_difficulty_adapter: bool = False,
         interpretable_readout_expert_adapter: bool = False,
         interpretable_readout_expert_count: int = 3,
+        student_conditioned_ukc_readout_residual: bool = False,
     ):
         super().__init__()
         if gs_mode not in {"constant", "conditional"}:
@@ -66,6 +67,7 @@ class DecoupledCDM(nn.Module):
         self.gs_difficulty_adapter = gs_difficulty_adapter
         self.interpretable_readout_expert_adapter = interpretable_readout_expert_adapter
         self.interpretable_readout_expert_count = interpretable_readout_expert_count
+        self.student_conditioned_ukc_readout_residual = student_conditioned_ukc_readout_residual
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
         self.exercise_difficulty = nn.Embedding(num_exercises, 1)
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
@@ -136,6 +138,15 @@ class DecoupledCDM(nn.Module):
                 for _ in range(interpretable_readout_expert_count)
             ]
         )
+        self.student_conditioned_ukc_readout_residual_head = (
+            nn.Sequential(
+                nn.Linear(concept_dim * 5 + 6, concept_dim),
+                nn.ReLU(),
+                nn.Linear(concept_dim, 1),
+            )
+            if student_conditioned_ukc_readout_residual
+            else None
+        )
         nn.init.zeros_(self.cognitive_difficulty_adapter[-1].weight)
         nn.init.zeros_(self.cognitive_difficulty_adapter[-1].bias)
         nn.init.zeros_(self.high_concept_logit_residual[-1].weight)
@@ -147,6 +158,9 @@ class DecoupledCDM(nn.Module):
         for expert in self.interpretable_readout_experts:
             nn.init.zeros_(expert[-1].weight)
             nn.init.zeros_(expert[-1].bias)
+        if self.student_conditioned_ukc_readout_residual_head is not None:
+            nn.init.zeros_(self.student_conditioned_ukc_readout_residual_head[-1].weight)
+            nn.init.zeros_(self.student_conditioned_ukc_readout_residual_head[-1].bias)
 
     def forward(
         self,
@@ -240,6 +254,21 @@ class DecoupledCDM(nn.Module):
                 q_vectors=q_vectors,
                 student_tkc_mask=student_tkc_mask,
                 target_student_ids=target_student_ids,
+                student_state=student_state,
+                q_repr=q_repr,
+                concept_summary=concept_summary,
+                difficulty=difficulty,
+            )
+        if self.student_conditioned_ukc_readout_residual:
+            cognitive_logits = cognitive_logits + self._build_student_conditioned_ukc_readout_residual(
+                q_vectors=q_vectors,
+                concept_graph=concept_graph,
+                q_matrix=q_matrix,
+                student_exercise_mask=student_exercise_mask,
+                student_tkc_mask=student_tkc_mask,
+                target_student_ids=target_student_ids,
+                tkc_states=propagated.tkc_states,
+                ukc_states=propagated.ukc_states,
                 student_state=student_state,
                 q_repr=q_repr,
                 concept_summary=concept_summary,
@@ -426,3 +455,115 @@ class DecoupledCDM(nn.Module):
             dim=-1,
         )
         return (expert_scores * gate_probs).sum(dim=-1)
+
+    def _build_student_conditioned_ukc_readout_residual(
+        self,
+        *,
+        q_vectors: torch.Tensor,
+        concept_graph: torch.Tensor,
+        q_matrix: torch.Tensor,
+        student_exercise_mask: torch.Tensor,
+        student_tkc_mask: torch.Tensor,
+        target_student_ids: torch.Tensor,
+        tkc_states: torch.Tensor,
+        ukc_states: torch.Tensor,
+        student_state: torch.Tensor,
+        q_repr: torch.Tensor,
+        concept_summary: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        difficulty: torch.Tensor,
+        student_concept_attempt_counts: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if self.student_conditioned_ukc_readout_residual_head is None:
+            return q_repr.new_zeros(q_repr.size(0))
+        if student_concept_attempt_counts is None:
+            student_concept_attempt_counts = student_exercise_mask.to(dtype=q_repr.dtype) @ q_matrix.to(dtype=q_repr.dtype)
+        chunk_size = 8192
+        if q_repr.size(0) > chunk_size:
+            outputs = []
+            for start in range(0, q_repr.size(0), chunk_size):
+                stop = min(start + chunk_size, q_repr.size(0))
+                outputs.append(
+                    self._build_student_conditioned_ukc_readout_residual(
+                        q_vectors=q_vectors[start:stop],
+                        concept_graph=concept_graph,
+                        q_matrix=q_matrix,
+                        student_exercise_mask=student_exercise_mask,
+                        student_tkc_mask=student_tkc_mask,
+                        target_student_ids=target_student_ids[start:stop],
+                        tkc_states=tkc_states,
+                        ukc_states=ukc_states,
+                        student_state=student_state[start:stop],
+                        q_repr=q_repr[start:stop],
+                        concept_summary=tuple(value[start:stop] for value in concept_summary),
+                        difficulty=difficulty[start:stop],
+                        student_concept_attempt_counts=student_concept_attempt_counts,
+                    )
+                )
+            return torch.cat(outputs, dim=0)
+
+        concept_counts, _, _ = concept_summary
+        q_mask = q_vectors > 0
+        max_concept_count = int(q_mask.sum(dim=1).max().item())
+        if max_concept_count <= 0:
+            return q_repr.new_zeros(q_repr.size(0))
+
+        selected_scores, selected_indices = q_vectors.topk(k=max_concept_count, dim=1)
+        selected_valid = selected_scores > 0
+        safe_indices = selected_indices.masked_fill(~selected_valid, 0)
+
+        if self.training:
+            target_concept_attempt_counts = (student_concept_attempt_counts[target_student_ids] - q_vectors).clamp_min(
+                0.0
+            )
+            target_tkc_mask = (target_concept_attempt_counts > 0).to(dtype=q_repr.dtype)
+        else:
+            target_concept_attempt_counts = student_concept_attempt_counts[target_student_ids]
+            target_tkc_mask = student_tkc_mask[target_student_ids].to(dtype=q_repr.dtype)
+        target_tkc_states = tkc_states[target_student_ids].detach()
+        target_ukc_states = ukc_states[target_student_ids].detach()
+
+        selected_graph_rows = concept_graph.to(dtype=q_repr.dtype)[safe_indices]
+        graph_weights = selected_graph_rows * target_tkc_mask.unsqueeze(1)
+        graph_weights = graph_weights * selected_valid.to(dtype=q_repr.dtype).unsqueeze(-1)
+        neighbor_weight_mass = graph_weights.sum(dim=-1)
+        neighbor_count = (graph_weights > 0).to(dtype=q_repr.dtype).sum(dim=-1)
+        normalized_graph_weights = graph_weights / neighbor_weight_mass.unsqueeze(-1).clamp_min(1e-6)
+        student_conditioned_concepts = torch.einsum("bcj,bjd->bcd", normalized_graph_weights, target_tkc_states)
+
+        gather_indices = safe_indices.unsqueeze(-1).expand(-1, -1, target_ukc_states.size(-1))
+        static_ukc_concepts = target_ukc_states.gather(dim=1, index=gather_indices)
+        selected_valid_float = selected_valid.to(dtype=q_repr.dtype).unsqueeze(-1)
+        pooled_student_conditioned = (student_conditioned_concepts * selected_valid_float).sum(dim=1) / concept_counts
+        pooled_static_ukc = (static_ukc_concepts * selected_valid_float).sum(dim=1) / concept_counts
+
+        target_log_attempts = torch.log1p(target_concept_attempt_counts)
+        neighbor_log_attempts = torch.einsum("bcj,bj->bc", normalized_graph_weights, target_log_attempts)
+        selected_valid_scalar = selected_valid.to(dtype=q_repr.dtype)
+        mean_neighbor_count = (neighbor_count * selected_valid_scalar).sum(dim=1, keepdim=True) / concept_counts
+        mean_neighbor_mass = (neighbor_weight_mass * selected_valid_scalar).sum(dim=1, keepdim=True) / concept_counts
+        mean_neighbor_log_attempts = (neighbor_log_attempts * selected_valid_scalar).sum(dim=1, keepdim=True) / concept_counts
+
+        seen_concept_count = (q_mask.to(dtype=q_repr.dtype) * target_tkc_mask).sum(dim=1, keepdim=True)
+        coverage = seen_concept_count / concept_counts
+        num_concepts = max(1, student_tkc_mask.size(1))
+        residual_inputs = torch.cat(
+            [
+                student_state.detach(),
+                q_repr.detach(),
+                pooled_student_conditioned.detach(),
+                pooled_static_ukc.detach(),
+                torch.abs(pooled_student_conditioned - pooled_static_ukc).detach(),
+                difficulty.detach().unsqueeze(-1),
+                (concept_counts - 1.0).detach(),
+                coverage.detach(),
+                (mean_neighbor_count / float(num_concepts)).detach(),
+                mean_neighbor_mass.detach(),
+                mean_neighbor_log_attempts.detach(),
+            ],
+            dim=-1,
+        )
+        residual = self.student_conditioned_ukc_readout_residual_head(residual_inputs).squeeze(-1)
+        target_mask = ((seen_concept_count.squeeze(-1) <= 0) & (mean_neighbor_count.squeeze(-1) > 0)).to(
+            dtype=residual.dtype
+        )
+        return residual * target_mask

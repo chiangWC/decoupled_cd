@@ -130,6 +130,11 @@ def parse_args() -> argparse.Namespace:
         default=3,
         help="Number of experts used by the interpretable readout residual.",
     )
+    parser.add_argument(
+        "--student-conditioned-ukc-readout-residual",
+        action="store_true",
+        help="Enable a zero-init none-seen readout residual from graph-adjacent student TKC states.",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None, help="Optional comma-separated GPU candidates when --device auto.")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap for quick smoke runs.")
@@ -298,6 +303,7 @@ def main() -> None:
         gs_difficulty_adapter=args.gs_difficulty_adapter,
         interpretable_readout_expert_adapter=args.interpretable_readout_expert_adapter,
         interpretable_readout_expert_count=args.interpretable_readout_expert_count,
+        student_conditioned_ukc_readout_residual=args.student_conditioned_ukc_readout_residual,
     )
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -348,6 +354,7 @@ def main() -> None:
         "gs_difficulty_adapter": args.gs_difficulty_adapter,
         "interpretable_readout_expert_adapter": args.interpretable_readout_expert_adapter,
         "interpretable_readout_expert_count": args.interpretable_readout_expert_count,
+        "student_conditioned_ukc_readout_residual": args.student_conditioned_ukc_readout_residual,
         "seed": args.seed,
         "device": resolved_device,
         "max_rows": args.max_rows,
@@ -390,6 +397,7 @@ def main() -> None:
         "gs_difficulty_adapter": args.gs_difficulty_adapter,
         "interpretable_readout_expert_adapter": args.interpretable_readout_expert_adapter,
         "interpretable_readout_expert_count": args.interpretable_readout_expert_count,
+        "student_conditioned_ukc_readout_residual": args.student_conditioned_ukc_readout_residual,
         "seed": args.seed,
         "best_epoch": result.best_epoch,
         "best_val_auc": result.best_val_auc,

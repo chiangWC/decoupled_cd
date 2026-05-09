@@ -85,6 +85,11 @@ def parse_args() -> argparse.Namespace:
         default=3,
         help="Number of experts used by the interpretable readout residual.",
     )
+    parser.add_argument(
+        "--student-conditioned-ukc-readout-residual",
+        action="store_true",
+        help="Enable a zero-init none-seen readout residual from graph-adjacent student TKC states.",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--output", default="results/eval_summary.json")
@@ -196,6 +201,7 @@ def main() -> None:
         gs_difficulty_adapter=args.gs_difficulty_adapter,
         interpretable_readout_expert_adapter=args.interpretable_readout_expert_adapter,
         interpretable_readout_expert_count=args.interpretable_readout_expert_count,
+        student_conditioned_ukc_readout_residual=args.student_conditioned_ukc_readout_residual,
     )
 
     payload = {
@@ -219,6 +225,7 @@ def main() -> None:
         "gs_difficulty_adapter": args.gs_difficulty_adapter,
         "interpretable_readout_expert_adapter": args.interpretable_readout_expert_adapter,
         "interpretable_readout_expert_count": args.interpretable_readout_expert_count,
+        "student_conditioned_ukc_readout_residual": args.student_conditioned_ukc_readout_residual,
         "train_metrics": evaluate_model(bundle=bundles["train"], model=model, device=device),
         "valid_metrics": evaluate_model(bundle=bundles["valid"], model=model, device=device),
         "test_metrics": evaluate_model(bundle=bundles["test"], model=model, device=device),
