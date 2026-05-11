@@ -39,5 +39,5 @@
   - 结论:
     - 这是当前第一条把 `none_seen` 学生条件化信号稳定转成三 seed overall 正收益的结构路线
     - 和实验 47 的区别在于它不是全局共享 final-logit bias；和实验 69 的区别在于它不替换 UKC 主状态，只作为 target-local readout sidecar
-    - 从 git 历史恢复的合入前判断: 合入前曾明确要求命名强调 `none_seen` sidecar、保留 chunk 计算、避免把 leave-target-out coverage proxy 扩散到其他模块；当前主线实现即按这个方向整理
+    - 合入前实现约束: 合入前曾明确要求命名强调 `none_seen` sidecar、保留 chunk 计算、避免把 leave-target-out coverage proxy 扩散到其他模块；当前主线实现即按这个方向整理
     - 已合入 `master` 并成为当前默认主线；后续探索默认从实验 70 口径出发，实验 70 + 实验 61 target-exclusion 的直接组合已由实验 71 判定为不 clean

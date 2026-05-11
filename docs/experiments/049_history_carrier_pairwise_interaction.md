@@ -1,0 +1,27 @@
+# Experiment 49: history-carrier pairwise interaction residual
+
+- 动机: 不再直接从局部 `TKC/UKC` embedding 读多知识点交互，而是显式建模题相关概念对，并把更直接的历史概念统计作为 state carrier
+- 分支: `exp/pairwise-history-carrier`
+- 结构:
+  - 保留实验 34 主线
+  - 只对 `concept_count >= 2` 的题激活 zero-init pairwise interaction residual
+  - 对每个题相关概念对共享 scorer
+  - pairwise 输入为 `c_k / c_j / e_e` 加上逐概念历史统计 `accuracy / seen / log_attempt_count`
+  - pair score 做均值聚合后加到 `cognitive_logits`
+- 三 seed 相对实验 34:
+  - `seed=2024`: `AUC +0.001199`, `ACC +0.003844`, `RMSE -0.001182`, `Brier -0.001014`, `ECE -0.001450`
+  - `seed=2025`: `AUC +0.002073`, `ACC +0.001427`, `RMSE -0.000984`, `Brier -0.000844`, `ECE -0.000084`
+  - `seed=2026`: `AUC +0.000248`, `ACC +0.001351`, `RMSE -0.000728`, `Brier -0.000624`, `ECE -0.002408`
+- 三 seed 均值:
+  - `AUC +0.001173`
+  - `ACC +0.002207`
+  - `RMSE -0.000965`
+  - `Brier -0.000827`
+  - `ECE -0.001314`
+- 切片:
+  - `seed=2024` 的 `concept_count=2/3/4+` 均明显改善，其中 `concept_count=3` 为 `AUC +0.030833`, `ACC +0.025471`, `RMSE -0.013033`
+  - `none_seen` 也形成 clean win: `ACC +0.007841`, `RMSE -0.004422`, `Brier -0.003331`, `ECE -0.008649`
+- 结论:
+  - 这是第一条把“显式历史概念统计”稳定转成 overall 正收益的多知识点结构
+  - 它不依赖 item ID side channel，也不是 exact-3 特判，语义与实现都足够干净
+  - 实验 49 已吸收到 `master`

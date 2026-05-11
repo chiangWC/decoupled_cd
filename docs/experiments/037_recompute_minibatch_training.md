@@ -1,0 +1,32 @@
+# Experiment 37: true mini-batch recompute training
+
+- 动机: 真正引入 mini-batch SGD 噪声，同时保留传播梯度。
+- 分支: `exp/training-modes`
+- 关键工程:
+  - 增加 `training_mode`
+  - `recompute_minibatch` 每个 mini-batch 重跑完整传播
+  - `frozen_readout`、`alternating_frozen_readout` 已验证为负向
+- 正向配置: `recompute_minibatch bs=8192 lr=1e-4`
+- 三 seed 结果:
+  - `seed=2024`: `AUC 0.760737`, `ACC 0.727873`, `RMSE 0.428030`, `Brier 0.183210`, `ECE 0.042740`
+  - `seed=2025`: `AUC 0.764064`, `ACC 0.728216`, `RMSE 0.426850`, `Brier 0.182201`, `ECE 0.045369`
+  - `seed=2026`: `AUC 0.761622`, `ACC 0.727550`, `RMSE 0.428146`, `Brier 0.183309`, `ECE 0.045434`
+- 三 seed 均值:
+  - `test_auc = 0.762141`
+  - `test_acc = 0.727879`
+  - `test_rmse = 0.427675`
+  - `test_brier = 0.182906`
+  - `test_ece = 0.044514`
+- 相对实验 34 三 seed 均值:
+  - `AUC +0.000945`
+  - `ACC +0.000324`
+  - `RMSE -0.001494`
+  - `Brier -0.001280`
+  - `ECE -0.006628`
+- 切片:
+  - `concept_count=3` 的 `AUC +0.015340`
+  - `concept_count=4+` 仍退化: `AUC -0.010693`, `RMSE +0.003337`, `ECE +0.001965`
+  - `none_seen` 的 `RMSE/Brier` 改善，但 `ECE +0.001255`
+- 结论:
+  - 这是当前最强正向支线候选。
+  - 训练协议优化已接近收益上限；`cosine + warmup` 仅带来 `AUC +0.000471`, `ACC +0.000127`，同时 `ECE +0.002442`，不值得整包主线化。

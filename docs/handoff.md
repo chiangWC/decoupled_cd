@@ -26,7 +26,7 @@
   - `results/exp_tkc_exercise_aggregation/`
   - 三 seed 均值约 `test_auc = 0.7597`
 - 当前正式主线结果目录:
-  - 代码口径已吸收实验 70；详细三 seed 指标以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 70 为准
+  - 代码口径已吸收实验 70；详细三 seed 指标见 [070_student_conditioned_ukc_readout_sidecar.md](./experiments/070_student_conditioned_ukc_readout_sidecar.md)
   - 三 seed 均值:
     - `test_auc = 0.765517`
     - `test_acc = 0.729104`
@@ -39,7 +39,7 @@
   - `RMSE -0.004038`
   - `Brier -0.003468`
   - `ECE -0.013232`
-- 详细背景见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 34、实验 49、实验 50、实验 51 和实验 70。
+- 详细背景优先查 [experiment_index.jsonl](./experiment_index.jsonl)，再看实验 34、49、50、51 和 70 的 detail docs。
 
 当前正向训练策略支线:
 
@@ -48,7 +48,7 @@
   - 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前正式主线。
   - 收益主要来自真正 mini-batch SGD 的整体校准/泛化改善，不是彻底解决 `concept_count=4+` 或 `none_seen` 校准问题。
   - 它属于纯训练工程优化，单次运行耗时显著高于当前默认 full-batch 口径；在模型结构仍需继续迭代时，暂不适合作为 `master` 默认训练协议。
-  - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 37 为准。
+  - 详细结果见 [037_recompute_minibatch_training.md](./experiments/037_recompute_minibatch_training.md)。
 - 分支: `exp/full-target-exclusion-opt`
 - 判断:
   - 这是当前 target-exclusion 训练口径的正式候选；`2026-05-02` 三 seed 复跑均值为 `AUC 0.765495`、`ACC 0.729256`、`RMSE 0.427883`、`Brier 0.183084`、`ECE 0.051331`。
@@ -56,7 +56,7 @@
   - 实验 71 已验证“实验 70 + target-exclusion”直接组合不是 clean win: `seed=2024` 只有 `AUC +0.000950`，但 `RMSE/Brier/ECE` 回撤，因此不默认扩 seed。
   - 原始实验 61 最大的问题是训练成本过高；工程优化后，远端 train-only `1 epoch` median runtime 已从约 `8.845s` 降到约 `2.002s`，不再因为成本直接降级。
   - 当前将它暂定为主线候选，但仍不作为 `master` 默认训练协议。
-  - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 61 为准。
+  - 详细结果见 [061_full_target_excluded_training_audit.md](./experiments/061_full_target_excluded_training_audit.md)。
 
 当前结构主线补充:
 
@@ -82,7 +82,7 @@
 - 判断:
   - 这是当前最强 ranking-oriented 结构候选，但不是校准候选。
   - 已验证与实验 37 不是无损叠加，且扩大容量后的收益主要依赖当前 split 下的 ID-aware side channel。
-  - 详细结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 38-40 为准。
+  - 详细结果见 [038_040_cf_residual_family.md](./experiments/038_040_cf_residual_family.md)。
   - 当前决定: CF 支线暂停，不继续扩容，也不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / ID-aware ablation 或 appendix 讨论。
 
 ## 已经定下来的判断
@@ -100,23 +100,23 @@
 - 诊断 1 表明主线的主要剩余误差集中在多知识点题和 `none_seen` 校准。
 - 实验 34 证明“多知识点题 targeted residual + guess/slip difficulty residual”可以在三 seed 上同时改善 `AUC/ACC/RMSE/Brier/ECE`，这一步已经吸收到当前 `master`。
 - 实验 37 证明 `recompute_minibatch bs=8192 lr=1e-4` 是当前最强的 calibration-oriented 训练协议候选；但它属于纯训练工程优化，运行成本更高，且在 `AUC/ACC` 上仍弱于当前主线，因此暂不推广为 `master` 默认训练口径。
-- 实验 61 在 `2026-05-02` 的工程优化复跑后，已经从“训练成本过高的审计分支”升级为正式候选：`AUC` 稳定高于当前主线，`ACC/RMSE/Brier` 基本持平到 very small 正向，但 `ECE` 仍更差，因此当前只暂定为主线候选，不直接切成默认训练口径。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 61。
-- 实验 48 证明“显式历史概念统计”对多知识点题确有局部信号，但 original form 的三 seed overall 不稳定；这条路如再访，应改成更局部的 targeted trigger / mixture，而不是继续推进统一 residual。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 48。
-- 实验 49 证明 history-carrier pairwise interaction residual 能把“显式历史概念统计”稳定转成 overall 正收益，并且 `none_seen` 也形成 clean win；这是实验 51 之前的结构主线更新，已经吸收到 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 49。
-- 实验 50 证明 learned pair aggregation 没有额外收益，主线保留简单均值聚合。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 50。
-- 实验 51 证明 interpretable readout expert residual 已形成稳定的非 ID-aware 结构更新；当前最强版本是 full-trigger 三专家，targeted 硬 trigger 反而更弱，这一步已经吸收到当前 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 51。
-- 实验 70 证明 student-conditioned UKC 信号以 `none_seen` readout sidecar 形式可以稳定转成三 seed overall 正收益；这一步已经吸收到当前 `master`。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 70。
-- 实验 52 证明在实验 51 底座上继续加入更显式的 `seen/unseen` routing 统计或 `top-k` 稀疏路由，并没有带来更强结果；这条 selective routing follow-up 暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 52。
-- 实验 53 证明在实验 51 底座上继续加入全局 soft routing regularizer，也没有形成稳定三 seed 增益；这条 routing-regularization follow-up 同样暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 53。
-- 实验 54 证明 “Q-conditioned local mastery 主 readout” 即使按更贴近 CD 语义的逐概念打分方式重做，单 seed 仍弱于当前主线，且没有留下足够强的多知识点 clean win；这条 readout 复访也暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 54。
-- 实验 55 证明 propagation 侧 difficulty weighting 虽然能带来极小 `AUC` 正向，但整体更像“排序微升换误差与校准恶化”的折中，且没有留下足够强的多知识点 clean win；这条 propagation weighting 复访也暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 55。
-- 实验 56 证明 student-wise pairwise ranking loss 不能单独把当前主线推高；它最多带来轻微排序偏好变化，但 overall `AUC/ACC` 仍不如实验 51。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 56。
-- 实验 57 证明 single-graph multi-hop propagation 复访后仍只形成轻微排序波动，且全局、coverage-conditioned、`UKC-only`、`2-hop only` 版本都没有给出 clean overall 正向；这条 multi-hop propagation 复访暂停。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 57。
-- 诊断 2 表明实验 51 full-trigger readout expert residual 可能会压制部分后续语义更干净结构的边际表现: `q-conditioned local mastery` 在实验 49 底座三 seed `AUC +0.001856`，但在实验 51 底座三 seed `AUC -0.001522`；`difficulty-weighted propagation` 也从实验 49 底座的误差/校准均值正向，转成实验 51 底座的均值全面回撤。后续新结构若在最新主线上轻微负向但语义足够干净，应优先追加实验 49 底座交叉复验；详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的“诊断 2”。
-- 诊断 3 的更早底座广扫没有推翻诊断 2: `q-conditioned local mastery` 在 `B33/B34` 只是小正，到 `B49` 才三 seed 明显正向；`concept-conditioned propagation` 的 `B33` 单 seed 强正未复现；multi-hop、qrepr-score、history stats、ranking loss、clean routing 多数只是误差/校准折中或早底座也不成立。后续更应直接隔离实验 51 expert，而不是盲目回退到更早主线。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的“诊断 3”。
-- 实验 72 的表示瓶颈探针没有给出 `0.77+` 排序突破: `B49 + q-conditioned local mastery + exp70 sidecar` 只改善 `ACC/RMSE/Brier/ECE` 但 `AUC -0.000389`；`target-conditioned student context` 叠加实验 70 后 `AUC -0.007201`。recency/sequence encoder 会改变数据与历史可见性口径，当前不作为同一轮结构验证继续推进。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 72。
-- 实验 73 的当前主线口径扫没有发现 `0.77+` 训练配置；相对当前主线，最好的候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，三 seed 均值 `AUC +0.000928`、`ACC +0.001313`、`RMSE -0.000077`、`Brier -0.000066`、`ECE +0.002872`。它可作为 accuracy/ranking-oriented 候选口径，但不是 clean 默认切换。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 73。
-- 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）除实验 51 外，都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；细节统一以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 为准。
+- 实验 61 在 `2026-05-02` 的工程优化复跑后，已经从“训练成本过高的审计分支”升级为正式候选：`AUC` 稳定高于当前主线，`ACC/RMSE/Brier` 基本持平到 very small 正向，但 `ECE` 仍更差，因此当前只暂定为主线候选，不直接切成默认训练口径。详细指标见 [061_full_target_excluded_training_audit.md](./experiments/061_full_target_excluded_training_audit.md)。
+- 实验 48 证明“显式历史概念统计”对多知识点题确有局部信号，但 original form 的三 seed overall 不稳定；这条路如再访，应改成更局部的 targeted trigger / mixture，而不是继续推进统一 residual。详细指标见 [048_history_concept_stats_residual.md](./experiments/048_history_concept_stats_residual.md)。
+- 实验 49 证明 history-carrier pairwise interaction residual 能把“显式历史概念统计”稳定转成 overall 正收益，并且 `none_seen` 也形成 clean win；这是实验 51 之前的结构主线更新，已经吸收到 `master`。详细指标见 [049_history_carrier_pairwise_interaction.md](./experiments/049_history_carrier_pairwise_interaction.md)。
+- 实验 50 证明 learned pair aggregation 没有额外收益，主线保留简单均值聚合。详细指标见 [050_weighted_pairwise_history_aggregation.md](./experiments/050_weighted_pairwise_history_aggregation.md)。
+- 实验 51 证明 interpretable readout expert residual 已形成稳定的非 ID-aware 结构更新；当前最强版本是 full-trigger 三专家，targeted 硬 trigger 反而更弱，这一步已经吸收到当前 `master`。详细指标见 [051_interpretable_readout_expert_residual.md](./experiments/051_interpretable_readout_expert_residual.md)。
+- 实验 70 证明 student-conditioned UKC 信号以 `none_seen` readout sidecar 形式可以稳定转成三 seed overall 正收益；这一步已经吸收到当前 `master`。详细指标见 [070_student_conditioned_ukc_readout_sidecar.md](./experiments/070_student_conditioned_ukc_readout_sidecar.md)。
+- 实验 52 证明在实验 51 底座上继续加入更显式的 `seen/unseen` routing 统计或 `top-k` 稀疏路由，并没有带来更强结果；这条 selective routing follow-up 暂停。详细指标见 [052_clean_interpretable_readout_routing.md](./experiments/052_clean_interpretable_readout_routing.md)。
+- 实验 53 证明在实验 51 底座上继续加入全局 soft routing regularizer，也没有形成稳定三 seed 增益；这条 routing-regularization follow-up 同样暂停。详细指标见 [053_soft_routing_regularizer.md](./experiments/053_soft_routing_regularizer.md)。
+- 实验 54 证明 “Q-conditioned local mastery 主 readout” 即使按更贴近 CD 语义的逐概念打分方式重做，单 seed 仍弱于当前主线，且没有留下足够强的多知识点 clean win；这条 readout 复访也暂停。详细指标见 [054_q_conditioned_local_mastery_readout.md](./experiments/054_q_conditioned_local_mastery_readout.md)。
+- 实验 55 证明 propagation 侧 difficulty weighting 虽然能带来极小 `AUC` 正向，但整体更像“排序微升换误差与校准恶化”的折中，且没有留下足够强的多知识点 clean win；这条 propagation weighting 复访也暂停。详细指标见 [055_difficulty_weighted_propagation.md](./experiments/055_difficulty_weighted_propagation.md)。
+- 实验 56 证明 student-wise pairwise ranking loss 不能单独把当前主线推高；它最多带来轻微排序偏好变化，但 overall `AUC/ACC` 仍不如实验 51。详细指标见 [056_student_pairwise_ranking_loss.md](./experiments/056_student_pairwise_ranking_loss.md)。
+- 实验 57 证明 single-graph multi-hop propagation 复访后仍只形成轻微排序波动，且全局、coverage-conditioned、`UKC-only`、`2-hop only` 版本都没有给出 clean overall 正向；这条 multi-hop propagation 复访暂停。详细指标见 [057_single_graph_multi_hop_propagation.md](./experiments/057_single_graph_multi_hop_propagation.md)。
+- 诊断 2 表明实验 51 full-trigger readout expert residual 可能会压制部分后续语义更干净结构的边际表现: `q-conditioned local mastery` 在实验 49 底座三 seed `AUC +0.001856`，但在实验 51 底座三 seed `AUC -0.001522`；`difficulty-weighted propagation` 也从实验 49 底座的误差/校准均值正向，转成实验 51 底座的均值全面回撤。后续新结构若在最新主线上轻微负向但语义足够干净，应优先追加实验 49 底座交叉复验；详细指标见 [experiment_themes.md](./experiment_themes.md) 的“诊断 2”。
+- 诊断 3 的更早底座广扫没有推翻诊断 2: `q-conditioned local mastery` 在 `B33/B34` 只是小正，到 `B49` 才三 seed 明显正向；`concept-conditioned propagation` 的 `B33` 单 seed 强正未复现；multi-hop、qrepr-score、history stats、ranking loss、clean routing 多数只是误差/校准折中或早底座也不成立。后续更应直接隔离实验 51 expert，而不是盲目回退到更早主线。详细指标见 [experiment_themes.md](./experiment_themes.md) 的“诊断 3”。
+- 实验 72 的表示瓶颈探针没有给出 `0.77+` 排序突破: `B49 + q-conditioned local mastery + exp70 sidecar` 只改善 `ACC/RMSE/Brier/ECE` 但 `AUC -0.000389`；`target-conditioned student context` 叠加实验 70 后 `AUC -0.007201`。recency/sequence encoder 会改变数据与历史可见性口径，当前不作为同一轮结构验证继续推进。详细指标见 [072_representation_bottleneck_probes.md](./experiments/072_representation_bottleneck_probes.md)。
+- 实验 73 的当前主线口径扫没有发现 `0.77+` 训练配置；相对当前主线，最好的候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，三 seed 均值 `AUC +0.000928`、`ACC +0.001313`、`RMSE -0.000077`、`Brier -0.000066`、`ECE +0.002872`。它可作为 accuracy/ranking-oriented 候选口径，但不是 clean 默认切换。详细指标见 [073_current_mainline_protocol_sweep.md](./experiments/073_current_mainline_protocol_sweep.md)。
+- 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）除实验 51 外，都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；细节统一先查 [experiment_index.jsonl](./experiment_index.jsonl)，再按需打开对应 detail doc。
 - 实验 38-40 的 CF 支线已确认主要依赖 ID-aware side channel，不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / appendix 讨论。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
