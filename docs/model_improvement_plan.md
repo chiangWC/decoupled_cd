@@ -85,7 +85,7 @@
   - 详情: [006_hyperparameter_sweep.md](./experiments/006_hyperparameter_sweep.md)
   - 判断: 锁定 lr=1e-3、concept_dim=64 作为结构比较默认超参
 - 实验 7: `conditional g/s`
-  - 详情: [007_conditional_guess_slip.md](./experiments/007_conditional_guess_slip.md)
+  - 详情: 当前只保留本节摘要
   - 判断: conditional guess/slip 固化为默认配置
 - 实验 8: 长训
   - 详情: [008_long_training_protocol.md](./experiments/008_long_training_protocol.md)

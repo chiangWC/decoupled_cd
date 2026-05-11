@@ -15,9 +15,10 @@ git show <commit>:docs/model_improvement_plan.md
 
 Recommended detail status values for `docs/experiment_index.jsonl`:
 
-- `local_detail_doc`: detailed notes are available in this directory.
 - `history_enriched_detail`: the local detail doc includes targeted evidence from older git history.
-- `compressed_only`: only the compressed main-plan summary is available.
+- `local_detail_doc`: detailed notes are available in this directory, but no extra git-history recovery has been done.
+- `migrated_summary`: this is only a short summary migrated from the compressed main plan; do not treat it as full detail.
+- `compressed_only`: only the compressed archive summary is available.
 - `older_history_possible`: older uncompressed notes may exist in git history.
 
 New experiment notes should prefer:
