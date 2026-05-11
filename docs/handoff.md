@@ -39,7 +39,7 @@
   - `RMSE -0.004038`
   - `Brier -0.003468`
   - `ECE -0.013232`
-- 详细背景优先查 [experiment_index.jsonl](./experiment_index.jsonl)，再看实验 34、49、50、51 和 70 的 detail docs。
+- 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
 当前正向训练策略支线:
 
@@ -116,7 +116,7 @@
 - 诊断 3 的更早底座广扫没有推翻诊断 2: `q-conditioned local mastery` 在 `B33/B34` 只是小正，到 `B49` 才三 seed 明显正向；`concept-conditioned propagation` 的 `B33` 单 seed 强正未复现；multi-hop、qrepr-score、history stats、ranking loss、clean routing 多数只是误差/校准折中或早底座也不成立。后续更应直接隔离实验 51 expert，而不是盲目回退到更早主线。详细指标见 [experiment_themes.md](./experiment_themes.md) 的“诊断 3”。
 - 实验 72 的表示瓶颈探针没有给出 `0.77+` 排序突破: `B49 + q-conditioned local mastery + exp70 sidecar` 只改善 `ACC/RMSE/Brier/ECE` 但 `AUC -0.000389`；`target-conditioned student context` 叠加实验 70 后 `AUC -0.007201`。recency/sequence encoder 会改变数据与历史可见性口径，当前不作为同一轮结构验证继续推进。详细指标见 [072_representation_bottleneck_probes.md](./experiments/072_representation_bottleneck_probes.md)。
 - 实验 73 的当前主线口径扫没有发现 `0.77+` 训练配置；相对当前主线，最好的候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，三 seed 均值 `AUC +0.000928`、`ACC +0.001313`、`RMSE -0.000077`、`Brier -0.000066`、`ECE +0.002872`。它可作为 accuracy/ranking-oriented 候选口径，但不是 clean 默认切换。详细指标见 [073_current_mainline_protocol_sweep.md](./experiments/073_current_mainline_protocol_sweep.md)。
-- 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）除实验 51 外，都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；细节统一先查 [experiment_index.jsonl](./experiment_index.jsonl)，再按需打开对应 detail doc。
+- 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）除实验 51 外，都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；若要复访，按实验号查 [experiment_index.jsonl](./experiment_index.jsonl)，再按需打开对应 detail doc。
 - 实验 38-40 的 CF 支线已确认主要依赖 ID-aware side channel，不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / appendix 讨论。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
 - `dual graph` 相关 CLI / 配置现在只应视为 legacy ablation 入口，不属于当前默认工作路径。
@@ -128,7 +128,7 @@
 ## 当前分支优先级
 
 - `exp/*` 分支只作为实验代码和复验参考，不直接代表当前主线。
-- 具体分支以 `git branch -a` 为准；每条路线的定位和结果先看 [experiment_index.jsonl](./experiment_index.jsonl) 与 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的索引，必要时再打开 `docs/experiments/` 下的 detail 文件。
+- 具体分支以 `git branch -a` 为准；路线定位先看 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的摘要。只有已知实验号、分支名或要按状态筛选时，再查 [experiment_index.jsonl](./experiment_index.jsonl)，必要时打开 `docs/experiments/` 下的 detail 文件。
 - 若继续优化 calibration-oriented 训练协议，优先从 `exp/training-modes` 出发。
 - 若继续复核当前主线训练口径，优先参考 `exp/mainline-protocol-sweep`；当前最强候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，但只作为候选，不替换 `master` 默认口径。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。

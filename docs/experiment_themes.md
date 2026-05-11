@@ -1,6 +1,8 @@
 # Experiment Themes And Diagnostics
 
-This file holds cross-experiment diagnostics and theme-level conclusions. Use it when designing a new line of experiments, after checking the current snapshot and experiment index.
+This file holds cross-experiment diagnostics and theme-level conclusions.
+
+Open it when designing a new experiment needs cross-cutting context, such as `none_seen` calibration, experiment 51 base suppression, propagation-side tweaks, or earlier-base scans. Do not use it as a default boot document.
 
 ## 近线 follow-up
 

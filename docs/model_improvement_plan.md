@@ -13,7 +13,8 @@
 - 先看“当前快照”，确认主线、结果口径和近线候选。
 - 要判断某条路线是否还值得继续时，先看“已验证有效”和“已验证无效或已降级”的摘要，再跳到对应 detail doc。
 - 要设计下一轮实验时，看“近线 follow-up”和“默认下一步”。
-- 要按实验号定位时，优先查 [experiment_index.jsonl](./experiment_index.jsonl)，再看 `docs/experiments/` 或归档拆分文档。
+- 要按实验号、分支名、状态或失败原因定位时，查 [experiment_index.jsonl](./experiment_index.jsonl)；它是路由表，不是默认阅读入口。
+- 只有复访早期失败路线时才打开 [archive_legacy_experiments.md](./archive_legacy_experiments.md)；只有需要跨实验诊断和主题归纳时才打开 [experiment_themes.md](./experiment_themes.md)。
 - 主文档只保留当前主线、候选和决策索引；实验细节默认外置。
 
 ## 当前快照
@@ -75,7 +76,7 @@
 
 ## 已验证有效
 
-下面只保留改变主线判断或协议判断的摘要；详细证据外置到 `docs/experiments/`，结构化检索优先看 [experiment_index.jsonl](./experiment_index.jsonl)。
+下面只保留改变主线判断或协议判断的摘要；详细证据外置到 `docs/experiments/`。如果已经知道实验号、状态或分支名，再用 [experiment_index.jsonl](./experiment_index.jsonl) 快速定位。
 
 - 实验 3: 论文式 transition graph
   - 详情: [003_transition_graph.md](./experiments/003_transition_graph.md)
@@ -119,9 +120,9 @@
 
 ## 已验证无效或已降级
 
-- 近期实验 24/26/45-74 的状态索引见下方“近期实验索引（详情外置）”和 [experiment_index.jsonl](./experiment_index.jsonl)。
-- 早期 legacy / downgraded 条目见 [archive_legacy_experiments.md](./archive_legacy_experiments.md)。
-- 跨实验诊断和主题归纳见 [experiment_themes.md](./experiment_themes.md)。
+- 近期实验 24/26/45-74 的状态索引见下方“近期实验索引（详情外置）”；需要按状态、失败原因或分支名筛选时再查 [experiment_index.jsonl](./experiment_index.jsonl)。
+- 早期 legacy / downgraded 条目只在复访旧失败路线时看 [archive_legacy_experiments.md](./archive_legacy_experiments.md)。
+- 跨实验诊断和主题归纳只在设计新实验或判断底座压制等横向问题时看 [experiment_themes.md](./experiment_themes.md)。
 
 ### 近期实验索引（详情外置）
 

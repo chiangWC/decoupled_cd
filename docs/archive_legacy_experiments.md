@@ -1,6 +1,8 @@
 # Legacy And Downgraded Experiment Archive
 
-This file holds compressed legacy and downgraded experiment notes moved out of `docs/model_improvement_plan.md`. Use `docs/experiment_index.jsonl` first for experiments that have structured entries.
+This file holds compressed legacy and downgraded experiment notes moved out of `docs/model_improvement_plan.md`.
+
+Open it only when revisiting an older failed route or checking why a legacy idea should not be retried. For normal orientation, use `docs/model_improvement_plan.md`; for known experiment IDs or status filtering, use `docs/experiment_index.jsonl`.
 
 ## 已验证无效或已降级
 
