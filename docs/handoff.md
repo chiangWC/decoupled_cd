@@ -128,12 +128,12 @@
 ## 当前分支优先级
 
 - `exp/*` 分支只作为实验代码和复验参考，不直接代表当前主线。
-- 具体分支以 `git branch -a` 为准；每条路线的定位和结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的详细条目与 D 部分快速索引为准。
+- 具体分支以 `git branch -a` 为准；每条路线的定位和结果先看 [experiment_index.jsonl](./experiment_index.jsonl) 与 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的索引，必要时再打开 `docs/experiments/` 下的 detail 文件。
 - 若继续优化 calibration-oriented 训练协议，优先从 `exp/training-modes` 出发。
 - 若继续复核当前主线训练口径，优先参考 `exp/mainline-protocol-sweep`；当前最强候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，但只作为候选，不替换 `master` 默认口径。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续做结构主线，默认直接从最新 `master` 切新 `exp/*` 分支；实验 51 与实验 70 代码已吸收到主线，不需要回到旧 `exp/*` 分支继续堆改动。
-- 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先回看 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目，确认是否真的出现了新的 slice 假设或机制假设，再决定是否重开。
+- 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先按实验号查 `docs/experiment_index.jsonl` 的 `status/reason_tags/verdict`，再按需打开对应 detail，确认是否真的出现了新的 slice 假设或机制假设后再决定是否重开。
 
 ## 当前关键文件
 
@@ -155,6 +155,10 @@
   - [scripts/run_assist09_multiseed.sh](../scripts/run_assist09_multiseed.sh)
   - [trainers/engine.py](../trainers/engine.py)
   - [configs/defaults.py](../configs/defaults.py)
+- 实验台账:
+  - [model_improvement_plan.md](./model_improvement_plan.md)
+  - [experiment_index.jsonl](./experiment_index.jsonl)
+  - [experiments/](./experiments/)
 
 ## 后续实验规则
 

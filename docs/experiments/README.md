@@ -16,6 +16,7 @@ git show <commit>:docs/model_improvement_plan.md
 Recommended detail status values for `docs/experiment_index.jsonl`:
 
 - `local_detail_doc`: detailed notes are available in this directory.
+- `git_recovered_detail`: the local detail doc includes targeted evidence restored from older git history.
 - `compressed_only`: only the compressed main-plan summary is available.
 - `recoverable_from_git`: older uncompressed notes may exist in git history.
 
