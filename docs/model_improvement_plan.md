@@ -890,6 +890,32 @@
     - `lr=7e-4 + early_stop=20 + scheduler_patience=5` 可作为 accuracy/ranking-oriented 候选口径，但不是 clean 默认切换: `AUC/ACC` 小正，`ECE` 明显变差，训练更久
     - recompute minibatch 在当前实验 70 主线上仍不适合作为 AUC 推进路线；它最多是 calibration-oriented ablation
 
+- 实验 74: `guess/slip` monotonic soft penalty
+  - 分支: `exp/gs-monotonic-penalty`
+  - 做法:
+    - 不硬改 `guess/slip` 参数化，只在 BCE 外增加可选软正则:
+      `weight * mean(relu(guess + slip - 1)^2)`
+    - 新增 `scripts/analyze_guess_slip_diagnostics.py`，输出 `guess/slip` 均值、`guess+slip` 分位数、`ratio(guess+slip>1)`，并按 `concept_count / coverage / history length` 分桶
+  - `weight=1e-4` 三 seed 结果相对实验 70 同 seed:
+    - `seed=2024`: `AUC +0.000076`, `ACC +0.001846`, `RMSE -0.000399`, `Brier -0.000342`, `ECE -0.000324`
+    - `seed=2025`: `AUC -0.000195`, `ACC -0.000895`, `RMSE +0.000585`, `Brier +0.000500`, `ECE +0.002527`
+    - `seed=2026`: `AUC -0.000391`, `ACC +0.000742`, `RMSE -0.000221`, `Brier -0.000189`, `ECE -0.001603`
+    - 三 seed 均值差: `AUC -0.000170`, `ACC +0.000565`, `RMSE -0.000012`, `Brier -0.000010`, `ECE +0.000200`
+    - 三 seed 均值约: `AUC 0.765347`, `ACC 0.729668`, `RMSE 0.427338`, `Brier 0.182618`, `ECE 0.049244`
+  - `weight=1e-3`, `seed=2024`:
+    - 相对实验 70 同 seed: `AUC -0.000913`, `ACC -0.001237`, `RMSE -0.000191`, `Brier -0.000164`, `ECE -0.004819`
+    - 判断: 校准改善但排序/准确率回撤，不扩 seed
+  - 诊断:
+    - `weight=1e-4`, `seed=2024` 的 best checkpoint 看起来健康: `ratio(guess+slip>1)=0.000742`, `p99=0.897360`
+    - 但 `seed=2025/2026` 的 best checkpoint 反而几乎全量语义反转:
+      - `seed=2025`: `guess.mean=0.962968`, `slip.mean=0.991846`, `ratio(guess+slip>1)=0.999772`
+      - `seed=2026`: `guess.mean=0.926414`, `slip.mean=0.958467`, `ratio(guess+slip>1)=0.999600`
+    - 这说明 `1e-4` 权重不足以稳定压住独立 sigmoid 的退化解；单 seed 的健康诊断不可外推
+  - 结论:
+    - 软正则机制诊断工具值得保留，但 `weight=1e-4` 不构成主线候选
+    - `weight=1e-3` 已出现 AUC/ACC tradeoff，也不继续扩 seed
+    - 不建议回到硬单调参数化直接推进；实验 62-65 已显示硬约束能压掉语义反转但整体指标不 clean
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。
