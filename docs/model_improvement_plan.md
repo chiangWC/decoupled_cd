@@ -846,6 +846,50 @@
     - 本轮两个不改数据口径的大模块探针都没有提供冲 `0.77+` 的排序信号
     - 后续如果继续做表示瓶颈级改动，应先明确是否允许改变数据/历史可见性口径；否则优先不要再做“写回主状态”的 local context 变体
 
+- 实验 73: current mainline protocol sweep
+  - 分支: `exp/mainline-protocol-sweep`
+  - 输出: `results/mainline_protocol_sweep/`
+  - 口径:
+    - 不改当前实验 70 主线结构，不改数据、图、`concept_dim`、`gs_mode`
+    - 先用 `seed=2024` 扫 full-batch 学习率、patience/scheduler 组合与 recompute minibatch
+    - 只给接近门槛或有明显 `ACC` 信号的配置补 `seed=2025/2026`
+  - `seed=2024` 粗扫:
+    - 默认 sanity 复现当前主线: `AUC 0.765368`, `ACC 0.728558`, `RMSE 0.427880`, `Brier 0.183082`, `ECE 0.052010`
+    - `lr=3e-4`: `AUC 0.757601`, `ECE 0.038516`; 校准变好但明显欠排序
+    - `lr=5e-4`: `AUC 0.766028`, `ACC 0.728406`, `ECE 0.057126`; AUC 小正但校准明显回撤
+    - `lr=7e-4`: `AUC 0.765779`, `ACC 0.727283`, `ECE 0.061719`; 不如后续长 patience 版本
+    - `lr=1.5e-3`: `AUC 0.766310`, `ACC 0.726864`, `ECE 0.057815`; 单 seed AUC 接近门槛但 ACC/ECE 副作用
+    - `lr=2e-3`: `AUC 0.765703`, `ACC 0.726579`, `ECE 0.060059`; 高 lr 不继续提升
+    - `lr=1e-3, early_stop=10/20, scheduler_patience=5`: 都选到 `epoch=184`，`AUC 0.765419`, `ACC 0.729529`
+    - `lr=7e-4, early_stop=20, scheduler_patience=5`: `AUC 0.765558`, `ACC 0.730518`
+    - `lr=1.5e-3, early_stop=20, scheduler_patience=5`: `AUC 0.766323`, `ACC 0.728273`
+    - `recompute_minibatch bs=8192 lr=1e-4`: `AUC 0.762270`, `ECE 0.043387`; 仍是校准/误差型，不是 AUC 路线
+    - `recompute_minibatch bs=8192 lr=3e-4`: `AUC 0.760713`
+    - `recompute_minibatch bs=4096 lr=1e-4`: `AUC 0.761224`; 成本更高且无收益
+  - 候选扩 seed:
+    - `lr=1.5e-3, early_stop=20, scheduler_patience=5`:
+      - `seed=2024`: `AUC +0.000955`, `ACC -0.000285`, `ECE +0.003699`
+      - `seed=2025`: `AUC -0.001311`, `ACC -0.001675`, `ECE -0.000867`
+      - `seed=2026`: `AUC -0.002270`, `ACC +0.001142`, `ECE -0.000027`
+      - 三 seed 均值差: `AUC -0.000875`, `ACC -0.000273`, `RMSE +0.000329`, `Brier +0.000281`, `ECE +0.000935`
+      - 判断: 单 seed AUC 小涨不稳定，不作为候选
+    - `lr=7e-4, early_stop=20, scheduler_patience=5`:
+      - `seed=2024`: `AUC +0.000190`, `ACC +0.001960`, `RMSE -0.000003`, `Brier -0.000003`, `ECE +0.001766`
+      - `seed=2025`: `AUC +0.000505`, `ACC -0.000057`, `RMSE +0.000499`, `Brier +0.000426`, `ECE +0.004079`
+      - `seed=2026`: `AUC +0.002088`, `ACC +0.002036`, `RMSE -0.000728`, `Brier -0.000622`, `ECE +0.002772`
+      - 三 seed 均值差: `AUC +0.000928`, `ACC +0.001313`, `RMSE -0.000077`, `Brier -0.000066`, `ECE +0.002872`
+      - 三 seed 均值约: `AUC 0.766445`, `ACC 0.730417`, `RMSE 0.427273`, `Brier 0.182562`, `ECE 0.051916`
+      - 判断: 这是当前最好的训练口径候选，稳定小幅改善 `AUC/ACC`，但达不到 `0.77+`，且校准变差
+  - 邻域 refine:
+    - `lr=6e-4, early_stop=20, scheduler_patience=5`, `seed=2024`: `AUC +0.000351`, `ACC +0.002036`, `ECE +0.001995`
+    - `lr=8e-4, early_stop=20, scheduler_patience=5`, `seed=2024`: `AUC -0.000456`, `ACC +0.001313`, `ECE +0.001521`
+    - `lr=9e-4, early_stop=20, scheduler_patience=5`, `seed=2024`: `AUC -0.000097`, `ACC +0.000228`, `ECE +0.001380`
+    - 判断: `6e-4/7e-4` 附近主要是 ACC 口径收益，AUC 没有更强局部峰
+  - 结论:
+    - 口径扫没有发现能把当前主线推到 `0.77+` 的训练配置
+    - `lr=7e-4 + early_stop=20 + scheduler_patience=5` 可作为 accuracy/ranking-oriented 候选口径，但不是 clean 默认切换: `AUC/ACC` 小正，`ECE` 明显变差，训练更久
+    - recompute minibatch 在当前实验 70 主线上仍不适合作为 AUC 推进路线；它最多是 calibration-oriented ablation
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。

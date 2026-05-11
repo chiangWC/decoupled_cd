@@ -115,6 +115,7 @@
 - 诊断 2 表明实验 51 full-trigger readout expert residual 可能会压制部分后续语义更干净结构的边际表现: `q-conditioned local mastery` 在实验 49 底座三 seed `AUC +0.001856`，但在实验 51 底座三 seed `AUC -0.001522`；`difficulty-weighted propagation` 也从实验 49 底座的误差/校准均值正向，转成实验 51 底座的均值全面回撤。后续新结构若在最新主线上轻微负向但语义足够干净，应优先追加实验 49 底座交叉复验；详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的“诊断 2”。
 - 诊断 3 的更早底座广扫没有推翻诊断 2: `q-conditioned local mastery` 在 `B33/B34` 只是小正，到 `B49` 才三 seed 明显正向；`concept-conditioned propagation` 的 `B33` 单 seed 强正未复现；multi-hop、qrepr-score、history stats、ranking loss、clean routing 多数只是误差/校准折中或早底座也不成立。后续更应直接隔离实验 51 expert，而不是盲目回退到更早主线。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的“诊断 3”。
 - 实验 72 的表示瓶颈探针没有给出 `0.77+` 排序突破: `B49 + q-conditioned local mastery + exp70 sidecar` 只改善 `ACC/RMSE/Brier/ECE` 但 `AUC -0.000389`；`target-conditioned student context` 叠加实验 70 后 `AUC -0.007201`。recency/sequence encoder 会改变数据与历史可见性口径，当前不作为同一轮结构验证继续推进。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 72。
+- 实验 73 的当前主线口径扫没有发现 `0.77+` 训练配置；相对当前主线，最好的候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，三 seed 均值 `AUC +0.000928`、`ACC +0.001313`、`RMSE -0.000077`、`Brier -0.000066`、`ECE +0.002872`。它可作为 accuracy/ranking-oriented 候选口径，但不是 clean 默认切换。详细指标见 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的实验 73。
 - 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）除实验 51 外，都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；细节统一以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 为准。
 - 实验 38-40 的 CF 支线已确认主要依赖 ID-aware side channel，不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / appendix 讨论。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
@@ -129,6 +130,7 @@
 - `exp/*` 分支只作为实验代码和复验参考，不直接代表当前主线。
 - 具体分支以 `git branch -a` 为准；每条路线的定位和结果以 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的详细条目与 D 部分快速索引为准。
 - 若继续优化 calibration-oriented 训练协议，优先从 `exp/training-modes` 出发。
+- 若继续复核当前主线训练口径，优先参考 `exp/mainline-protocol-sweep`；当前最强候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，但只作为候选，不替换 `master` 默认口径。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续做结构主线，默认直接从最新 `master` 切新 `exp/*` 分支；实验 51 与实验 70 代码已吸收到主线，不需要回到旧 `exp/*` 分支继续堆改动。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先回看 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的对应实验条目，确认是否真的出现了新的 slice 假设或机制假设，再决定是否重开。
