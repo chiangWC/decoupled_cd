@@ -14,6 +14,7 @@
 - 要判断某条路线是否还值得继续时，看“已验证有效”和“已验证无效或已降级”。
 - 要设计下一轮实验时，看“近线 follow-up”和“默认下一步”。
 - 要按实验号定位时，直接搜索 `实验 <编号>`。
+- 从实验 45 起，主文档优先保留决策索引；细节看 `docs/experiments/`，结构化检索先看 [experiment_index.jsonl](./experiment_index.jsonl)。
 
 ## 当前快照
 
@@ -262,640 +263,117 @@
   - `min_count=2`: `AUC -0.001609`, `ACC +0.000533`, `RMSE +0.000377`, `Brier +0.000324`, `ECE +0.002203`
   - `min_count=3`: `AUC -0.000509`, `ACC +0.000228`, `RMSE +0.000530`, `Brier +0.000456`, `ECE +0.001742`
   - 虽改善 `3/4+` 多知识点切片，但不能转化为 overall `AUC` 正收益
+### 近期实验索引（详情外置）
+
+下面从实验 45 起只保留决策索引；当前可用细节迁到 `docs/experiments/`，机器可读入口见 `docs/experiment_index.jsonl`。
+
 - 实验 45: propagation-side concept-conditioned exercise residual
-  - 分支: `exp/concept-conditioned-prop`
-  - 做法: 对 `concept_count >= 2` 的题，在 propagation 的 `exercise -> concept` 消息上增加 concept-conditioned zero-init residual；按 Q 非零边现算，避免显式构造稠密 `E x K x D`
-  - `seed=2024` 相对当前主线 baseline: `AUC +0.000109`, `ACC -0.000362`, `RMSE +0.000271`, `Brier +0.000233`, `ECE +0.002160`
-  - 切片:
-    - `concept_count=2`: `AUC +0.001875`, `RMSE -0.000777`, `ECE -0.002424`
-    - `concept_count=3`: `AUC +0.003068`, 但 `ACC -0.003322`, `RMSE +0.001202`, `ECE +0.006053`
-    - `concept_count=4+`: `ACC +0.024793`, `ECE -0.016021`, 但 `AUC -0.002352`, `RMSE +0.004048`
-    - `none_seen`: `AUC +0.003574`, 但 `RMSE +0.001578`, `ECE +0.001645`
-  - 结论: 这是“局部切片有信号但整体不成立”的传播侧修补；不扩 seed，不纳入主线
+  - 分支/详情: `exp/propagation-concept-residual`; [045_propagation_concept_conditioned_exercise_residual.md](./experiments/045_propagation_concept_conditioned_exercise_residual.md)
+  - 判断: 单 seed 局部信号不足；不继续沿 propagation 侧共享 residual 扩线
+
 - 实验 46: readout-side qrepr score residual
-  - 分支: `exp/qrepr-score-residual`
-  - 做法: 保留 static `q_pool_gate`，仅对 `concept_count >= 2` 的题增加 zero-init exercise-conditioned Q-pooling score residual；按 batch chunk 分块计算 additive score，避免显式物化完整 `B x K x D`
-  - `seed=2024` 相对当前主线 baseline: `AUC +0.000664`, `ACC -0.001370`, `RMSE +0.000185`, `Brier +0.000159`, `ECE +0.001519`
-  - 切片:
-    - `concept_count=2`: `AUC +0.002694`, `ECE -0.003136`，但 `ACC -0.006002`
-    - `concept_count=3`: `AUC +0.007144`, `RMSE -0.002483`, `ECE -0.002975`，但 `ACC -0.016611`
-    - `concept_count=4+`: `ACC +0.024793`, `ECE -0.008125`，但 `AUC -0.012312`, `RMSE +0.006886`
-    - `none_seen`: `AUC +0.001804`, 但 `RMSE +0.008018`, `ECE +0.017540`
-    - `partial_seen`: `AUC -0.001127`, `RMSE +0.010477`, `ECE +0.009486`
-  - 结论: 相比实验 45，这条 readout 侧窄变体更接近目标瓶颈，但仍然是“局部排序改善换整体与校准副作用”的折中；不扩 seed，不纳入主线
+  - 分支/详情: `exp/qrepr-score-residual`; [046_readout_qrepr_score_residual.md](./experiments/046_readout_qrepr_score_residual.md)
+  - 判断: 早期单 seed 小信号未转成稳定主线收益
+
 - 实验 47: final-logit none-seen calibration bias
-  - 分支: `exp/none-seen-calibration-bias`
-  - 做法: 在最终概率输出前增加 zero-init calibration residual；输入只看 target concept coverage、`concept_count` 和 `difficulty`，不改 TKC/UKC propagation 语义
-  - `seed=2024` 相对当前主线 baseline: `AUC -0.000945`, `ACC -0.000381`, `RMSE +0.000438`, `Brier +0.000376`, `ECE -0.001393`
-  - 切片:
-    - `none_seen`: `AUC +0.000401`, 但 `ACC -0.005428`, `RMSE +0.003811`, `Brier +0.002895`, `ECE +0.011709`
-    - `partial_seen`: `AUC +0.004038`, `ACC +0.003030`, 但 `RMSE +0.000513`, `Brier +0.000418`, `ECE +0.015319`
-    - `all_seen`: `AUC -0.000886`, `ACC -0.000237`, `RMSE +0.000340`, `Brier +0.000293`, `ECE -0.001199`
-    - `concept_count=1`: `AUC -0.001279`, `ACC -0.000754`, `RMSE +0.000597`, `Brier +0.000510`, `ECE -0.001459`
-    - `concept_count=2`: `AUC +0.001413`, `ACC +0.002801`, `RMSE -0.000603`, `Brier -0.000529`, `ECE -0.000978`
-    - `concept_count=3`: `AUC -0.002885`, `ACC -0.008859`, `RMSE +0.000545`, `Brier +0.000520`, `ECE -0.000689`
-    - `concept_count=4+`: `AUC -0.005805`, `ACC +0.000000`, `RMSE +0.002798`, `Brier +0.002615`, `ECE +0.001669`
-  - 结论: 这类“全局共享 final-logit calibration bias”太钝。虽然 overall `ECE` 略降，但没有解决 `none_seen`，反而把目标切片的 `ACC/RMSE/Brier/ECE` 一起做坏；不扩 seed，不纳入主线
+  - 分支/详情: `exp/none-seen-calibration-bias`; [047_none_seen_calibration_bias.md](./experiments/047_none_seen_calibration_bias.md)
+  - 判断: `none_seen` 可诊断但共享 final-logit bias 过粗，overall 不 clean
+
 - 实验 48: history concept stats residual
-  - 分支: `exp/local-concept-evidence-head`
-  - 做法:
-    - 先做离线诊断，验证“逐概念历史正确率 / 最弱概念”在原始数据上确有强信号，但当前 `TKC/UKC` 局部状态本身几乎不含可直接 readout 的同类信号
-    - 后续不再从局部 embedding 读证据，改为显式构造学生-概念历史统计:
-      - 为 data bundle 增加学生-题目历史作答次数矩阵
-      - 对 target 题相关概念聚合 `mean_acc_seen / min_acc_seen / gap / seen_ratio`
-      - 以 zero-init residual 形式接到 `cognitive_logits`
-  - 三 seed 相对当前主线 baseline:
-    - `seed=2024`: `AUC -0.000600`, `ACC +0.003673`, `RMSE -0.000824`, `Brier -0.000707`, `ECE -0.000457`
-    - `seed=2025`: `AUC +0.000748`, `ACC +0.000038`, `RMSE +0.000376`, `Brier +0.000323`, `ECE +0.004516`
-    - `seed=2026`: `AUC -0.001245`, `ACC +0.000457`, `RMSE +0.000030`, `Brier +0.000025`, `ECE -0.002147`
-  - 三 seed 均值差:
-    - `AUC -0.000366`
-    - `ACC +0.001389`
-    - `RMSE -0.000139`
-    - `Brier -0.000120`
-    - `ECE +0.000637`
-  - 切片:
-    - `seed=2024` 的 `concept_count=2/3/4+` 明显改善，尤其 `4+`: `AUC +0.026060`, `ACC +0.033058`, `RMSE -0.011397`, `ECE -0.015181`
-    - 但 `seed=2025` 的切片不稳定: `concept_count=3` 仍强正向，`concept_count=2/4+` 的 `RMSE/Brier/ECE` 反而转差，`none_seen` 继续变坏
-    - `none_seen` 在已看的 seed 上没有形成 clean win，仍不是这条结构的受益点
-  - 结论:
-    - 这条“显式历史概念统计 residual”证明了多知识点题的确能从更直接的历史概念统计里获益，但收益主要体现在局部 slice，不足以稳定转化为更优 overall
-    - 相比当前主线，它更像 `AUC` 与 `ACC/RMSE/Brier` 之间的 seed-sensitive 折中，不作为主线结构推进
-    - 如果后续再回到这条思路，优先考虑把它作为 targeted auxiliary / mixture trigger，而不是对所有 `concept_count>=2` 题统一加 residual
+  - 分支/详情: `exp/history-concept-stats`; [048_history_concept_stats_residual.md](./experiments/048_history_concept_stats_residual.md)
+  - 判断: 显式历史统计有局部信号，但 original form 三 seed overall 不稳
 
 - 实验 50: weighted pairwise history aggregation
-  - 分支: `exp/pairwise-history-weighted-agg`
-  - 做法: 在实验 49 上把 pair score 聚合从固定均值改成 learned weighting，其余结构不变
-  - `seed=2024` 相对实验 49:
-    - `AUC -0.000441`
-    - `ACC -0.000305`
-    - `RMSE -0.000120`
-    - `Brier -0.000103`
-    - `ECE +0.000002`
-  - 结论:
-    - learned weighting 没有提供额外收益
-    - 这说明当前增益主要来自“history carrier + pairwise scorer”本身，而不是更复杂的 pair aggregator
-    - 主线保留简单均值聚合，不继续扩 seed
+  - 分支/详情: `exp/learned-pair-aggregation`; [050_weighted_pairwise_history_aggregation.md](./experiments/050_weighted_pairwise_history_aggregation.md)
+  - 判断: learned pair aggregation 没有超过简单均值，主线保留 mean aggregation
 
 - 实验 51: interpretable readout expert residual
-  - 分支: `exp/interpretable-readout-experts`
-  - 做法:
-    - 在 `cognitive_logits` 外增加 zero-init readout expert residual
-    - gate 只读取 `concept_count / difficulty / dispersion / coverage` 这四类可解释量
-    - expert 侧读取 detached readout features，不读学生/题目 ID，不改 propagation 主干语义
-  - 最强配置:
-    - `--interpretable-readout-expert-adapter`
-    - `--interpretable-readout-expert-count 3`
-  - `seed=2024` 相对实验 49 control:
-    - `AUC +0.001548`
-    - `ACC -0.000818`
-    - `RMSE +0.000000`
-    - `Brier +0.000001`
-    - `ECE +0.000973`
-  - targeted 变体:
-    - `min_count>=2` 的三专家版本能让 `concept_count=2/3` 切片转正，但 overall `AUC -0.000151`，不如 full-trigger
-    - `min_count>=3` 的两专家/三专家版本都未超过 full-trigger 单次结果
-  - full-trigger 三 seed 结果:
-    - `seed=2024`: `AUC 0.764051`, `ACC 0.728672`, `RMSE 0.428295`, `Brier 0.183437`, `ECE 0.050665`
-    - `seed=2025`: `AUC 0.764711`, `ACC 0.728387`, `RMSE 0.428095`, `Brier 0.183265`, `ECE 0.051829`
-    - `seed=2026`: `AUC 0.762904`, `ACC 0.729795`, `RMSE 0.427466`, `Brier 0.182727`, `ECE 0.045703`
-  - full-trigger 三 seed 均值相对实验 49:
-    - `AUC +0.001520`
-    - `ACC -0.000812`
-    - `RMSE -0.000253`
-    - `Brier -0.000217`
-    - `ECE -0.000429`
-  - 结论:
-    - 这条线已经从单 seed 信号变成稳定的结构候选，当前是最强的非 ID-aware follow-up
-    - 它的代价是小幅 `ACC` 回撤，但 `AUC` 增益已经达到继续保留的门槛
-    - 第一版 full-trigger 收益主要来自 `concept_count=1 / all_seen`，没有自然学成“只服务高 concept-count”的干净专家分工
-    - 如果后续继续做 selective routing，应建立在这条 full-trigger 正向底座上，而不是直接退回更硬的 `3+` trigger
-    - 这一步现已吸收到当前 `master`
+  - 分支/详情: `exp/interpretable-readout-expert`; [051_interpretable_readout_expert_residual.md](./experiments/051_interpretable_readout_expert_residual.md)
+  - 判断: full-trigger 三专家形成稳定正向，已进入后续主线底座
 
 - 实验 52: clean interpretable readout routing
-  - 分支: `exp/clean-readout-routing`
-  - 做法:
-    - 以实验 51 的 full-trigger 三专家 residual 为底座
-    - gate 输入从 `concept_count / difficulty / dispersion / coverage` 扩成 `concept_count / seen_count / unseen_count / difficulty / dispersion / coverage`
-    - 额外测试可选 `top-k` 稀疏路由，希望得到更干净的 selective routing，而不是继续用硬 `min_count` trigger
-  - 结果:
-    - smoke:
-      - `max_rows=2000`, `epoch=1`, `topk=2` 能正常训练并写出 checkpoint / summary
-    - `seed=2024`, dense:
-      - `AUC 0.761346`, `ACC 0.726655`, `RMSE 0.429885`, `Brier 0.184801`, `ECE 0.053194`
-    - `seed=2024`, `topk=2`:
-      - `AUC 0.763301`, `ACC 0.727036`, `RMSE 0.428496`, `Brier 0.183609`, `ECE 0.050861`
-  - 结论:
-    - `topk=2` 虽然比 dense 好，但仍弱于实验 51 原版 full-trigger；相对实验 49 control 也只是保住了小幅 `AUC` 正向，`ACC/RMSE/Brier/ECE` 全部回撤
-    - 不继续沿这条 routing 设计扩 seed；实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
-    - 若后续还要 revisit selective routing，优先考虑更软的路由约束或训练正则，而不是显式 top-k 稀疏化
+  - 分支/详情: `exp/clean-readout-routing`; [052_clean_interpretable_readout_routing.md](./experiments/052_clean_interpretable_readout_routing.md)
+  - 判断: seen/unseen gate 与 top-k routing 没有超过实验 51 原版
 
 - 实验 53: soft routing regularizer for readout experts
-  - 分支: `exp/readout-routing-soft-regularizer`
-  - 提交: `910b9c8`
-  - 做法:
-    - 以实验 51 的 full-trigger 三专家 residual 为底座
-    - 暴露 gate probability，并在训练时加入轻量 routing regularizer
-    - regularizer 形式为 `conditional_entropy - marginal_entropy`
-    - 本轮只测试 `--interpretable-readout-expert-routing-mi-weight 0.05`
-  - 结果:
-    - smoke:
-      - `max_rows=2000`, `epoch=1`, `mi_weight=0.05` 能正常训练并产出 summary
-    - `seed=2024`:
-      - `AUC 0.764348`
-      - `ACC 0.729148`
-      - `RMSE 0.427924`
-      - `Brier 0.183119`
-      - `ECE 0.050730`
-    - `seed=2025`:
-      - `AUC 0.764564`
-      - `ACC 0.726008`
-      - `RMSE 0.429125`
-      - `Brier 0.184148`
-      - `ECE 0.055972`
-    - `seed=2026`:
-      - `AUC 0.761720`
-      - `ACC 0.729148`
-      - `RMSE 0.427652`
-      - `Brier 0.182886`
-      - `ECE 0.041885`
-  - 三 seed 均值相对实验 51:
-    - `AUC -0.000345`
-    - `ACC -0.000850`
-    - `RMSE +0.000282`
-    - `Brier +0.000241`
-    - `ECE +0.000130`
-  - 结论:
-    - `seed=2024` 虽然略优于实验 51 同 seed，但 `seed=2025/2026` 没有复现，三 seed 均值回到全面弱于当前主线
-    - 不继续沿这条 soft routing regularizer 扩线；实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
-    - 若后续还要 revisit routing，优先考虑更局部的软引导或更明确的 slice 目标，而不是继续围绕同一种全局 gate regularizer 小步扫参
+  - 分支/详情: `exp/readout-routing-soft-regularizer`; [053_soft_routing_regularizer.md](./experiments/053_soft_routing_regularizer.md)
+  - 判断: soft regularizer 单 seed 小信号未能三 seed 复现
 
 - 实验 54: Q-conditioned local mastery readout revisit
-  - 分支: `exp/q-conditioned-local-mastery-readout`
-  - 提交: `aeb42b7`
-  - 做法:
-    - 不再只读全局 `student_state`
-    - 对每个目标交互，只 gather 该题 Q mask 命中的概念
-    - 对每个目标概念，基于 `tkc_state / ukc_state / concept_embedding / seen_flag / difficulty` 共享打分
-    - 用几何均值式的 concept aggregation 形成题目级 local mastery logit
-    - 在原有 `cognitive_logits` 外加 zero-init gate: `old_logit + gate * local_mastery_logit`
-  - 工程验证:
-    - 初版按 “交互数 x 全概念数” 展开局部状态导致远端正式训练 OOM
-    - 改成只对命中概念做 gather 后，单测与 smoke 恢复正常
-  - 结果:
-    - smoke:
-      - `max_rows=2000`, `epoch=1` 能正常训练并产出 summary
-    - `seed=2024`:
-      - `AUC 0.761978`
-      - `ACC 0.726674`
-      - `RMSE 0.428573`
-      - `Brier 0.183675`
-      - `ECE 0.046842`
-  - 相对实验 51 `seed=2024`:
-    - `AUC -0.002073`
-    - `ACC -0.001998`
-    - `RMSE +0.000278`
-    - `Brier +0.000238`
-    - `ECE -0.003823`
-  - 切片:
-    - `concept_count=2`: `AUC 0.749767`, `ACC 0.717925`, `ECE 0.060700`
-    - `concept_count=3`: `AUC 0.698639`, `ACC 0.682171`, `ECE 0.082560`
-    - `concept_count=4+`: `AUC 0.731486`, `ACC 0.680441`, `ECE 0.125002`
-    - `none_seen`: `AUC 0.808718`, `ACC 0.800362`, `ECE 0.112099`
-  - 结论:
-    - 这次复访已经不是实验 35 那种“局部概念状态均值 residual”，而是更接近主 readout 的逐概念打分再聚合版本；即便如此，overall `AUC/ACC` 仍明显不成立，切片上也没有出现足够强的多知识点 clean win
-    - 不继续沿这条 local mastery main-readout 设计扩线
-    - 若后续再访，必须带着更强的概念交互假设或更明确的聚合归纳偏置，而不是再重复“逐概念打分 + 简单聚合”框架
+  - 分支/详情: `exp/q-conditioned-local-mastery-readout`; [054_q_conditioned_local_mastery_readout.md](./experiments/054_q_conditioned_local_mastery_readout.md)
+  - 判断: 语义更干净但在实验 51 底座弱，后续作为诊断 2 交叉复验线索
 
 - 实验 55: difficulty-weighted propagation
-  - 分支: `exp/difficulty-weighted-propagation`
-  - 提交: `b9704ec`
-  - 做法:
-    - 在 propagation 的 `correct/incorrect` 两条 `exercise -> concept` 历史证据前，各自增加独立的 zero-init multiplicative scaling
-    - scaling 输入读取 `difficulty + concept_count + detached exercise_embedding`
-    - `correct_weight = base_correct * multiplier_correct`
-    - `incorrect_weight = base_incorrect * multiplier_incorrect`
-    - `multiplier = 2 * sigmoid(raw_scale)`，因此零初始化时严格退化回当前主线
-  - 结果:
-    - smoke:
-      - `max_rows=2000`, `epoch=1` 能正常训练并产出 summary
-    - `seed=2024`:
-      - `AUC 0.764173`
-      - `ACC 0.724124`
-      - `RMSE 0.430202`
-      - `Brier 0.185073`
-      - `ECE 0.061324`
-  - 相对实验 51 `seed=2024`:
-    - `AUC +0.000122`
-    - `ACC -0.004548`
-    - `RMSE +0.001907`
-    - `Brier +0.001636`
-    - `ECE +0.010659`
-  - 切片:
-    - `concept_count=2`: `AUC 0.750349`, `ACC 0.712457`, `ECE 0.070721`
-    - `concept_count=3`: `AUC 0.705193`, `ACC 0.673311`, `ECE 0.102832`
-    - `concept_count=4+`: `AUC 0.747586`, `ACC 0.669421`, `ECE 0.091158`
-    - `none_seen`: `AUC 0.810439`, `ACC 0.769602`, `ECE 0.151766`
-  - 结论:
-    - 这条线确实证明“把 difficulty 前移到 propagation”会改变排序行为，单 seed `AUC` 有极小正向；但代价过大，`ACC/RMSE/Brier/ECE` 全部明显回撤，切片也没有形成足够干净的多知识点收益
-    - 不继续沿这条 difficulty-weighted propagation 扩线
-    - 若后续还要 revisit propagation weighting，优先考虑更局部、更学生条件化的证据强度，而不是当前这种按题目全局共享的 difficulty multiplier
+  - 分支/详情: `exp/difficulty-weighted-propagation`; [055_difficulty_weighted_propagation.md](./experiments/055_difficulty_weighted_propagation.md)
+  - 判断: 极小 AUC 信号换误差/校准回撤，不是 clean win
 
 - 实验 56: student-wise pairwise ranking loss
-  - 分支: `exp/student-pairwise-ranking-loss`
-  - 提交: `7c90eb9`
-  - 做法:
-    - 不改模型结构，只在 BCE 外叠加同学生内的 pairwise logistic ranking loss
-    - 对每个学生，把 train 交互拆成正样本集合和负样本集合，约束 `score_pos > score_neg`
-    - ranking score 使用最终预测概率的 `logit(prob)`
-    - 只测试 `weight=0.05` 和 `weight=0.02`
-  - 工程验证:
-    - 训练集约 `19.4` 万交互，总 student-wise 正负配对约 `922` 万
-    - 单测通过，1 epoch smoke 通过，训练耗时与当前 full-batch 主线同量级，没有出现不可接受的额外成本
-  - 结果:
-    - `weight=0.05`, `seed=2024`:
-      - `AUC 0.763793`
-      - `ACC 0.726370`
-      - `RMSE 0.428940`
-      - `Brier 0.183989`
-      - `ECE 0.053809`
-    - `weight=0.02`, `seed=2024`:
-      - `AUC 0.763271`
-      - `ACC 0.728120`
-      - `RMSE 0.428567`
-      - `Brier 0.183670`
-      - `ECE 0.051483`
-  - 相对实验 51 `seed=2024`:
-    - `weight=0.05`:
-      - `AUC -0.000258`
-      - `ACC -0.002302`
-      - `RMSE +0.000645`
-      - `Brier +0.000552`
-      - `ECE +0.003144`
-    - `weight=0.02`:
-      - `AUC -0.000780`
-      - `ACC -0.000552`
-      - `RMSE +0.000272`
-      - `Brier +0.000233`
-      - `ECE +0.000818`
-  - 切片:
-    - `weight=0.02`, `concept_count=2`: `AUC 0.750245`, `ACC 0.718592`, `ECE 0.065355`
-    - `weight=0.02`, `concept_count=3`: `AUC 0.704542`, `ACC 0.687708`, `ECE 0.083009`
-    - `weight=0.02`, `concept_count=4+`: `AUC 0.741598`, `ACC 0.680441`, `ECE 0.081981`
-    - `weight=0.02`, `none_seen`: `AUC 0.809586`, `ACC 0.803378`, `ECE 0.106477`
-  - 结论:
-    - 这条线确实会把验证 AUC 往上推一点，但在 test 上没有超过实验 51 主线；`0.05` 和 `0.02` 都没形成 overall 正向，切片上也没有出现足够强的多知识点 clean win
-    - 不继续沿这条 ranking-loss 训练线扩权重或扩 seed
-    - 若后续还要 revisit ranking-oriented 目标，应优先建立在某个已经有明确结构正向的底座之上，而不是单独把 ranking loss 当成默认下一步
+  - 分支/详情: `exp/student-pairwise-ranking-loss`; [056_student_pairwise_ranking_loss.md](./experiments/056_student_pairwise_ranking_loss.md)
+  - 判断: ranking loss 只改排序偏好，overall AUC/ACC 不过门槛
 
 - 实验 57: single-graph multi-hop propagation revisit
-  - 分支: `exp/multi-hop-propagation`
-  - 做法:
-    - 保留 single-graph 主线，不回到 dual graph
-    - 依次复访全局 `2/3-hop` residual、coverage-conditioned residual、`UKC-only` residual，以及 `2-hop only` 简化版
-    - 所有变体都保持“零初始化时退化回实验 51 主线”这一约束
-  - 结果:
-    - 最好的 overall 只达到 `seed=2024: AUC 0.764542`
-    - 但对应 `ACC 0.725475 / RMSE 0.428501 / Brier 0.183613 / ECE 0.053370`
-    - 更轻的 `2-hop only` 版本也只是 `AUC 0.764388 / ACC 0.728387 / ECE 0.053974`
-  - 结论:
-    - 这条线反复呈现“很小的 AUC 正向，换来 ACC 或校准回撤”的模式；`none_seen` 与 `4+` 多知识点题也没有形成足够干净的收益
-    - 不继续沿 propagation 主干做 multi-hop mixing 扩线
-    - 若以后再访，应只在更明确的局部 slice 假设下做 targeted readout / mixture，而不是继续修改 propagation 主干
-
-### 语义更干净，但不值得主线吸收
+  - 分支/详情: `exp/single-graph-multi-hop-propagation`; [057_single_graph_multi_hop_propagation.md](./experiments/057_single_graph_multi_hop_propagation.md)
+  - 判断: multi-hop variants 只形成轻微排序波动，切片也不 clean
 
 - 实验 24: 多知识点题按知识点数分摊
-  - 相对实验 23 三 seed 仅约 `+0.0001`
+  - 分支/详情: `legacy`; [024_multi_concept_equal_attribution.md](./experiments/024_multi_concept_equal_attribution.md)
+  - 判断: 多知识点等分只有约 `+0.0001`，不作为主线结构
+
 - 实验 26: `guess/slip` logit 正则
-  - 可改善校准，但会牺牲少量 AUC
+  - 分支/详情: `legacy`; [026_guess_slip_logit_regularizer.md](./experiments/026_guess_slip_logit_regularizer.md)
+  - 判断: `guess/slip` logit 正则可改善校准但牺牲少量 AUC
 
 - 实验 59: parallel local context readout adapter
-  - 分支: `exp/parallel-local-context-readout`
-  - 做法:
-    - 保留实验 51 当前主线全部配置
-    - 不再把 local context 回写主 `student_state`
-    - 改为从目标题相关概念的 `TKC/UKC` 局部状态构造 target-conditioned attention，再走一条并联 readout residual 分支，直接加到 `cognitive_logits`
-  - 工程验证:
-    - 远端 `python -m unittest tests.test_decoupled_cdm` 通过
-    - 但 `2 epoch + max_rows=5000` smoke 在验证阶段触发 CUDA device-side assert；根因表现为 BCE 输入超出 `[0, 1]`
-    - 修过一轮输入维度与 `nan_to_num`/无效行归零后，smoke 仍然不稳定
-  - 结论:
-    - 这不是“指标略差但可继续调参”的情况，而是当前实现本身在数值上就不稳，尚未达到可比较 overall 指标的最小门槛
-    - 不继续沿这版 parallel local context readout 实现扩线，也不进入 rescue sweep
-    - 若以后还要 revisit 更大一级 local-context 模块，优先先加显式幅度约束或更保守的 mixture 结构，再决定是否值得进入正式比较
+  - 分支/详情: `exp/parallel-local-context-readout`; [059_parallel_local_context_readout.md](./experiments/059_parallel_local_context_readout.md)
+  - 判断: 实现数值不稳，smoke 出现 BCE 输入越界，不进入正式比较
 
 - 实验 60: pairwise history target-exclusion audit
-  - 分支: `exp/target-exclusion-audit`
-  - 提交:
-    - `831da8b`: 加入审计开关、分布打印与 pairwise target exclusion
-  - 动机:
-    - 审计 train / valid / test 的历史口径是否存在关键 mismatch
-    - 在不改模型结构的前提下，先验证“只对 pairwise history residual 做 target exclusion”是否带来 clean 正收益
-  - 工程诊断:
-    - 当前默认训练仍是 full-batch；`--batch-size` 只被记录，不参与实际优化步切分
-    - 在 ASSIST09 `train.csv` 上，`(stu_id, exer_id)` 没有重复，因此这次 pairwise target exclusion 对 train history 的扣除是精确的，不是近似版本
-    - `train_model` 末尾确实会恢复 best checkpoint；审计 run 中 `restored_val_auc == best_val_auc`
-  - 口径确认:
-    - 训练 bundle 允许 target 留在 history
-    - `valid/test` bundle 强制只复用 `train` history
-    - 因此训练/测试 propagation history mismatch 是当前代码中的显式事实，不是推测
-  - 结果:
-    - baseline `seed=2024`:
-      - `AUC 0.764051`
-      - `ACC 0.728672`
-      - `RMSE 0.428295`
-      - `Brier 0.183437`
-      - `ECE 0.050665`
-    - pairwise target-exclusion `seed=2024`:
-      - `AUC 0.764082`
-      - `ACC 0.726883`
-      - `RMSE 0.429038`
-      - `Brier 0.184073`
-      - `ECE 0.054048`
-  - 相对 baseline:
-    - `AUC +0.000030`
-    - `ACC -0.001789`
-    - `RMSE +0.000743`
-    - `Brier +0.000637`
-    - `ECE +0.003383`
-  - 切片:
-    - `concept_count=3`: `AUC -0.008054`, `ACC -0.009967`, `RMSE +0.003870`
-    - `concept_count=4+`: `AUC -0.008402`, `ACC -0.005510`, `RMSE +0.004269`
-    - `none_seen`: `AUC -0.002347`, `ACC -0.009047`, `RMSE +0.000828`
-    - `partial_seen` 有局部正信号，但只有 `330` 条样本，不足以改变 overall 判断
-  - 额外观察:
-    - 开启 target exclusion 后，test 上 `guess_plus_slip` 均值从 `0.244109` 升到 `0.320332`
-    - 这说明只削弱 pairwise history 自举信号后，模型明显把更多解释压力转移到了 `guess/slip` 分支
-  - 结论:
-    - “history mismatch 存在”这件事已经坐实，但“只修 pairwise residual”没有带来 clean 正收益；这次负结果也不能直接推出“完整 leave-one-out 一定无效”，因为 propagation 训练口径仍保持 target-visible
-    - 先把这次审计结论固化为负向证据，不继续沿 pairwise-only target exclusion 扩 seed
-    - 当前更值得单独处理的是 `--batch-size` 名义生效、实际无效的训练工程问题；若以后一定要把这条线彻底判死，只应再做一次“pairwise + propagation 同时 target-excluded”的单 seed 最终判定实验
+  - 分支/详情: `exp/target-exclusion-audit`; [060_pairwise_history_target_exclusion_audit.md](./experiments/060_pairwise_history_target_exclusion_audit.md)
+  - 判断: 证明 pairwise history target leakage/mismatch 会影响解释压力，导向实验 61
 
 - 实验 61: full target-excluded training audit
-  - 分支: `exp/full-target-exclusion-audit` -> `exp/full-target-exclusion-opt`
-  - 做法: 训练 loss 路径开启 `--exclude-target-from-train-history`，同时对 propagation history 与 pairwise history 扣除当前 target；`valid/test` 仍复用 `train` history
-  - 关键工程: 原始 full target-exclusion 路径已优化为 baseline + 局部 delta 更新，train-only `1 epoch` median runtime 从约 `8.845s` 降到约 `2.002s`，语义保持一致
-  - 优化后三 seed 均值:
-    - `AUC 0.765495`
-    - `ACC 0.729256`
-    - `RMSE 0.427883`
-    - `Brier 0.183084`
-    - `ECE 0.051331`
-  - 相对实验 51 三 seed 均值:
-    - `AUC +0.001606`
-    - `ACC +0.000305`
-    - `RMSE -0.000069`
-    - `Brier -0.000059`
-    - `ECE +0.001932`
-  - 结论:
-    - 完整 target exclusion 的 `AUC` 正向在三 seed 上稳定复现，说明训练/测试 history mismatch 不是纯方法学噪声
-    - 工程障碍已解除，当前保留为 ranking-oriented 训练候选，但因 `ECE` 仍更差，不直接吸收到 `master`
-    - 实验 71 已验证它和实验 70 直接组合不是 clean win；若未来明确只追求 `AUC`，可作为 ablation 或候选训练口径
+  - 分支/详情: `exp/full-target-exclusion-opt`; [061_full_target_excluded_training_audit.md](./experiments/061_full_target_excluded_training_audit.md)
+  - 指标摘要: `AUC +0.001606`, `ACC +0.000305`, `ECE +0.001932`
+  - 判断: 三 seed AUC 正向但 ECE 更差；ranking-oriented 候选，不默认切换
 
 - 实验 62-65: constrained `guess/slip` 系列
-  - 分支:
-    - `exp/guess-slip-diagnostics`
-    - `exp/exp61-guess-slip-constraint`
-    - `exp/decoupled-gs-budget`
-    - `exp/uncertainty-conditioned-gs-budget`
-  - 核心发现:
-    - 旧 `guess/slip` 使用独立 `sigmoid`，实际 checkpoint 中大量样本出现 `guess + slip > 1`，会导致 `dp / dcognitive < 0` 的语义反转
-    - 三元 softmax、budget/split sigmoid、uncertainty-conditioned mixture 都能把 `ratio(guess_plus_slip > 1)` 压到 `0`
-    - 但约束后整体指标没有恢复；越强的 non-cognitive budget 补偿越容易伤害 `none_seen`
-  - 代表结果:
-    - 实验 62 三元 softmax 相对实验 51 同 seed: `AUC +0.000615`, `ACC -0.001960`, `RMSE +0.000631`, `Brier +0.000541`, `ECE +0.003486`
-    - 实验 63 叠到 exp61 后相对 exp61 opt 同 seed: `AUC -0.000656`, `ACC -0.003368`, `RMSE +0.001579`, `Brier +0.001354`, `ECE +0.005701`
-    - 实验 64 budget/split 相对实验 51 同 seed: `AUC -0.007257`, `ACC -0.001598`, `RMSE +0.003836`, `Brier +0.003300`, `ECE +0.003622`
-    - 实验 65 uncertainty-conditioned mixture 相对实验 51 同 seed: `AUC -0.005558`, `ACC -0.001427`, `RMSE +0.002958`, `Brier +0.002542`, `ECE +0.005545`
-  - 结论:
-    - 语义诊断成立，诊断工具值得保留；但这些参数化改动不作为主线候选
-    - 后续若再访，不能只继续调 scalar budget，应引入更显式的可解释状态、expert routing 或配套训练补偿
+  - 分支/详情: `exp/guess-slip-diagnostics family`; [062_065_constrained_guess_slip_family.md](./experiments/062_065_constrained_guess_slip_family.md)
+  - 判断: 硬约束能压掉语义反转但整体指标不恢复，越强 budget 越易伤 none_seen
 
 - 实验 66: evidence-aware TKC propagation
-  - 分支: `exp/evidence-aware-tkc`
-  - 做法:
-    - 把显式历史统计从 readout residual 前移到 propagation 主干，构造逐 `student-concept` 的 `attempt/correct/incorrect/accuracy/log_attempt/seen` 特征
-    - 分别注入 `behavior fusion gate`、`TKC behavior vs graph prior` gate、`student-level TKC/UKC fusion` gate，并补了可拆分的子开关
-    - 数据侧新增真实 `student_exercise_count_tensor`，保留重复作答次数
-  - 工程验证:
-    - 远端单测 `python -m unittest tests.test_hetero_propagation tests.test_history_visibility tests.test_training_modes tests.test_decoupled_cdm` 通过
-  - 结果:
-    - full 版本 `seed=2024`: `AUC 0.762905`, `ACC 0.729300`, `RMSE 0.427547`, `Brier 0.182796`, `ECE 0.043839`
-    - 拆分后最强单 seed 是 `behavior-only`: `AUC 0.765136`, `ACC 0.732193`, `RMSE 0.426751`, `Brier 0.182117`, `ECE 0.046792`
-    - 但多 seed 后没有复现 clean win:
-      - 直接替换式 `behavior-only` 三 seed 均值: `AUC 0.760512`, `ACC 0.728298`, `RMSE 0.429400`, `Brier 0.184390`, `ECE 0.050343`
-      - residual 化 `behavior-only` 三 seed 均值: `AUC 0.761936`, `ACC 0.729047`, `RMSE 0.429112`, `Brier 0.184139`, `ECE 0.053518`
-    - 相对实验 51 当前主线三 seed 均值，两版都没有形成 overall 正向；residual 版虽然更稳，但 `ECE` 还更差
-  - 结论:
-    - 这条线在机制上成立，且可确认有效信号主要来自 `correct/incorrect behavior fusion gate`
-    - `reliability` 和 `student fusion` 不是主增益源，单独或组合开启都没有形成稳定提升
-    - 当前不进入主线候选；若后续再访，应只做更局部的 behavior gate 调节，例如只改 bias / temperature，或只作用于 `concept_count>=2` / low-evidence concept
+  - 分支/详情: `exp/evidence-aware-tkc`; [066_evidence_aware_tkc_propagation.md](./experiments/066_evidence_aware_tkc_propagation.md)
+  - 判断: 机制有信号但三 seed 未复现，behavior-only rescue 也不 clean
 
 - 实验 67-68: learned multi-concept exercise attribution
-  - 分支: `exp/learned-exercise-attribution`
-  - 做法: 在 propagation 的 correct/incorrect exercise message 聚合处，用 `student-conditioned / response-conditioned / history-conditioned` scorer 为多知识点题动态归因；后续 rescue 测了 scale-preserving、`concept_count=4+`、incorrect-only 版本
-  - 代表结果:
-    - 原版相对实验 51 同 seed: `AUC -0.005409`, `ACC -0.005043`, `RMSE +0.002845`, `Brier +0.002444`, `ECE +0.001614`
-    - scale-preserving rescue 相对实验 51 同 seed: `AUC -0.003315`, `ACC -0.000837`, `RMSE +0.000937`, `Brier +0.000803`, `ECE -0.002072`
-    - `min4` 与 incorrect-only 也未恢复主线；`4+` 只有小幅 mixed signal，样本数 `363`，不足以抵消 overall 回撤
-  - 结论:
-    - 动态归因机制区别于实验 24 的静态分摊，但直接替换 propagation 主聚合会削弱行为证据，并显著伤害 `none_seen` 校准
-    - 不继续沿 attribution 主聚合替换路线 rescue；若以后必须复访，只应作为 additive residual / calibration sidecar，而不是替换主聚合
+  - 分支/详情: `exp/learned-exercise-attribution`; [067_068_learned_multi_concept_exercise_attribution.md](./experiments/067_068_learned_multi_concept_exercise_attribution.md)
+  - 判断: 动态归因直接替换主聚合会削弱行为证据并伤 none_seen 校准
 
 - 实验 69: student-conditioned UKC imputation
-  - 分支: `exp/student-conditioned-ukc-imputation`
-  - 做法: 对未测 concept 用图邻接已测 TKC states 聚合 student-specific prior，并与静态 UKC graph prior 融合，直接改 UKC 状态形成
-  - 结果:
-    - `seed=2024`: `AUC 0.762949`, `ACC 0.726693`, `RMSE 0.429449`, `Brier 0.184427`, `ECE 0.054935`
-    - 相对实验 51 同 seed: `AUC -0.001102`, `ACC -0.001979`, `RMSE +0.001154`, `Brier +0.000990`, `ECE +0.004270`
-    - `none_seen` 排序略变好但校准明显变坏: `AUC +0.002737`, `ACC -0.041616`, `RMSE +0.026330`, `ECE +0.064790`
-  - 结论:
-    - 直接替换 UKC 主状态会放大 `none_seen` under-confidence，不扩 seed
-    - 这个负结果导向实验 70 的设计: 不替换主状态，只做 target-local readout sidecar
+  - 分支/详情: `exp/student-conditioned-ukc-imputation`; [069_student_conditioned_ukc_imputation.md](./experiments/069_student_conditioned_ukc_imputation.md)
+  - 判断: 直接替换 UKC 主状态放大 none_seen 低估，导向实验 70 sidecar
 
 - 实验 70: student-conditioned UKC readout sidecar
-  - 分支: `exp/student-conditioned-ukc-readout-sidecar`
-  - 提交:
-    - `9b73a37`: 增加 `--student-conditioned-ukc-readout-residual`
-  - 动机:
-    - 实验 69 说明直接替换 UKC 主状态会放大 `none_seen` 低估；但 `none_seen` 仍能从学生条件化的图邻接 TKC 证据中获益
-    - 因此改成只读 readout sidecar: 不改 `TKC/UKC/student_state` 主状态，只在 `none_seen` 且存在图邻接 TKC 证据时，加一个 zero-init cognitive-logit residual
-    - residual 输入包含 `student_state/q_repr`、图邻接 TKC 聚合得到的 student-conditioned UKC summary、静态 UKC summary、二者差异、difficulty、concept count、coverage 与邻接证据统计；输入均 detached
-    - 关键修正: 当前 full-batch 训练历史包含目标本身，train 中真实 `none_seen=0`，sidecar 会完全学不到。因此训练态下仅对该 sidecar 使用 `student_concept_attempt_counts - target_q` 的 leave-target-out coverage proxy；评估态仍使用真实 train-history coverage
-    - 工程上按 target chunk 计算 sidecar，避免全训练集一次性展开目标题 graph rows 导致 OOM
-  - 工程验证:
-    - 远端 `python -m unittest tests.test_decoupled_cdm tests.test_hetero_propagation tests.test_history_visibility tests.test_training_modes` 通过
-    - 训练触发诊断: train leave-target-out proxy 下 `none_seen_proxy=5974`，其中 `5167` 个有邻接 TKC 证据；valid/test 的 eligible rate 约 `86%`
-  - 结果:
-    - `seed=2024`: `AUC 0.765368`, `ACC 0.728558`, `RMSE 0.427880`, `Brier 0.183082`, `ECE 0.052010`
-    - `seed=2025`: `AUC 0.766528`, `ACC 0.729605`, `RMSE 0.426968`, `Brier 0.182302`, `ECE 0.049967`
-    - `seed=2026`: `AUC 0.764655`, `ACC 0.729148`, `RMSE 0.427201`, `Brier 0.182501`, `ECE 0.045154`
-  - 三 seed 均值:
-    - `AUC 0.765517`
-    - `ACC 0.729104`
-    - `RMSE 0.427350`
-    - `Brier 0.182628`
-    - `ECE 0.049044`
-  - 相对实验 51 当前主线三 seed 均值:
-    - `AUC +0.001628`
-    - `ACC +0.000153`
-    - `RMSE -0.000602`
-    - `Brier -0.000515`
-    - `ECE -0.000355`
-  - 切片观察:
-    - `none_seen` 三 seed 均值: `AUC 0.817951`, `ACC 0.823482`, `RMSE 0.358966`, `ECE 0.062414`
-    - `seed=2024` 相对实验 51 的 `none_seen`: `AUC +0.001171`, `ACC +0.013269`, `RMSE -0.015090`, `ECE -0.040188`
-    - `concept_count=4+` 三 seed 均值: `AUC 0.746527`, `ACC 0.689624`, `RMSE 0.458434`, `ECE 0.089720`
-    - `4+` 多知识点不是纯 clean win: AUC/ACC/RMSE 有正向，但 `seed=2024` 的 ECE 比实验 51 更差；样本数仅 `363`，后续不应为它单独扩大复杂度
-  - 结论:
-    - 这是当前第一条把 `none_seen` 学生条件化信号稳定转成三 seed overall 正收益的结构路线
-    - 和实验 47 的区别在于它不是全局共享 final-logit bias；和实验 69 的区别在于它不替换 UKC 主状态，只作为 target-local readout sidecar
-    - 已合入 `master` 并成为当前默认主线；后续探索默认从实验 70 口径出发，实验 70 + 实验 61 target-exclusion 的直接组合已由实验 71 判定为不 clean
+  - 分支/详情: `exp/student-conditioned-ukc-readout-sidecar`; [070_student_conditioned_ukc_readout_sidecar.md](./experiments/070_student_conditioned_ukc_readout_sidecar.md)
+  - 指标摘要: 三 seed `AUC 0.765517`, `ACC 0.729104`, `ECE 0.049044`
+  - 判断: student-conditioned UKC sidecar 三 seed overall 正向，已进入当前默认主线
 
 - 实验 71: exp70 + full target-excluded training combo
-  - 分支: `exp/exp70-target-exclusion-combo`
-  - 提交:
-    - `d58eec8`: 在实验 70 主线底座上合入实验 61 的 `--exclude-target-from-train-history` 训练路径，并让 target-exclusion reference 复用 sidecar 所需的只读 TKC/UKC states
-  - 动机:
-    - 实验 70 是当前最强 non-ID-aware 结构主线，实验 61 是 ranking-oriented 训练候选；二者职责相对分离，适合作为少量正交组合验证
-  - 工程验证:
-    - 远端 `python -m unittest tests.test_decoupled_cdm tests.test_hetero_propagation tests.test_history_visibility tests.test_training_modes` 通过
-    - 远端 `epochs=1, max_rows=2000` smoke 通过
-  - 结果:
-    - `seed=2024`, `best_epoch=196`:
-      - `AUC 0.766318`
-      - `ACC 0.729129`
-      - `RMSE 0.428091`
-      - `Brier 0.183262`
-      - `ECE 0.055403`
-  - 相对实验 70 同 seed:
-    - `AUC +0.000950`
-    - `ACC +0.000571`
-    - `RMSE +0.000211`
-    - `Brier +0.000180`
-    - `ECE +0.003393`
-  - 相对实验 61 opt 同 seed:
-    - `AUC +0.001060`
-    - `ACC -0.000514`
-    - `RMSE +0.000146`
-    - `Brier +0.000125`
-    - `ECE +0.005165`
-  - 切片观察:
-    - `none_seen`: `AUC 0.815324`, `ACC 0.823884`, `RMSE 0.357460`, `Brier 0.127778`, `ECE 0.069456`
-    - 相对实验 70 同 seed，`none_seen` 的 `AUC/ACC/RMSE/Brier` 小幅正向，但 `ECE` 基本持平略差
-    - `concept_count=4+`: `AUC 0.738085`, `ACC 0.663912`, `RMSE 0.461673`, `Brier 0.213142`, `ECE 0.087995`
-    - 相对实验 70 同 seed，`4+` 的 `ECE` 改善，但 `AUC/ACC/RMSE/Brier` 明显回撤；该 slice 样本数仍只有 `363`
-  - 结论:
-    - 组合确实继续把排序往上推，但 `AUC` 增量未达到默认 `1e-3` 门槛，且整体 `RMSE/Brier/ECE` 副作用比收益更清楚
-    - 不扩 seed，不把 target-exclusion 训练口径叠到实验 70 默认主线
-    - 若未来明确只追求 `AUC`，可把它作为 ranking-oriented ablation；若继续推进主线，优先寻找新的结构假设，而不是继续扩实验 61 组合
+  - 分支/详情: `exp/exp70-target-exclusion-combo`; [071_exp70_target_excluded_training_combo.md](./experiments/071_exp70_target_excluded_training_combo.md)
+  - 判断: 实验 70 + target-exclusion 单 seed AUC 小正但误差/校准回撤，不扩 seed
 
 - 实验 72: representation bottleneck probes
-  - 分支: `exp/representation-bottleneck-modules`
-  - 提交:
-    - `a8fec59`: 在当前代码上补回两个显式可选模块，`q_conditioned_local_mastery_adapter` 与 `target_conditioned_student_context_adapter`；默认不开，不改变 `master` 默认行为
-  - 动机:
-    - 诊断 2/3 表明继续堆 final-logit 小 residual 很难冲到 `0.77+`
-    - 本轮先验证两个“更大一级但仍不改数据/图/训练口径”的表示瓶颈改动:
-      - 用 `q-conditioned local mastery` 替代实验 51 expert，测试 `B49 + q-local + exp70 none_seen sidecar` 的替代吸收链
-      - 在当前实验 70 主线上加入 `target-conditioned student context`，测试把目标题相关局部 `TKC/UKC` context 写回主 readout state 是否能突破当前学生状态瓶颈
-  - 工程验证:
-    - 远端 `python -m unittest tests.test_decoupled_cdm tests.test_hetero_propagation tests.test_history_visibility tests.test_training_modes` 通过
-    - 远端 `epochs=1, max_rows=2000` smoke 通过
-  - `B49 + q-conditioned local mastery + exp70 sidecar`，关闭实验 51 expert:
-    - `seed=2024`, `best_epoch=173`:
-      - `AUC 0.764979`
-      - `ACC 0.730157`
-      - `RMSE 0.427213`
-      - `Brier 0.182511`
-      - `ECE 0.050572`
-    - 相对实验 70 同 seed:
-      - `AUC -0.000389`
-      - `ACC +0.001599`
-      - `RMSE -0.000667`
-      - `Brier -0.000571`
-      - `ECE -0.001438`
-    - 切片:
-      - `concept_count=4+`: `AUC 0.733136`, `ACC 0.677686`, `RMSE 0.463660`, `ECE 0.099115`
-      - `none_seen`: `AUC 0.813291`, `ACC 0.825090`, `RMSE 0.356982`, `ECE 0.062702`
-    - 判断:
-      - 它是误差/校准型替代链，不是排序突破；`AUC` 未超过当前主线同 seed，且目标 `4+` slice 不强
-      - 不扩 seed，不用它替代实验 51 expert
-  - `target-conditioned student context` 叠加当前实验 70 主线:
-    - `seed=2024`, `best_epoch=153`:
-      - `AUC 0.758167`
-      - `ACC 0.727074`
-      - `RMSE 0.430651`
-      - `Brier 0.185460`
-      - `ECE 0.050105`
-    - 相对实验 70 同 seed:
-      - `AUC -0.007201`
-      - `ACC -0.001484`
-      - `RMSE +0.002771`
-      - `Brier +0.002378`
-      - `ECE -0.001905`
-    - 判断:
-      - 写回主 readout state 的版本仍然明显扰动排序与误差，即便加上实验 70 sidecar 也没有被救回来
-      - 不扩 seed，也不做 min-count rescue
-  - 关于 recency / sequence encoder:
-    - 当前 ordered split 文件只有 `stu_id/exer_id/cpt_seq/label`，没有显式时间戳；可用的只是行顺序
-    - 当前约定又要求 `valid/test` 复用 `train` 行为历史，且当前 split 不是严格时间切分
-    - 因此直接做 recency-aware student state 会同时改变数据语义与历史可见性口径，当前不作为同一轮结构验证继续推进
-  - 结论:
-    - 本轮两个不改数据口径的大模块探针都没有提供冲 `0.77+` 的排序信号
-    - 后续如果继续做表示瓶颈级改动，应先明确是否允许改变数据/历史可见性口径；否则优先不要再做“写回主状态”的 local context 变体
+  - 分支/详情: `exp/representation-bottleneck-probes`; [072_representation_bottleneck_probes.md](./experiments/072_representation_bottleneck_probes.md)
+  - 判断: B49 local mastery 只改善误差/校准不提 AUC；target-conditioned context 明显伤排序
 
 - 实验 73: current mainline protocol sweep
-  - 分支: `exp/mainline-protocol-sweep`
-  - 输出: `results/mainline_protocol_sweep/`
-  - 口径:
-    - 不改当前实验 70 主线结构，不改数据、图、`concept_dim`、`gs_mode`
-    - 先用 `seed=2024` 扫 full-batch 学习率、patience/scheduler 组合与 recompute minibatch
-    - 只给接近门槛或有明显 `ACC` 信号的配置补 `seed=2025/2026`
-  - `seed=2024` 粗扫:
-    - 默认 sanity 复现当前主线: `AUC 0.765368`, `ACC 0.728558`, `RMSE 0.427880`, `Brier 0.183082`, `ECE 0.052010`
-    - `lr=3e-4`: `AUC 0.757601`, `ECE 0.038516`; 校准变好但明显欠排序
-    - `lr=5e-4`: `AUC 0.766028`, `ACC 0.728406`, `ECE 0.057126`; AUC 小正但校准明显回撤
-    - `lr=7e-4`: `AUC 0.765779`, `ACC 0.727283`, `ECE 0.061719`; 不如后续长 patience 版本
-    - `lr=1.5e-3`: `AUC 0.766310`, `ACC 0.726864`, `ECE 0.057815`; 单 seed AUC 接近门槛但 ACC/ECE 副作用
-    - `lr=2e-3`: `AUC 0.765703`, `ACC 0.726579`, `ECE 0.060059`; 高 lr 不继续提升
-    - `lr=1e-3, early_stop=10/20, scheduler_patience=5`: 都选到 `epoch=184`，`AUC 0.765419`, `ACC 0.729529`
-    - `lr=7e-4, early_stop=20, scheduler_patience=5`: `AUC 0.765558`, `ACC 0.730518`
-    - `lr=1.5e-3, early_stop=20, scheduler_patience=5`: `AUC 0.766323`, `ACC 0.728273`
-    - `recompute_minibatch bs=8192 lr=1e-4`: `AUC 0.762270`, `ECE 0.043387`; 仍是校准/误差型，不是 AUC 路线
-    - `recompute_minibatch bs=8192 lr=3e-4`: `AUC 0.760713`
-    - `recompute_minibatch bs=4096 lr=1e-4`: `AUC 0.761224`; 成本更高且无收益
-  - 候选扩 seed:
-    - `lr=1.5e-3, early_stop=20, scheduler_patience=5`:
-      - `seed=2024`: `AUC +0.000955`, `ACC -0.000285`, `ECE +0.003699`
-      - `seed=2025`: `AUC -0.001311`, `ACC -0.001675`, `ECE -0.000867`
-      - `seed=2026`: `AUC -0.002270`, `ACC +0.001142`, `ECE -0.000027`
-      - 三 seed 均值差: `AUC -0.000875`, `ACC -0.000273`, `RMSE +0.000329`, `Brier +0.000281`, `ECE +0.000935`
-      - 判断: 单 seed AUC 小涨不稳定，不作为候选
-    - `lr=7e-4, early_stop=20, scheduler_patience=5`:
-      - `seed=2024`: `AUC +0.000190`, `ACC +0.001960`, `RMSE -0.000003`, `Brier -0.000003`, `ECE +0.001766`
-      - `seed=2025`: `AUC +0.000505`, `ACC -0.000057`, `RMSE +0.000499`, `Brier +0.000426`, `ECE +0.004079`
-      - `seed=2026`: `AUC +0.002088`, `ACC +0.002036`, `RMSE -0.000728`, `Brier -0.000622`, `ECE +0.002772`
-      - 三 seed 均值差: `AUC +0.000928`, `ACC +0.001313`, `RMSE -0.000077`, `Brier -0.000066`, `ECE +0.002872`
-      - 三 seed 均值约: `AUC 0.766445`, `ACC 0.730417`, `RMSE 0.427273`, `Brier 0.182562`, `ECE 0.051916`
-      - 判断: 这是当前最好的训练口径候选，稳定小幅改善 `AUC/ACC`，但达不到 `0.77+`，且校准变差
-  - 邻域 refine:
-    - `lr=6e-4, early_stop=20, scheduler_patience=5`, `seed=2024`: `AUC +0.000351`, `ACC +0.002036`, `ECE +0.001995`
-    - `lr=8e-4, early_stop=20, scheduler_patience=5`, `seed=2024`: `AUC -0.000456`, `ACC +0.001313`, `ECE +0.001521`
-    - `lr=9e-4, early_stop=20, scheduler_patience=5`, `seed=2024`: `AUC -0.000097`, `ACC +0.000228`, `ECE +0.001380`
-    - 判断: `6e-4/7e-4` 附近主要是 ACC 口径收益，AUC 没有更强局部峰
-  - 结论:
-    - 口径扫没有发现能把当前主线推到 `0.77+` 的训练配置
-    - `lr=7e-4 + early_stop=20 + scheduler_patience=5` 可作为 accuracy/ranking-oriented 候选口径，但不是 clean 默认切换: `AUC/ACC` 小正，`ECE` 明显变差，训练更久
-    - recompute minibatch 在当前实验 70 主线上仍不适合作为 AUC 推进路线；它最多是 calibration-oriented ablation
+  - 分支/详情: `exp/mainline-protocol-sweep`; [073_current_mainline_protocol_sweep.md](./experiments/073_current_mainline_protocol_sweep.md)
+  - 指标摘要: `AUC +0.000928`, `ACC +0.001313`, `ECE +0.002872`
+  - 判断: `lr=7e-4 + patience` 是最强候选但 ECE 变差，非 clean 默认切换
 
 - 实验 74: `guess/slip` monotonic soft penalty
-  - 分支: `exp/gs-monotonic-penalty`
-  - 详情: [074_gs_monotonic_penalty.md](./experiments/074_gs_monotonic_penalty.md)
-  - 三 seed 均值差: `AUC -0.000170`, `ACC +0.000565`, `RMSE -0.000012`, `Brier -0.000010`, `ECE +0.000200`
-  - 关键失败原因: `1e-4` 在 `seed=2025/2026` 的 best checkpoint 几乎全量 `guess+slip>1`，软正则权重不足以稳定压住独立 sigmoid 退化解
-  - 判断: 诊断脚本值得保留；`1e-4` 不作为主线候选，`1e-3` 因 AUC/ACC tradeoff 不扩 seed
+  - 分支/详情: `exp/gs-monotonic-penalty`; [074_gs_monotonic_penalty.md](./experiments/074_gs_monotonic_penalty.md)
+  - 指标摘要: `AUC -0.000170`, `ACC +0.000565`, `ECE +0.000200`
+  - 判断: `1e-4` 三 seed 不稳且两个 seed 语义反转；`1e-3` 伤 AUC/ACC
 
 ## 旧口径的历史参考
 

@@ -1,0 +1,41 @@
+# Experiment 71: exp70 + full target-excluded training combo
+
+> Migrated from `docs/model_improvement_plan.md` in `exp/experiment-doc-index-pilot`. This preserves the currently available compressed detail; it may not include older uncompressed notes from git history.
+
+- 实验 71: exp70 + full target-excluded training combo
+  - 分支: `exp/exp70-target-exclusion-combo`
+  - 提交:
+    - `d58eec8`: 在实验 70 主线底座上合入实验 61 的 `--exclude-target-from-train-history` 训练路径，并让 target-exclusion reference 复用 sidecar 所需的只读 TKC/UKC states
+  - 动机:
+    - 实验 70 是当前最强 non-ID-aware 结构主线，实验 61 是 ranking-oriented 训练候选；二者职责相对分离，适合作为少量正交组合验证
+  - 工程验证:
+    - 远端 `python -m unittest tests.test_decoupled_cdm tests.test_hetero_propagation tests.test_history_visibility tests.test_training_modes` 通过
+    - 远端 `epochs=1, max_rows=2000` smoke 通过
+  - 结果:
+    - `seed=2024`, `best_epoch=196`:
+      - `AUC 0.766318`
+      - `ACC 0.729129`
+      - `RMSE 0.428091`
+      - `Brier 0.183262`
+      - `ECE 0.055403`
+  - 相对实验 70 同 seed:
+    - `AUC +0.000950`
+    - `ACC +0.000571`
+    - `RMSE +0.000211`
+    - `Brier +0.000180`
+    - `ECE +0.003393`
+  - 相对实验 61 opt 同 seed:
+    - `AUC +0.001060`
+    - `ACC -0.000514`
+    - `RMSE +0.000146`
+    - `Brier +0.000125`
+    - `ECE +0.005165`
+  - 切片观察:
+    - `none_seen`: `AUC 0.815324`, `ACC 0.823884`, `RMSE 0.357460`, `Brier 0.127778`, `ECE 0.069456`
+    - 相对实验 70 同 seed，`none_seen` 的 `AUC/ACC/RMSE/Brier` 小幅正向，但 `ECE` 基本持平略差
+    - `concept_count=4+`: `AUC 0.738085`, `ACC 0.663912`, `RMSE 0.461673`, `Brier 0.213142`, `ECE 0.087995`
+    - 相对实验 70 同 seed，`4+` 的 `ECE` 改善，但 `AUC/ACC/RMSE/Brier` 明显回撤；该 slice 样本数仍只有 `363`
+  - 结论:
+    - 组合确实继续把排序往上推，但 `AUC` 增量未达到默认 `1e-3` 门槛，且整体 `RMSE/Brier/ECE` 副作用比收益更清楚
+    - 不扩 seed，不把 target-exclusion 训练口径叠到实验 70 默认主线
+    - 若未来明确只追求 `AUC`，可把它作为 ranking-oriented ablation；若继续推进主线，优先寻找新的结构假设，而不是继续扩实验 61 组合

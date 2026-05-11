@@ -1,0 +1,43 @@
+# Experiment 53: soft routing regularizer for readout experts
+
+> Migrated from `docs/model_improvement_plan.md` in `exp/experiment-doc-index-pilot`. This preserves the currently available compressed detail; it may not include older uncompressed notes from git history.
+
+- 实验 53: soft routing regularizer for readout experts
+  - 分支: `exp/readout-routing-soft-regularizer`
+  - 提交: `910b9c8`
+  - 做法:
+    - 以实验 51 的 full-trigger 三专家 residual 为底座
+    - 暴露 gate probability，并在训练时加入轻量 routing regularizer
+    - regularizer 形式为 `conditional_entropy - marginal_entropy`
+    - 本轮只测试 `--interpretable-readout-expert-routing-mi-weight 0.05`
+  - 结果:
+    - smoke:
+      - `max_rows=2000`, `epoch=1`, `mi_weight=0.05` 能正常训练并产出 summary
+    - `seed=2024`:
+      - `AUC 0.764348`
+      - `ACC 0.729148`
+      - `RMSE 0.427924`
+      - `Brier 0.183119`
+      - `ECE 0.050730`
+    - `seed=2025`:
+      - `AUC 0.764564`
+      - `ACC 0.726008`
+      - `RMSE 0.429125`
+      - `Brier 0.184148`
+      - `ECE 0.055972`
+    - `seed=2026`:
+      - `AUC 0.761720`
+      - `ACC 0.729148`
+      - `RMSE 0.427652`
+      - `Brier 0.182886`
+      - `ECE 0.041885`
+  - 三 seed 均值相对实验 51:
+    - `AUC -0.000345`
+    - `ACC -0.000850`
+    - `RMSE +0.000282`
+    - `Brier +0.000241`
+    - `ECE +0.000130`
+  - 结论:
+    - `seed=2024` 虽然略优于实验 51 同 seed，但 `seed=2025/2026` 没有复现，三 seed 均值回到全面弱于当前主线
+    - 不继续沿这条 soft routing regularizer 扩线；实验 51 原版 full-trigger 仍然是这条线应保留的最强基线
+    - 若后续还要 revisit routing，优先考虑更局部的软引导或更明确的 slice 目标，而不是继续围绕同一种全局 gate regularizer 小步扫参
