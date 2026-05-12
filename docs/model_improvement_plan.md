@@ -1,26 +1,34 @@
-# Model Improvement Archive
+# Model Improvement Ledger
 
-这份文档只保留实验台账用途，用来回答三件事:
+这份文档只保留实验台账入口用途，用来回答三件事:
 
 - 当前 `master` 的正式主线是什么
 - 哪些路线已经证明有效或无效
 - 下一步默认该优先试什么
 
-它不是新会话默认入口。新会话先读 `docs/session_bootstrap.md`；只有在需要查历史实验、避免重复试错时再回来看这份档案。
+它不是新会话默认入口。新会话先读 `docs/session_bootstrap.md`；只有在需要查历史实验、避免重复试错时再回来看这份台账。
+
+## 台账定位
+
+- 实验台账仍然需要维护；它是跨会话、跨分支、跨 agent 接力时避免重复试错的结构化记忆。
+- 台账不追求成为人类通读的完整实验史；默认优先服务 AI/agent 的检索、路由和决策。
+- `docs/experiment_index.jsonl` 是结构化状态索引；本文件是当前判断和高信号路线图；`docs/experiments/` 是按需展开的证据附录。
+- 历史恢复允许不完整，但必须显式标注。`detail_status` 是可信度提示，不是装饰字段。
+- 旧实验只需保留足够回答“现在是什么状态、为什么接受/拒绝/暂停、什么条件下值得复访”；只有主线组件、强候选和容易被重复试错的失败路线才需要补充更多细节。
 
 ## 如何使用
 
 - 先看“当前快照”，确认主线、结果口径和近线候选。
 - 要判断某条路线是否还值得继续时，先看“已验证有效”和“已验证无效或已降级”的摘要，再跳到对应 detail doc。
 - 要设计下一轮实验时，看“近线 follow-up”和“默认下一步”。
-- 要按实验号、分支名、状态或失败原因定位时，查 `docs/experiment_index.jsonl`；它是路由表，不是默认阅读入口。
+- 要按实验号、分支名、状态或失败原因定位时，查 `docs/experiment_index.jsonl`；它是 agent-facing 路由表和状态索引。
 - 只有复访早期失败路线时才打开 `docs/archive_legacy_experiments.md`；只有需要跨实验诊断和主题归纳时才打开 `docs/experiment_themes.md`。
 - 主文档只保留当前主线、候选和决策索引；实验细节默认外置。
 
 ## 当前快照
 
 - 当前 `master` 正式主线沿用 `docs/session_bootstrap.md` 里的“当前主线”口径。
-- 从这份归档的实验视角看，它对应实验 70 主线:
+- 从这份台账的实验视角看，它对应实验 70 主线:
   - 以实验 34 为底座
   - 吸收实验 49 的 history-carrier pairwise interaction residual
   - 再吸收实验 51 的 interpretable readout expert residual

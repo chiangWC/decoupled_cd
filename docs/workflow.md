@@ -8,7 +8,7 @@
 
 ## 路径与环境
 
-- 本地项目目录: `/home/jameschiang/research/decoupled_cd`
+- 本地项目目录: `/home/jameschiang/work/decoupled_cd`
 - 远端主机别名: `xph-pc`
 - 远端项目目录: `/home/xph/jwc/research/decoupled_cd`
 - conda 环境: `decoupled_cd`
@@ -83,20 +83,40 @@ bash scripts/remote_exec.sh python scripts/train.py
 - [docs/session_bootstrap.md](./session_bootstrap.md) 只保留新会话必须先知道的最小规则、当前主线口径和按需再读入口。
 - [docs/workflow.md](./workflow.md) 只保留协作、分支、远端运行和文档维护流程，不记录具体实验结论。
 - [docs/handoff.md](./handoff.md) 只保留当前主线状态、已经会影响后续行动的稳定判断、当前优先分支和关键文件。
-- [docs/model_improvement_plan.md](./model_improvement_plan.md) 是唯一的实验台账主档，负责记录实验号、做法、结果、切片观察和结论。
+- [docs/model_improvement_plan.md](./model_improvement_plan.md) 是实验台账入口，负责保留当前快照、主线判断、候选路线和默认下一步。
+- [docs/experiment_index.jsonl](./experiment_index.jsonl) 是 agent-facing 结构化实验索引，负责按实验号、分支、状态、标签和 detail 路径快速路由。
+- [docs/experiments/](./experiments/) 存放仍会影响未来决策的实验详情，包括 seed 指标、切片、诊断、命令、结果路径和失败模式证据。
+- [docs/experiment_themes.md](./experiment_themes.md) 存放跨实验诊断和主题级结论。
+- [docs/archive_legacy_experiments.md](./archive_legacy_experiments.md) 存放低频复访的旧失败路线压缩归档。
 
 ## 文档更新规则
 
-- 新实验结束后，默认先只更新 `model_improvement_plan`。
+- 新实验结束后，默认至少更新 `docs/experiment_index.jsonl`，让后续 agent 能按实验号、分支、状态和失败原因检索到结论。
+- 若实验会影响当前主线、候选路线、默认下一步或容易被后续重复试错，还要更新 `docs/model_improvement_plan.md` 的摘要或索引。
+- 若实验需要保留 seed/slice/诊断证据，新增或更新 `docs/experiments/` 下的 detail doc；不要把长指标和长诊断重新堆回 `model_improvement_plan`。
 - 只有当实验改变了当前主线、默认判断、默认优先级或当前推荐分支时，才额外更新 `handoff`。
 - 只有当协作方式、远端运行流程、分支约定或文档维护流程本身发生变化时，才更新 `workflow`。
 - 只有当新会话第一入口必须知道的最小规则发生变化时，才更新 `session_bootstrap`。
 - 失败实验、局部 slice 信号、单 seed follow-up，如果没有改变默认判断，通常不进入 `handoff`。
-- 文档更新后，应检查 `handoff` 和 `model_improvement_plan` 是否出现重复结论或重复指标；若有重复，保留 `model_improvement_plan` 的详细版本，`handoff` 只写压缩判断。
+- 历史恢复不完整是允许的，但必须用 `detail_status` 标注证据完整度；不要把压缩迁移内容伪装成完整恢复。
+- 文档更新后，应检查 `handoff`、`model_improvement_plan` 和 detail doc 是否出现重复长指标；若有重复，保留 detail doc 的详细版本，`model_improvement_plan` 和 `handoff` 只写压缩判断与链接。
 
 ## 实验记录模板
 
-写入 `model_improvement_plan` 的新实验条目默认按最小必要信息记录，通常包含:
+新增实验记录默认按 agent 可检索的最小必要信息维护。`experiment_index.jsonl` 至少应包含:
+
+- `id`
+- `title`
+- `branch`
+- `base`
+- `change_type`
+- `status`
+- `reason_tags`
+- `verdict`
+- `doc_path`
+- `detail_status`
+
+detail doc 只在需要保留证据时创建，通常包含:
 
 - 实验号 / 分支名
 - 做法: 改了什么，作用在什么模块，是否 zero-init / targeted / sidecar
@@ -109,4 +129,4 @@ bash scripts/remote_exec.sh python scripts/train.py
 
 - 一句判断
 - 是否已吸收到 `master` / 是否暂停
-- 需要时附一条到 `model_improvement_plan` 的引用
+- 需要时附一条到 `model_improvement_plan`、`experiment_index.jsonl` 或 detail doc 的引用
