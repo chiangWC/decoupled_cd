@@ -69,7 +69,9 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - 结构比较默认看 `300 epoch`
 - 实验报告默认主看 `AUC/ACC`
 - `RMSE/Brier/ECE/分桶校准` 仍保留，但默认作为次要指标用于判断误差与校准副作用
-- 若目标是推进主线，默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级
+- 当前冲刺目标是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对当前主线约需 `AUC +0.0125` 到 `+0.0145`
+- 这个目标距离已经超出常规小 residual / sidecar 的边际收益；后续默认优先考虑 representation-level 大结构改动，例如学生状态形成、target-conditioned history、受约束结构学习或明确标注的 hybrid side channel
+- 局部推进仍默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级；若冲刺 `0.78` 的大结构单 seed 连 `AUC +0.002` 左右信号都没有，通常不优先扩 seed
 
 ## 已定规则
 
@@ -77,7 +79,7 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - `dual graph` 只作为 legacy ablation，不是默认路径。
 - `valid/test` 复用 `train` 行为历史做传播输入。
 - 新假设默认先只改一个结构因素，用单因素实验先把证据立住。
-- 当前已进入单因素边际收益放缓的平台期；单因素实验默认只作为新假设准入，不再视为完整推进节奏。
+- 当前已进入单因素边际收益放缓的平台期；单因素小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
 - 默认允许少量测试已各自成立的正交组合，也允许探索更大一级、真正改变表示瓶颈的模块改动；组合数和结构复杂度都应严格受控，避免无序扩线。
 - 主线默认仍锁定当前超参数口径；但若是更大一级模块改动，且单次结果表现为“overall 未过门槛但目标 slice 有明显改善”，可额外允许一次很小的 rescue sweep，再决定是否淘汰。
 - 探索性结构改动默认先从最新 `master` 切 `exp/<short-name>` 分支。
