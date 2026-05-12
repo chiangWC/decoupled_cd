@@ -173,6 +173,7 @@
 - 默认优先探索更大一级、真正改变表示瓶颈的模块改动，例如学生状态形成、target-conditioned history、受约束结构学习，或明确标注为 hybrid 的 side channel。
 - 主线默认仍锁定当前超参数口径；但若是更大一级模块改动，且单次结果表现为“overall 未过门槛但目标 slice 有明显改善”，可额外允许一次很小的 rescue sweep，再决定是否淘汰。
 - 探索性结构改动默认先从最新 `master` 切 `exp/<short-name>` 分支。
+- 对 readout / `q_repr` / target-conditioned history / student-state 形成这类容易受实验 51 full-trigger expert 影响的 representation-level 改动，仍从最新 `master` 实现，但首轮实验设计默认至少包含 `B49 seed=2024` 与当前 `Exp70 seed=2024` 两格；不要只跑当前主线单格后直接下结论。
 - 新结构默认先跑单次；单次值得继续时再补 `2-3` 个 seed。
 - 若局部改动单次相对当前主线的 `AUC/ACC` 连 `1e-3` 量级都明显达不到，默认不优先扩 seed；若冲 `0.78` 的大结构单 seed 连 `AUC +0.002` 左右信号都没有，通常也不优先扩 seed，除非切片信号非常强。
 - 若做更大一级结构改动，优先选择能直接作用于多知识点交互、学生状态形成或 propagation/readout 主干语义的模块；避免只在最终 logit 附近继续堆局部补丁。

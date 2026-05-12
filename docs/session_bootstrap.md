@@ -83,6 +83,7 @@ bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
 - 默认允许少量测试已各自成立的正交组合，也允许探索更大一级、真正改变表示瓶颈的模块改动；组合数和结构复杂度都应严格受控，避免无序扩线。
 - 主线默认仍锁定当前超参数口径；但若是更大一级模块改动，且单次结果表现为“overall 未过门槛但目标 slice 有明显改善”，可额外允许一次很小的 rescue sweep，再决定是否淘汰。
 - 探索性结构改动默认先从最新 `master` 切 `exp/<short-name>` 分支。
+- 对 readout / `q_repr` / target-conditioned history / student-state 形成这类容易受实验 51 full-trigger expert 影响的 representation-level 改动，仍从最新 `master` 实现，但首轮实验设计默认至少包含 `B49 seed=2024` 与当前 `Exp70 seed=2024` 两格；不要只跑当前主线单格后直接下结论。
 - 新结构默认先跑单次；单次值得继续时再补 `2-3` 个 seed。
 - 结果未验证前，不要把探索性实验直接推到 `master`。
 - 即使探索性代码不合入 `master`，已经形成判断的实验结论也要用 doc-only 提交同步回 `master` 台账。
