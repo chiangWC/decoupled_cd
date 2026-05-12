@@ -17,4 +17,12 @@ data/assist_09_ordered/
 
 # OS files
 .DS_Store
-.codex
+
+# Codex local/project files
+.codex/*
+!.codex/config.toml
+!.codex/hooks.json
+!.codex/agents/
+!.codex/agents/*.toml
+!.codex/hooks/
+!.codex/hooks/*.py
