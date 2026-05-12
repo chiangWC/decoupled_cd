@@ -1,51 +1,20 @@
 # State Management
 
-> How state is managed in this project.
+> Not applicable to the current codebase.
 
 ---
 
-## Overview
+## Current State
 
-<!--
-Document your project's state management conventions here.
+There is no client-side state management layer. Project state lives in explicit Python objects and artifacts:
 
-Questions to answer:
-- What state management solution do you use?
-- How is local vs global state decided?
-- How do you handle server state?
-- What are the patterns for derived state?
--->
-
-(To be filled by the team)
+- `StepDataBundle` for loaded data and tensors.
+- PyTorch module parameters and optimizer/scheduler state during training.
+- JSON, CSV, log, and checkpoint files under result/log directories.
+- Experiment conclusions in `docs/`.
 
 ---
 
-## State Categories
+## Rule
 
-<!-- Local state, global state, server state, URL state -->
-
-(To be filled by the team)
-
----
-
-## When to Use Global State
-
-<!-- Criteria for promoting state to global -->
-
-(To be filled by the team)
-
----
-
-## Server State
-
-<!-- How server data is cached and synchronized -->
-
-(To be filled by the team)
-
----
-
-## Common Mistakes
-
-<!-- State management mistakes your team has made -->
-
-(To be filled by the team)
+Do not add global frontend state libraries or browser data caches unless a future UI task explicitly requires them.

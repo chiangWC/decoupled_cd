@@ -4,8 +4,8 @@
 说明:
 
 - 本文件保留为高层模型语义说明，不追踪所有实现细节。
-- 新会话默认入口是 [docs/session_bootstrap.md](docs/session_bootstrap.md)。
-- 当前正式 workflow、主线结论和运行约定以 [docs/session_bootstrap.md](docs/session_bootstrap.md)、[docs/workflow.md](docs/workflow.md) 和 [docs/handoff.md](docs/handoff.md) 为准。
+- 新会话默认入口是 Trellis 注入的 `<workflow-state>`；没有注入时按 `.agents/skills/trellis-start/SKILL.md` 启动。
+- 当前正式 workflow 与运行约定以 `.trellis/workflow.md` 和 `.trellis/spec/backend/experiment-protocol.md` 为准；主线结论和实验历史以 [docs/model_improvement_plan.md](docs/model_improvement_plan.md) 与 [docs/handoff.md](docs/handoff.md) 为准。
 
 # Step 1：认知空间解耦
 

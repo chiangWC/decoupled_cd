@@ -1,114 +1,34 @@
 # Session Bootstrap
 
-新会话默认先只读这份文档。
+这份文档现在只保留兼容入口和文档索引，不再作为流程约束源。
 
-## 最小规则
+## 当前源头
 
-- 所有代码默认在本地修改，不直接改远端。
-- 所有训练、评估、测试、smoke test 都在远端 `xph-pc` 上运行；远端只作为运行环境。
-- 默认 `origin` 指向远端运行机上的项目仓库。
-- 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
-- `master` 只保留当前认可状态；探索性实验默认在 `exp/*` 分支进行。
-- 任何会引入代码改动的验证、测试、排查或辅助性修改，默认也先在非 `master` 分支完成；即使改动只是为了远端执行测试，也不要先直接提交到 `master`。
-- 远端执行默认跟随当前本地分支；本地改动先 `git commit`，再 `git push origin <current-branch>`。
+- Trellis 任务流程: `.trellis/workflow.md`
+- 项目执行约束: `.trellis/spec/backend/experiment-protocol.md`
+- Python 代码规范: `.trellis/spec/backend/index.md`
+- 当前主线、候选路线和实验结论: `docs/model_improvement_plan.md`
+- 扩展交接和关键文件: `docs/handoff.md`
 
-## 最常用命令
+## 新会话规则
 
-开始工作前检查并同步本地分支:
+新会话应先遵循 Trellis 注入的 `<workflow-state>`。如果平台没有注入 Trellis 上下文，则读取 `.agents/skills/trellis-start/SKILL.md` 并执行其中的启动步骤。
 
-```bash
-git status
-git pull --ff-only origin master
-```
-
-将当前分支推到远端运行机仓库:
-
-```bash
-git push origin "$(git branch --show-current)"
-```
-
-开始一个新实验分支:
-
-```bash
-git switch -c exp/<short-name>
-```
-
-在远端环境执行命令:
-
-```bash
-bash scripts/remote_exec.sh <your-command>
-```
-
-例如运行正式单次基线:
-
-```bash
-bash scripts/remote_exec.sh bash scripts/run_assist09_baseline.sh
-```
-
-## 当前主线
-
-- 数据: `data/assist_09_ordered`
-- 图: `data/assist_09_ordered/transition_graph/propagation_graph.csv`
-- `learning_rate = 1e-3`
-- `concept_dim = 64`
-- `gs_mode = conditional`
-- `graph_mode = single`
-- `TKC/UKC` 结构传播参数独立
-- `TKC` 行为消息默认使用正误双通道
-- `TKC/UKC` 学生级融合默认使用自适应 gate
-- `high_concept_logit_adapter` 默认开启，且 `high_concept_logit_min_count = 2`
-- `pairwise_history_interaction_adapter` 默认开启，且 `pairwise_history_interaction_min_count = 2`
-- `gs_difficulty_adapter` 默认开启
-- `interpretable_readout_expert_adapter` 默认开启，且 `interpretable_readout_expert_count = 3`
-- `student_conditioned_ukc_readout_residual` 默认开启
-- 当前主线对应实验 70 口径:
-  - 以实验 34 为底座
-  - 再吸收“显式历史概念统计 carrier + shared pairwise concept interaction residual”
-  - 再吸收“可解释 gate + readout expert residual”
-  - 再吸收“student-conditioned UKC `none_seen` readout sidecar”
-- 结构比较默认看 `300 epoch`
-- 实验报告默认主看 `AUC/ACC`
-- `RMSE/Brier/ECE/分桶校准` 仍保留，但默认作为次要指标用于判断误差与校准副作用
-- 当前冲刺目标是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对当前主线约需 `AUC +0.0125` 到 `+0.0145`
-- 这个目标距离已经超出常规小 residual / sidecar 的边际收益；后续默认优先考虑 representation-level 大结构改动，例如学生状态形成、target-conditioned history、受约束结构学习或明确标注的 hybrid side channel
-- 局部推进仍默认希望 `AUC` 或 `ACC` 的改善至少达到 `1e-3` 量级；若冲刺 `0.78` 的大结构单 seed 连 `AUC +0.002` 左右信号都没有，通常不优先扩 seed
-
-## 已定规则
-
-- ordered ASSIST09 + transition graph 是当前固定主线。
-- `dual graph` 只作为 legacy ablation，不是默认路径。
-- `valid/test` 复用 `train` 行为历史做传播输入。
-- 新假设默认先只改一个结构因素，用单因素实验先把证据立住。
-- 当前已进入单因素边际收益放缓的平台期；单因素小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
-- 默认允许少量测试已各自成立的正交组合，也允许探索更大一级、真正改变表示瓶颈的模块改动；组合数和结构复杂度都应严格受控，避免无序扩线。
-- 主线默认仍锁定当前超参数口径；但若是更大一级模块改动，且单次结果表现为“overall 未过门槛但目标 slice 有明显改善”，可额外允许一次很小的 rescue sweep，再决定是否淘汰。
-- 探索性结构改动默认先从最新 `master` 切 `exp/<short-name>` 分支。
-- 对 readout / `q_repr` / target-conditioned history / student-state 形成这类容易受实验 51 full-trigger expert 影响的 representation-level 改动，仍从最新 `master` 实现，但首轮实验设计默认至少包含 `B49 seed=2024` 与当前 `Exp70 seed=2024` 两格；不要只跑当前主线单格后直接下结论。
-- 新结构默认先跑单次；单次值得继续时再补 `2-3` 个 seed。
-- 结果未验证前，不要把探索性实验直接推到 `master`。
-- 即使探索性代码不合入 `master`，已经形成判断的实验结论也要用 doc-only 提交同步回 `master` 台账。
-- 远端只会运行已推到同名分支的提交。
+不要在本文件新增新的流程、分支、远端运行或实验记录规则；这些规则应写入 `.trellis/workflow.md` 或 `.trellis/spec/backend/experiment-protocol.md`。
 
 ## 按需再读
 
-- [docs/workflow.md](./workflow.md)
-  - 需要看完整协作、运行规则或文档记录规范时再读
 - [docs/handoff.md](./handoff.md)
-  - 需要看当前主线细节、关键判断和关键文件时再读
+  - 需要看当前主线细节、关键判断、分支优先级和关键文件时再读
+- [docs/model_improvement_plan.md](./model_improvement_plan.md)
+  - 需要查历史实验、候选路线、失败路线或默认下一步时再读
+- [docs/experiment_index.jsonl](./experiment_index.jsonl)
+  - 已知实验号、分支名、状态或失败原因时，用作结构化索引
+- [docs/experiments/](./experiments/)
+  - 只有需要 seed、slice、诊断证据、命令或结果路径时再打开 detail doc
 - [README_spec.md](../README_spec.md)
   - 需要核对模型语义和 Step 1-4 定义时再读
-- [docs/model_improvement_plan.md](./model_improvement_plan.md)
-  - 需要查历史实验和失败路线时再读；它是 agent-facing 实验台账入口，不是完整历史叙事
-  - 默认先看主文档摘要；已知实验号、分支名或只想快速判断状态时，再查 [experiment_index.jsonl](./experiment_index.jsonl)
-  - 只有需要 seed/slice/诊断证据时，再打开 `docs/experiments/` 下的 detail 文件或拆分归档
 - [docs/transition_graph_notes.md](./transition_graph_notes.md)
   - 需要修改构图逻辑时再读
 - [docs/reuse_plan.md](./reuse_plan.md)
   - 只有做工程复用或重构时再读
-
-## 推荐开场
-
-```text
-先读 docs/session_bootstrap.md，并按其中约定工作。
-如任务需要，再按文档里的“按需再读”继续展开。
-```

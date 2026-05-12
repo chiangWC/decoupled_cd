@@ -12,6 +12,18 @@
 
 ---
 
+## Project Operating Constraints
+
+This repository uses Trellis as the workflow and coding-constraint source of truth.
+
+- Task lifecycle and phase routing live in this file.
+- Branch, remote execution, mainline protocol, and experiment-ledger rules live in `.trellis/spec/backend/experiment-protocol.md`.
+- Code organization and quality rules live under `.trellis/spec/backend/`.
+- `docs/session_bootstrap.md` and `docs/workflow.md` are compatibility indexes only; do not add new process rules there.
+- Experiment history, results, and route decisions remain in `docs/` ledger files.
+
+---
+
 ## Trellis System
 
 ### Developer Identity

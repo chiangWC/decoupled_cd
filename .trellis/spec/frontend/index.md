@@ -1,12 +1,14 @@
 # Frontend Development Guidelines
 
-> Best practices for frontend development in this project.
+> Current status: this repository has no frontend application.
 
 ---
 
 ## Overview
 
-This directory contains guidelines for frontend development. Fill in each file with your project's specific conventions.
+This project is a Python/PyTorch research pipeline. There are no React, TypeScript, CSS, browser UI, frontend routes, components, hooks, or client-side state management in the current codebase.
+
+Do not introduce frontend frameworks or frontend-style abstractions while working on current model, data, training, or experiment-ledger tasks. If a future task explicitly adds a web UI or dashboard, update these frontend specs from the new real code after the first implementation establishes conventions.
 
 ---
 
@@ -14,26 +16,15 @@ This directory contains guidelines for frontend development. Fill in each file w
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
-| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
-| [State Management](./state-management.md) | Local state, global state, server state | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
+| [Directory Structure](./directory-structure.md) | Current absence of frontend directories | Not applicable |
+| [Component Guidelines](./component-guidelines.md) | Component rules if a future UI is added | Not applicable |
+| [Hook Guidelines](./hook-guidelines.md) | Hook rules if a future React UI is added | Not applicable |
+| [State Management](./state-management.md) | State rules if a future UI is added | Not applicable |
+| [Quality Guidelines](./quality-guidelines.md) | Frontend quality gates if a future UI is added | Not applicable |
+| [Type Safety](./type-safety.md) | TypeScript rules if a future UI is added | Not applicable |
 
 ---
 
-## How to Fill These Guidelines
+## Pre-Development Checklist
 
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
-
-**Language**: All documentation should be written in **English**.
+For current work, use the backend specs instead. Only read these frontend files when the task explicitly mentions adding or modifying a frontend.

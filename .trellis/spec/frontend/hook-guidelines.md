@@ -1,51 +1,15 @@
 # Hook Guidelines
 
-> How hooks are used in this project.
+> Not applicable until the project has a React or similar frontend.
 
 ---
 
-## Overview
+## Current State
 
-<!--
-Document your project's hook conventions here.
-
-Questions to answer:
-- What custom hooks do you have?
-- How do you handle data fetching?
-- What are the naming conventions?
-- How do you share stateful logic?
--->
-
-(To be filled by the team)
+There are no frontend hooks, client-side data fetching hooks, or browser state hooks in this repository.
 
 ---
 
-## Custom Hook Patterns
+## Rule
 
-<!-- How to create and structure custom hooks -->
-
-(To be filled by the team)
-
----
-
-## Data Fetching
-
-<!-- How data fetching is handled (React Query, SWR, etc.) -->
-
-(To be filled by the team)
-
----
-
-## Naming Conventions
-
-<!-- Hook naming rules (use*, etc.) -->
-
-(To be filled by the team)
-
----
-
-## Common Mistakes
-
-<!-- Hook-related mistakes your team has made -->
-
-(To be filled by the team)
+Do not introduce hook-style abstractions for current Python research work. Use ordinary Python functions, dataclasses, and modules following the backend specs.

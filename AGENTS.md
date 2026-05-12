@@ -1,5 +1,5 @@
-先读 docs/session_bootstrap.md，并按其中约定工作。
-如任务需要，再按文档里的“按需再读”继续展开。
+本项目以 Trellis 作为工作约束源。新会话先遵循 Trellis 注入的 `<workflow-state>`；若没有注入，则读取 `.agents/skills/trellis-start/SKILL.md` 并执行等价启动步骤。
+`docs/session_bootstrap.md` 仅作为兼容入口和文档索引，不再作为流程约束源。
 
 <!-- TRELLIS:START -->
 # Trellis Instructions

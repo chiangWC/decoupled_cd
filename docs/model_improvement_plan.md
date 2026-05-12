@@ -6,7 +6,7 @@
 - 哪些路线已经证明有效或无效
 - 下一步默认该优先试什么
 
-它不是新会话默认入口。新会话先读 `docs/session_bootstrap.md`；只有在需要查历史实验、避免重复试错时再回来看这份台账。
+它不是新会话默认入口。流程与执行约束以 Trellis 为准：`.trellis/workflow.md` 和 `.trellis/spec/backend/experiment-protocol.md`。只有在需要查历史实验、避免重复试错时再回来看这份台账。
 
 ## 台账定位
 
@@ -27,13 +27,13 @@
 
 ## 当前快照
 
-- 当前 `master` 正式主线沿用 `docs/session_bootstrap.md` 里的“当前主线”口径。
+- 当前 `master` 正式主线执行约束见 `.trellis/spec/backend/experiment-protocol.md`。
 - 从这份台账的实验视角看，它对应实验 70 主线:
   - 以实验 34 为底座
   - 吸收实验 49 的 history-carrier pairwise interaction residual
   - 再吸收实验 51 的 interpretable readout expert residual
   - 再吸收实验 70 的 student-conditioned UKC `none_seen` readout sidecar
-- 这里不再重复维护与 `session_bootstrap.md` 等价的数据、图、超参数和 adapter 开关清单；需要确认默认运行口径时，优先回看 `session_bootstrap.md`
+- 这里不再重复维护 Trellis spec 中的数据、图、超参数和 adapter 开关清单；需要确认默认运行口径时，优先查看 `.trellis/spec/backend/experiment-protocol.md`
 - 当前主线三 seed 参考均值:
   - `test_auc = 0.765517`
   - `test_acc = 0.729104`
@@ -267,7 +267,7 @@
 
 ## 默认下一步
 
-通用协作、运行与分支规则沿用 `docs/session_bootstrap.md`；这里仅补充历史台账导出的默认优先级:
+通用协作、运行与分支规则沿用 `.trellis/spec/backend/experiment-protocol.md`；这里仅补充历史台账导出的默认优先级:
 
 1. 仍从当前 `master` 主线出发，但默认目标改为冲 `test_auc ~= 0.780`；`0.778` 可视为接近可接受。
 2. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益，但多知识点题仍不是 clean win。单因素小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。

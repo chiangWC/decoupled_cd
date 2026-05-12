@@ -1,54 +1,19 @@
-# Directory Structure
+# Frontend Directory Structure
 
-> How frontend code is organized in this project.
-
----
-
-## Overview
-
-<!--
-Document your project's frontend directory structure here.
-
-Questions to answer:
-- Where do components live?
-- How are features/modules organized?
-- Where are shared utilities?
-- How are assets organized?
--->
-
-(To be filled by the team)
+> Not applicable to the current repository.
 
 ---
 
-## Directory Layout
+## Current State
 
-```
-<!-- Replace with your actual structure -->
-src/
-├── ...
-└── ...
-```
+There is no frontend directory, no `src/` browser app, no `package.json`, and no frontend build system in this repository.
+
+Current top-level code directories are Python research modules: `configs/`, `data/`, `models/`, `trainers/`, `utils/`, `scripts/`, and `tests/`.
 
 ---
 
-## Module Organization
+## Rule
 
-<!-- How should new features be organized? -->
+Do not create frontend directories or assets unless a task explicitly asks for a web UI, dashboard, report viewer, or other browser-facing feature.
 
-(To be filled by the team)
-
----
-
-## Naming Conventions
-
-<!-- File and folder naming rules -->
-
-(To be filled by the team)
-
----
-
-## Examples
-
-<!-- Link to well-organized modules as examples -->
-
-(To be filled by the team)
+If such a task is introduced later, create a new task-specific technical design first and then update this file with the actual chosen layout.

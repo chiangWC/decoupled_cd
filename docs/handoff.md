@@ -2,12 +2,12 @@
 
 这份文档保留“扩展交接”用途，用来说明当前主线、关键判断和关键文件。
 
-它不是新会话默认第一入口。新会话默认先读 [docs/session_bootstrap.md](./session_bootstrap.md)，只有在需要更多项目上下文时再读这份文档。
+它不是新会话默认第一入口。流程与执行约束以 Trellis 为准：`.trellis/workflow.md` 和 `.trellis/spec/backend/experiment-protocol.md`。只有需要当前主线细节、关键判断和关键文件时再读这份文档。
 
 ## 当前主线
 
 - 当前工作重点是在稳定基线上继续做可解释的结构改动。
-- 当前正式主线配置与 [docs/session_bootstrap.md](./session_bootstrap.md) 的“当前主线”一致；这里只补充结果口径、候选支线和行动判断。
+- 当前正式主线执行约束见 `.trellis/spec/backend/experiment-protocol.md`；这里补充结果口径、候选支线和行动判断。
 - 数据:
   - [train.csv](../data/assist_09_ordered/train.csv)
   - [valid.csv](../data/assist_09_ordered/valid.csv)

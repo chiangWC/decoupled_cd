@@ -1,51 +1,56 @@
 # Logging Guidelines
 
-> How logging is done in this project.
+> Runtime logging conventions for training, evaluation, and experiment scripts.
 
 ---
 
 ## Overview
 
-<!--
-Document your project's logging conventions here.
-
-Questions to answer:
-- What logging library do you use?
-- What are the log levels and when to use each?
-- What should be logged?
-- What should NOT be logged (PII, secrets)?
--->
-
-(To be filled by the team)
+Use the standard library `logging` module through `utils/logging.py::setup_logging` for long-running scripts. It creates a unique logger name, writes both to file and stderr/stdout, and includes timestamp plus process ID in the log filename to avoid collisions during parallel runs.
 
 ---
 
 ## Log Levels
 
-<!-- When to use each level: debug, info, warn, error -->
-
-(To be filled by the team)
-
----
-
-## Structured Logging
-
-<!-- Log format, required fields -->
-
-(To be filled by the team)
+- Use `INFO` for selected device, graph mode, seed, split paths, and final run metrics.
+- Use `ERROR` only when catching and logging an error before re-raising or exiting. Do not add broad catch-and-log wrappers by default.
+- Avoid debug-level logging inside tensor-heavy loops unless the task explicitly asks for diagnostic instrumentation.
 
 ---
 
-## What to Log
+## Log Format And Files
 
-<!-- Important events to log -->
+Current format:
 
-(To be filled by the team)
+```text
+%(asctime)s - %(levelname)s - %(message)s
+```
+
+Current log path pattern:
+
+```text
+logs/<name>_<UTC timestamp>_pid<PID>.log
+```
+
+Follow `utils/logging.py` instead of creating ad hoc file handlers in scripts.
 
 ---
 
-## What NOT to Log
+## What To Log
 
-<!-- Sensitive data, PII, secrets -->
+Training and evaluation scripts should log:
 
-(To be filled by the team)
+- Resolved device.
+- Graph mode.
+- Seed.
+- Input split paths or single-file input path.
+- Final `best_val_auc`, `test_auc`, `test_acc`, `test_rmse`, `test_brier`, and `test_ece` when available.
+- Any protocol-level mode that changes result interpretation, such as `training_mode` or graph mode.
+
+---
+
+## What Not To Log
+
+- Do not dump full DataFrames, full tensors, full Q-matrices, or full prediction arrays into logs.
+- Do not log secrets, SSH details beyond stable host aliases, or environment credentials.
+- Do not make logs the only location of experiment conclusions; durable judgments belong in the docs ledger.

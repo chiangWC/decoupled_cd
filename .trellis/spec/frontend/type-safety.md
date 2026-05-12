@@ -1,51 +1,21 @@
 # Type Safety
 
-> Type safety patterns in this project.
+> Frontend TypeScript conventions are not applicable yet.
 
 ---
 
-## Overview
+## Current State
 
-<!--
-Document your project's type safety conventions here.
+The project uses Python type hints and PyTorch tensor contracts, not TypeScript.
 
-Questions to answer:
-- What type system do you use?
-- How are types organized?
-- What validation library do you use?
-- How do you handle type inference?
--->
+For current work, follow backend conventions:
 
-(To be filled by the team)
+- Use type hints on function signatures.
+- Use dataclasses for shared structured data.
+- Validate runtime data contracts at boundaries, especially CSV schemas, graph modes, training modes, and history visibility.
 
 ---
 
-## Type Organization
+## Future Rule
 
-<!-- Where types are defined, shared types vs local types -->
-
-(To be filled by the team)
-
----
-
-## Validation
-
-<!-- Runtime validation patterns (Zod, Yup, io-ts, etc.) -->
-
-(To be filled by the team)
-
----
-
-## Common Patterns
-
-<!-- Type utilities, generics, type guards -->
-
-(To be filled by the team)
-
----
-
-## Forbidden Patterns
-
-<!-- any, type assertions, etc. -->
-
-(To be filled by the team)
+If TypeScript is introduced later, document real type organization after the first frontend implementation exists.

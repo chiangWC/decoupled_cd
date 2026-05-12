@@ -1,132 +1,27 @@
 # Workflow
 
-这份文档只描述协作与运行流程，不重复项目背景和实验结论。
+这份文档现在只保留旧链接兼容说明。流程约束已经迁入 Trellis，不再在这里重复维护。
 
-新会话默认先读 [docs/session_bootstrap.md](./session_bootstrap.md)；只有需要展开具体流程时再读这份文档。
+## 当前源头
 
-这个项目采用固定的“本地改代码并提交，推送到远端仓库，远端运行所有项目命令”流程。
-
-## 路径与环境
-
-- 本地项目目录: `/home/jameschiang/work/decoupled_cd`
-- 远端主机别名: `xph-pc`
-- 远端项目目录: `/home/xph/jwc/research/decoupled_cd`
-- conda 环境: `decoupled_cd`
-
-## 工作规则
-
-- 默认所有代码修改都先在本地完成。
-- 默认不要直接改远端代码，除非用户明确要求。
-- 远端主机只作为运行环境，不作为代码协作来源。
-- 所有项目命令都在远端执行，包括训练、评估、测试和 smoke test。
-- 本地不要直接跑项目代码；如需验证，先把本地提交推到远端，再通过 SSH 执行命令。
-- 开始工作前，默认先执行 `git status` 和 `git pull --ff-only origin master`。
-- `master` 只保留当前认可状态；探索性实验默认在 `exp/*` 分支进行。
-- 任何会引入代码改动的验证、测试、排查或辅助性修改，默认也先在非 `master` 分支完成；即使改动只是为了让远端能够执行测试，也不要先直接提交到 `master`。
-- 远端执行任何项目命令前，先激活 `decoupled_cd` 环境。
-- 远端目录保留 `git` 工作树，仅用于接收已推送代码并直接运行。
-- 远端执行跟随当前本地分支；未推送的本地改动不会被远端看到。
-
-## 常用命令
-
-本地仅用于进入仓库或做非运行类操作。
-
-如果只是本地查看环境，可以用:
-
-```bash
-bash scripts/enter_env.sh
-```
-
-将当前分支推到远端运行机仓库:
-
-```bash
-git push origin "$(git branch --show-current)"
-```
-
-开始一个新实验分支:
-
-```bash
-git switch -c exp/<short-name>
-```
-
-在远端项目环境里执行任意命令:
-
-```bash
-bash scripts/remote_exec.sh python scripts/train.py
-```
-
-远端运行前默认要求:
-
-- 本地工作树干净，且需要运行的修改已经 `git commit`
-- `origin` 已配置到远端运行机仓库
-- 本地与远端仓库历史兼容，可做 fast-forward / 正常 push
-
-## 分支约定
-
-- `master` 只保留当前认可状态，不把探索性实验直接堆到主线。
-- 新实验默认从最新 `master` 切出 `exp/<short-name>` 分支。
-- 若一次验证需要先改代码再上远端运行，这类验证分支也按非 `master` 分支处理；确认需要保留后再整理合回 `master`。
-- 实验效果不好时，保留或删除对应 `exp/*` 分支即可，不需要用回退提交污染 `master`。
-- 实验效果成立后，再整理提交并合回 `master`。
-- `git push origin "$(git branch --show-current)"` 会把当前本地分支推到远端同名分支。
-- `bash scripts/remote_exec.sh ...` 会先确认远端同名分支已更新到当前本地提交，再在远端切到该分支执行命令。
-
-## 实验节奏
-
-- 探索性结构改动默认先开 `exp/<short-name>` 分支。
-- 新结构默认先跑单次。
-- 单次值得继续时，再补 `2-3` 个 seed。
-- 实验结束时要明确代码是否合入主线；若已经形成有效/无效判断，即使代码不合入 `master`，也要用 doc-only 提交把结论同步回 `master` 台账。
+- 任务阶段、skill routing、是否创建 task、何时 commit: `.trellis/workflow.md`
+- 分支、远端运行、主线口径、实验节奏、实验台账规则: `.trellis/spec/backend/experiment-protocol.md`
+- 代码组织、数据契约、错误处理、日志、质量要求: `.trellis/spec/backend/index.md`
 
 ## 文档分工
 
-- [docs/session_bootstrap.md](./session_bootstrap.md) 只保留新会话必须先知道的最小规则、当前主线口径和按需再读入口。
-- [docs/workflow.md](./workflow.md) 只保留协作、分支、远端运行和文档维护流程，不记录具体实验结论。
-- [docs/handoff.md](./handoff.md) 只保留当前主线状态、已经会影响后续行动的稳定判断、当前优先分支和关键文件。
-- [docs/model_improvement_plan.md](./model_improvement_plan.md) 是实验台账入口，负责保留当前快照、主线判断、候选路线和默认下一步。
-- [docs/experiment_index.jsonl](./experiment_index.jsonl) 是 agent-facing 结构化实验索引，负责按实验号、分支、状态、标签和 detail 路径快速路由。
-- [docs/experiments/](./experiments/) 存放仍会影响未来决策的实验详情，包括 seed 指标、切片、诊断、命令、结果路径和失败模式证据。
-- [docs/experiment_themes.md](./experiment_themes.md) 存放跨实验诊断和主题级结论。
-- [docs/archive_legacy_experiments.md](./archive_legacy_experiments.md) 存放低频复访的旧失败路线压缩归档。
+`docs/` 继续保留实验知识库，不承载 Trellis 运行流程:
 
-## 文档更新规则
+- [docs/handoff.md](./handoff.md): 当前主线状态、稳定判断、当前优先分支和关键文件
+- [docs/model_improvement_plan.md](./model_improvement_plan.md): 当前快照、路线判断、候选路线和默认下一步
+- [docs/experiment_index.jsonl](./experiment_index.jsonl): agent-facing 结构化实验索引
+- [docs/experiments/](./experiments/): seed 指标、切片、诊断、命令、结果路径和失败模式证据
+- [docs/experiment_themes.md](./experiment_themes.md): 跨实验诊断和主题级结论
+- [docs/archive_legacy_experiments.md](./archive_legacy_experiments.md): 低频复访的旧失败路线压缩归档
 
-- 新实验结束后，默认至少更新 `docs/experiment_index.jsonl`，让后续 agent 能按实验号、分支、状态和失败原因检索到结论。
-- 若实验会影响当前主线、候选路线、默认下一步或容易被后续重复试错，还要更新 `docs/model_improvement_plan.md` 的摘要或索引。
-- 若实验需要保留 seed/slice/诊断证据，新增或更新 `docs/experiments/` 下的 detail doc；不要把长指标和长诊断重新堆回 `model_improvement_plan`。
-- 只有当实验改变了当前主线、默认判断、默认优先级或当前推荐分支时，才额外更新 `handoff`。
-- 只有当协作方式、远端运行流程、分支约定或文档维护流程本身发生变化时，才更新 `workflow`。
-- 只有当新会话第一入口必须知道的最小规则发生变化时，才更新 `session_bootstrap`。
-- 失败实验、局部 slice 信号、单 seed follow-up，如果没有改变默认判断，通常不进入 `handoff`。
-- 历史恢复不完整是允许的，但必须用 `detail_status` 标注证据完整度；不要把压缩迁移内容伪装成完整恢复。
-- 文档更新后，应检查 `handoff`、`model_improvement_plan` 和 detail doc 是否出现重复长指标；若有重复，保留 detail doc 的详细版本，`model_improvement_plan` 和 `handoff` 只写压缩判断与链接。
+## 更新规则
 
-## 实验记录模板
-
-新增实验记录默认按 agent 可检索的最小必要信息维护。`experiment_index.jsonl` 至少应包含:
-
-- `id`
-- `title`
-- `branch`
-- `base`
-- `change_type`
-- `status`
-- `reason_tags`
-- `verdict`
-- `doc_path`
-- `detail_status`
-
-detail doc 只在需要保留证据时创建，通常包含:
-
-- 实验号 / 分支名
-- 做法: 改了什么，作用在什么模块，是否 zero-init / targeted / sidecar
-- 对比基线: 相对哪个实验或当前主线
-- 结果: 单 seed 或多 seed 的 overall 指标
-- 切片: 可选；只在它真正影响判断、解释 overall 结果或支撑继续/暂停决策时记录
-- 结论: 是否继续、是否扩 seed、是否合入主线、若再访优先改什么
-
-同步到 `handoff` 时默认压缩成:
-
-- 一句判断
-- 是否已吸收到 `master` / 是否暂停
-- 需要时附一条到 `model_improvement_plan`、`experiment_index.jsonl` 或 detail doc 的引用
+- 新流程或协作规则写入 `.trellis/workflow.md`。
+- 新代码/运行约束写入 `.trellis/spec/backend/`。
+- 新实验结论写入实验台账文档；不要塞进 Trellis spec。
+- 如果旧链接指向本文件，按上面的“当前源头”跳转到对应 Trellis 文件。

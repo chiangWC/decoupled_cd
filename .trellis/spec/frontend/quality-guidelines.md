@@ -1,51 +1,17 @@
-# Quality Guidelines
+# Frontend Quality Guidelines
 
-> Code quality standards for frontend development.
-
----
-
-## Overview
-
-<!--
-Document your project's quality standards here.
-
-Questions to answer:
-- What patterns are forbidden?
-- What linting rules do you enforce?
-- What are your testing requirements?
-- What code review standards apply?
--->
-
-(To be filled by the team)
+> Not applicable until a frontend exists.
 
 ---
 
-## Forbidden Patterns
+## Current State
 
-<!-- Patterns that should never be used and why -->
-
-(To be filled by the team)
+There is no frontend test runner, lint configuration, accessibility test setup, or browser build pipeline in this repository.
 
 ---
 
-## Required Patterns
+## Rule
 
-<!-- Patterns that must always be used -->
+For current work, use backend quality guidelines. Do not add frontend quality gates as part of Python model or experiment changes.
 
-(To be filled by the team)
-
----
-
-## Testing Requirements
-
-<!-- What level of testing is expected -->
-
-(To be filled by the team)
-
----
-
-## Code Review Checklist
-
-<!-- What reviewers should check -->
-
-(To be filled by the team)
+If a frontend is added later, this file should document the actual test runner, lint command, build command, accessibility expectations, and browser verification requirements.
