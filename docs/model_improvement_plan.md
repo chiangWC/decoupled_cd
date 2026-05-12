@@ -81,6 +81,7 @@
   - 实验 68: scale-preserving / high-count-only / incorrect-only attribution rescue 都没有恢复到实验 51；最强只是 `ECE` 小幅改善但 `AUC/ACC` 仍回撤，不继续沿 attribution 主聚合替换路线扩线
   - 实验 69: student-conditioned UKC imputation 没有解决 `none_seen` 校准，反而显著做坏 `none_seen` 的 `ACC/RMSE/ECE`，不扩 seed
   - 实验 71: 实验 70 主线 + 实验 61 target-exclusion 训练口径只带来单 seed `AUC +0.000950`，但 `RMSE/Brier/ECE` 回撤，不扩 seed
+  - 实验 75: history-conditioned Q representation 虽然改善少量多知识点 slice 校准，但 single seed overall `AUC/ACC/RMSE/Brier` 回撤，且 `none_seen` 排序回撤，不扩 seed
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -244,6 +245,11 @@
   - 分支/详情: `exp/gs-monotonic-penalty`; `docs/experiments/074_gs_monotonic_penalty.md`
   - 指标摘要: `AUC -0.000170`, `ACC +0.000565`, `ECE +0.000200`
   - 判断: `1e-4` 三 seed 不稳且两个 seed 语义反转；`1e-3` 伤 AUC/ACC
+
+- 实验 75: history-conditioned Q representation
+  - 分支/详情: `exp/history-conditioned-q-repr`; `docs/experiments/075_history_conditioned_q_representation.md`
+  - 指标摘要: 单 seed `AUC -0.001620`, `ACC -0.000266`, `ECE -0.001822`
+  - 判断: 多知识点 slice 有极小正向和校准改善，但 overall 排序回撤且 `none_seen` AUC 回撤，不扩 seed
 
 ## 旧口径的历史参考
 
