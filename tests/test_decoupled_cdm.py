@@ -237,5 +237,65 @@ class ConceptEvidenceReadoutResidualTest(unittest.TestCase):
         torch.testing.assert_close(output[1:], torch.zeros(2, dtype=torch.float32))
 
 
+class ConceptEvidencePriorResidualTest(unittest.TestCase):
+    def test_prior_rejects_invalid_config(self) -> None:
+        with self.assertRaisesRegex(ValueError, "prior_strength"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                concept_evidence_prior_strength=0.0,
+            )
+        with self.assertRaisesRegex(ValueError, "confidence_cap"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                concept_evidence_prior_confidence_cap=0.0,
+            )
+
+    def test_prior_uses_smoothed_target_concept_accuracy(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=3,
+            concept_dim=4,
+            concept_evidence_prior_residual=True,
+            concept_evidence_prior_min_count=2,
+            concept_evidence_prior_min_seen_ratio=1.0,
+            concept_evidence_prior_max_logit=0.5,
+            concept_evidence_prior_strength=2.0,
+            concept_evidence_prior_confidence_cap=20.0,
+        )
+        q_vectors = torch.tensor(
+            [
+                [1.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+        student_concept_evidence = torch.zeros(2, 3, 6, dtype=torch.float32)
+        student_concept_evidence[0, 0] = torch.tensor([3.0, 3.0, 0.0, 1.0, 1.3862944, 1.0])
+        student_concept_evidence[0, 1] = torch.tensor([3.0, 3.0, 0.0, 1.0, 1.3862944, 1.0])
+        student_concept_evidence[1, 0] = torch.tensor([3.0, 0.0, 3.0, 0.0, 1.3862944, 1.0])
+
+        output = model._build_concept_evidence_prior_residual(
+            q_vectors=q_vectors,
+            target_student_ids=torch.tensor([0, 1, 0], dtype=torch.long),
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=(
+                torch.tensor([[2.0], [2.0], [1.0]], dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+            ),
+        )
+
+        self.assertGreater(float(output[0]), 0.0)
+        torch.testing.assert_close(output[1:], torch.zeros(2, dtype=torch.float32))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -181,6 +181,16 @@ def parse_args() -> argparse.Namespace:
         default=0.5,
         help="Absolute logit scale used by tanh bounding for the concept evidence readout residual.",
     )
+    parser.add_argument(
+        "--concept-evidence-prior-residual",
+        action="store_true",
+        help="Enable a deterministic target-local student-concept mastery prior on the cognitive readout.",
+    )
+    parser.add_argument("--concept-evidence-prior-min-count", type=int, default=2)
+    parser.add_argument("--concept-evidence-prior-min-seen-ratio", type=float, default=1.0)
+    parser.add_argument("--concept-evidence-prior-max-logit", type=float, default=0.5)
+    parser.add_argument("--concept-evidence-prior-strength", type=float, default=2.0)
+    parser.add_argument("--concept-evidence-prior-confidence-cap", type=float, default=20.0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None, help="Optional comma-separated GPU candidates when --device auto.")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap for quick smoke runs.")
@@ -217,6 +227,16 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--concept-evidence-readout-min-seen-ratio must be in [0, 1].")
     if args.concept_evidence_readout_max_logit <= 0.0:
         raise ValueError("--concept-evidence-readout-max-logit must be positive.")
+    if args.concept_evidence_prior_min_count < 1:
+        raise ValueError("--concept-evidence-prior-min-count must be positive.")
+    if args.concept_evidence_prior_min_seen_ratio < 0.0 or args.concept_evidence_prior_min_seen_ratio > 1.0:
+        raise ValueError("--concept-evidence-prior-min-seen-ratio must be in [0, 1].")
+    if args.concept_evidence_prior_max_logit <= 0.0:
+        raise ValueError("--concept-evidence-prior-max-logit must be positive.")
+    if args.concept_evidence_prior_strength <= 0.0:
+        raise ValueError("--concept-evidence-prior-strength must be positive.")
+    if args.concept_evidence_prior_confidence_cap <= 0.0:
+        raise ValueError("--concept-evidence-prior-confidence-cap must be positive.")
     return args
 
 
@@ -368,6 +388,12 @@ def main() -> None:
         concept_evidence_readout_min_count=args.concept_evidence_readout_min_count,
         concept_evidence_readout_min_seen_ratio=args.concept_evidence_readout_min_seen_ratio,
         concept_evidence_readout_max_logit=args.concept_evidence_readout_max_logit,
+        concept_evidence_prior_residual=args.concept_evidence_prior_residual,
+        concept_evidence_prior_min_count=args.concept_evidence_prior_min_count,
+        concept_evidence_prior_min_seen_ratio=args.concept_evidence_prior_min_seen_ratio,
+        concept_evidence_prior_max_logit=args.concept_evidence_prior_max_logit,
+        concept_evidence_prior_strength=args.concept_evidence_prior_strength,
+        concept_evidence_prior_confidence_cap=args.concept_evidence_prior_confidence_cap,
     )
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -427,6 +453,12 @@ def main() -> None:
         "concept_evidence_readout_min_count": args.concept_evidence_readout_min_count,
         "concept_evidence_readout_min_seen_ratio": args.concept_evidence_readout_min_seen_ratio,
         "concept_evidence_readout_max_logit": args.concept_evidence_readout_max_logit,
+        "concept_evidence_prior_residual": args.concept_evidence_prior_residual,
+        "concept_evidence_prior_min_count": args.concept_evidence_prior_min_count,
+        "concept_evidence_prior_min_seen_ratio": args.concept_evidence_prior_min_seen_ratio,
+        "concept_evidence_prior_max_logit": args.concept_evidence_prior_max_logit,
+        "concept_evidence_prior_strength": args.concept_evidence_prior_strength,
+        "concept_evidence_prior_confidence_cap": args.concept_evidence_prior_confidence_cap,
         "seed": args.seed,
         "device": resolved_device,
         "max_rows": args.max_rows,
@@ -478,6 +510,12 @@ def main() -> None:
         "concept_evidence_readout_min_count": args.concept_evidence_readout_min_count,
         "concept_evidence_readout_min_seen_ratio": args.concept_evidence_readout_min_seen_ratio,
         "concept_evidence_readout_max_logit": args.concept_evidence_readout_max_logit,
+        "concept_evidence_prior_residual": args.concept_evidence_prior_residual,
+        "concept_evidence_prior_min_count": args.concept_evidence_prior_min_count,
+        "concept_evidence_prior_min_seen_ratio": args.concept_evidence_prior_min_seen_ratio,
+        "concept_evidence_prior_max_logit": args.concept_evidence_prior_max_logit,
+        "concept_evidence_prior_strength": args.concept_evidence_prior_strength,
+        "concept_evidence_prior_confidence_cap": args.concept_evidence_prior_confidence_cap,
         "seed": args.seed,
         "best_epoch": result.best_epoch,
         "best_val_auc": result.best_val_auc,

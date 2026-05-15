@@ -57,6 +57,12 @@ class DecoupledCDM(nn.Module):
         concept_evidence_readout_min_count: int = 2,
         concept_evidence_readout_min_seen_ratio: float = 1.0,
         concept_evidence_readout_max_logit: float = 0.5,
+        concept_evidence_prior_residual: bool = False,
+        concept_evidence_prior_min_count: int = 2,
+        concept_evidence_prior_min_seen_ratio: float = 1.0,
+        concept_evidence_prior_max_logit: float = 0.5,
+        concept_evidence_prior_strength: float = 2.0,
+        concept_evidence_prior_confidence_cap: float = 20.0,
     ):
         super().__init__()
         if gs_mode not in {"constant", "conditional"}:
@@ -79,6 +85,16 @@ class DecoupledCDM(nn.Module):
             raise ValueError("concept_evidence_readout_min_seen_ratio must be in [0, 1].")
         if concept_evidence_readout_max_logit <= 0.0:
             raise ValueError("concept_evidence_readout_max_logit must be positive.")
+        if concept_evidence_prior_min_count < 1:
+            raise ValueError("concept_evidence_prior_min_count must be positive.")
+        if concept_evidence_prior_min_seen_ratio < 0.0 or concept_evidence_prior_min_seen_ratio > 1.0:
+            raise ValueError("concept_evidence_prior_min_seen_ratio must be in [0, 1].")
+        if concept_evidence_prior_max_logit <= 0.0:
+            raise ValueError("concept_evidence_prior_max_logit must be positive.")
+        if concept_evidence_prior_strength <= 0.0:
+            raise ValueError("concept_evidence_prior_strength must be positive.")
+        if concept_evidence_prior_confidence_cap <= 0.0:
+            raise ValueError("concept_evidence_prior_confidence_cap must be positive.")
         self.gs_mode = gs_mode
         self.high_concept_logit_adapter = high_concept_logit_adapter
         self.high_concept_logit_min_count = high_concept_logit_min_count
@@ -96,6 +112,12 @@ class DecoupledCDM(nn.Module):
         self.concept_evidence_readout_min_count = int(concept_evidence_readout_min_count)
         self.concept_evidence_readout_min_seen_ratio = float(concept_evidence_readout_min_seen_ratio)
         self.concept_evidence_readout_max_logit = float(concept_evidence_readout_max_logit)
+        self.concept_evidence_prior_residual = concept_evidence_prior_residual
+        self.concept_evidence_prior_min_count = int(concept_evidence_prior_min_count)
+        self.concept_evidence_prior_min_seen_ratio = float(concept_evidence_prior_min_seen_ratio)
+        self.concept_evidence_prior_max_logit = float(concept_evidence_prior_max_logit)
+        self.concept_evidence_prior_strength = float(concept_evidence_prior_strength)
+        self.concept_evidence_prior_confidence_cap = float(concept_evidence_prior_confidence_cap)
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
         self.exercise_difficulty = nn.Embedding(num_exercises, 1)
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
@@ -327,6 +349,13 @@ class DecoupledCDM(nn.Module):
                 student_concept_evidence=student_concept_evidence,
                 concept_summary=concept_summary,
                 difficulty=difficulty,
+            )
+        if self.concept_evidence_prior_residual:
+            cognitive_logits = cognitive_logits + self._build_concept_evidence_prior_residual(
+                q_vectors=q_vectors,
+                target_student_ids=target_student_ids,
+                student_concept_evidence=student_concept_evidence,
+                concept_summary=concept_summary,
             )
         cognitive_probs = torch.sigmoid(cognitive_logits)
 
@@ -670,5 +699,45 @@ class DecoupledCDM(nn.Module):
         trigger_mask = (
             (concept_counts.squeeze(-1) >= float(self.concept_evidence_readout_min_count))
             & (seen_ratio.squeeze(-1) >= self.concept_evidence_readout_min_seen_ratio)
+        ).to(dtype=residual.dtype)
+        return residual * trigger_mask
+
+    def _build_concept_evidence_prior_residual(
+        self,
+        *,
+        q_vectors: torch.Tensor,
+        target_student_ids: torch.Tensor,
+        student_concept_evidence: torch.Tensor | None,
+        concept_summary: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    ) -> torch.Tensor:
+        if not self.concept_evidence_prior_residual:
+            return q_vectors.new_zeros(q_vectors.size(0))
+        if student_concept_evidence is None:
+            raise ValueError("student_concept_evidence is required when concept_evidence_prior_residual is enabled.")
+
+        concept_counts, _, _ = concept_summary
+        q_mask = (q_vectors > 0).to(dtype=q_vectors.dtype)
+        target_evidence = student_concept_evidence[target_student_ids].to(dtype=q_vectors.dtype)
+        target_attempts = target_evidence[..., 0] * q_mask
+        target_correct = target_evidence[..., 1] * q_mask
+        target_seen = target_evidence[..., 5] * q_mask
+
+        attempt_count = target_attempts.sum(dim=1, keepdim=True)
+        correct_count = target_correct.sum(dim=1, keepdim=True)
+        seen_count = target_seen.sum(dim=1, keepdim=True)
+        seen_ratio = seen_count / concept_counts.clamp_min(1.0)
+
+        prior = self.concept_evidence_prior_strength
+        smoothed_accuracy = (correct_count + 0.5 * prior) / (attempt_count + prior)
+        signed_mastery = (smoothed_accuracy - 0.5) * 2.0
+        confidence = torch.log1p(attempt_count) / torch.log1p(
+            attempt_count.new_tensor(self.concept_evidence_prior_confidence_cap)
+        )
+        confidence = confidence.clamp(min=0.0, max=1.0)
+        residual = signed_mastery.squeeze(-1) * confidence.squeeze(-1) * seen_ratio.squeeze(-1)
+        residual = residual.clamp(min=-1.0, max=1.0) * self.concept_evidence_prior_max_logit
+        trigger_mask = (
+            (concept_counts.squeeze(-1) >= float(self.concept_evidence_prior_min_count))
+            & (seen_ratio.squeeze(-1) >= self.concept_evidence_prior_min_seen_ratio)
         ).to(dtype=residual.dtype)
         return residual * trigger_mask

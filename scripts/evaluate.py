@@ -110,6 +110,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concept-evidence-readout-min-count", type=int, default=2)
     parser.add_argument("--concept-evidence-readout-min-seen-ratio", type=float, default=1.0)
     parser.add_argument("--concept-evidence-readout-max-logit", type=float, default=0.5)
+    parser.add_argument(
+        "--concept-evidence-prior-residual",
+        action="store_true",
+        help="Enable a deterministic target-local student-concept mastery prior on the cognitive readout.",
+    )
+    parser.add_argument("--concept-evidence-prior-min-count", type=int, default=2)
+    parser.add_argument("--concept-evidence-prior-min-seen-ratio", type=float, default=1.0)
+    parser.add_argument("--concept-evidence-prior-max-logit", type=float, default=0.5)
+    parser.add_argument("--concept-evidence-prior-strength", type=float, default=2.0)
+    parser.add_argument("--concept-evidence-prior-confidence-cap", type=float, default=20.0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--output", default="results/eval_summary.json")
@@ -139,6 +149,16 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--concept-evidence-readout-min-seen-ratio must be in [0, 1].")
     if args.concept_evidence_readout_max_logit <= 0.0:
         raise ValueError("--concept-evidence-readout-max-logit must be positive.")
+    if args.concept_evidence_prior_min_count < 1:
+        raise ValueError("--concept-evidence-prior-min-count must be positive.")
+    if args.concept_evidence_prior_min_seen_ratio < 0.0 or args.concept_evidence_prior_min_seen_ratio > 1.0:
+        raise ValueError("--concept-evidence-prior-min-seen-ratio must be in [0, 1].")
+    if args.concept_evidence_prior_max_logit <= 0.0:
+        raise ValueError("--concept-evidence-prior-max-logit must be positive.")
+    if args.concept_evidence_prior_strength <= 0.0:
+        raise ValueError("--concept-evidence-prior-strength must be positive.")
+    if args.concept_evidence_prior_confidence_cap <= 0.0:
+        raise ValueError("--concept-evidence-prior-confidence-cap must be positive.")
     return args
 
 
@@ -240,6 +260,12 @@ def main() -> None:
         concept_evidence_readout_min_count=args.concept_evidence_readout_min_count,
         concept_evidence_readout_min_seen_ratio=args.concept_evidence_readout_min_seen_ratio,
         concept_evidence_readout_max_logit=args.concept_evidence_readout_max_logit,
+        concept_evidence_prior_residual=args.concept_evidence_prior_residual,
+        concept_evidence_prior_min_count=args.concept_evidence_prior_min_count,
+        concept_evidence_prior_min_seen_ratio=args.concept_evidence_prior_min_seen_ratio,
+        concept_evidence_prior_max_logit=args.concept_evidence_prior_max_logit,
+        concept_evidence_prior_strength=args.concept_evidence_prior_strength,
+        concept_evidence_prior_confidence_cap=args.concept_evidence_prior_confidence_cap,
     )
 
     payload = {
@@ -272,6 +298,12 @@ def main() -> None:
         "concept_evidence_readout_min_count": args.concept_evidence_readout_min_count,
         "concept_evidence_readout_min_seen_ratio": args.concept_evidence_readout_min_seen_ratio,
         "concept_evidence_readout_max_logit": args.concept_evidence_readout_max_logit,
+        "concept_evidence_prior_residual": args.concept_evidence_prior_residual,
+        "concept_evidence_prior_min_count": args.concept_evidence_prior_min_count,
+        "concept_evidence_prior_min_seen_ratio": args.concept_evidence_prior_min_seen_ratio,
+        "concept_evidence_prior_max_logit": args.concept_evidence_prior_max_logit,
+        "concept_evidence_prior_strength": args.concept_evidence_prior_strength,
+        "concept_evidence_prior_confidence_cap": args.concept_evidence_prior_confidence_cap,
         "train_metrics": evaluate_model(bundle=bundles["train"], model=model, device=device),
         "valid_metrics": evaluate_model(bundle=bundles["valid"], model=model, device=device),
         "test_metrics": evaluate_model(bundle=bundles["test"], model=model, device=device),

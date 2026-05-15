@@ -102,6 +102,12 @@ def load_model(
         concept_evidence_readout_min_count=int(summary.get("concept_evidence_readout_min_count", 2)),
         concept_evidence_readout_min_seen_ratio=float(summary.get("concept_evidence_readout_min_seen_ratio", 1.0)),
         concept_evidence_readout_max_logit=float(summary.get("concept_evidence_readout_max_logit", 0.5)),
+        concept_evidence_prior_residual=bool(summary.get("concept_evidence_prior_residual", False)),
+        concept_evidence_prior_min_count=int(summary.get("concept_evidence_prior_min_count", 2)),
+        concept_evidence_prior_min_seen_ratio=float(summary.get("concept_evidence_prior_min_seen_ratio", 1.0)),
+        concept_evidence_prior_max_logit=float(summary.get("concept_evidence_prior_max_logit", 0.5)),
+        concept_evidence_prior_strength=float(summary.get("concept_evidence_prior_strength", 2.0)),
+        concept_evidence_prior_confidence_cap=float(summary.get("concept_evidence_prior_confidence_cap", 20.0)),
     )
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state)
