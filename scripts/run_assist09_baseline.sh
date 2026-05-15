@@ -39,6 +39,10 @@ fi
   --interpretable-readout-expert-adapter \
   --interpretable-readout-expert-count 3 \
   --student-conditioned-ukc-readout-residual \
+  --concept-evidence-readout-residual \
+  --concept-evidence-readout-min-count 1 \
+  --concept-evidence-readout-min-seen-ratio 1.0 \
+  --concept-evidence-readout-max-logit 0.5 \
   --concept-evidence-prior-residual \
   --concept-evidence-prior-min-count 1 \
   --concept-evidence-prior-min-seen-ratio 1.0 \

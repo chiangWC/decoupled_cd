@@ -40,13 +40,13 @@
   - `Brier -0.003468`
   - `ECE -0.013232`
 - 当前 `exp/trellis-trial` 伪主线:
-  - 已合入实验 76 deterministic concept evidence prior
-  - seed=2024 指标: `test_auc = 0.770505`, `test_acc = 0.730651`, `test_rmse = 0.425893`, `test_brier = 0.181385`, `test_ece = 0.053886`
-  - 默认 run script `scripts/run_assist09_baseline.sh` 在 `exp/trellis-trial` 上已启用实验 76 prior 配置
+  - 已合入实验 78 deterministic concept evidence prior + concept evidence readout correction
+  - seed=2024 指标: `test_auc = 0.772562`, `test_acc = 0.730823`, `test_rmse = 0.424811`, `test_brier = 0.180464`, `test_ece = 0.052361`
+  - 默认 run script `scripts/run_assist09_baseline.sh` 在 `exp/trellis-trial` 上已启用实验 78 prior + readout 配置
 - 当前冲刺目标:
   - `test_auc ~= 0.780`
   - `0.778` 可视为接近可接受
-  - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0075` 到 `+0.0095`
+  - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0055` 到 `+0.0075`
   - 这个距离已经超出常规小 residual / sidecar 的边际收益，后续默认优先考虑 representation-level 大结构改动
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
@@ -76,12 +76,12 @@
   - best config: `--concept-evidence-prior-residual --concept-evidence-prior-min-count 1 --concept-evidence-prior-min-seen-ratio 1.0 --concept-evidence-prior-max-logit 0.5 --concept-evidence-prior-strength 2.0 --concept-evidence-prior-confidence-cap 20.0`
   - seed=2024 相对当前主线: `AUC +0.005061`, `ACC +0.000247`, `RMSE -0.001588`, `Brier -0.001355`, `ECE +0.002199`
   - 判断: 明显 ranking/error 信号，主要风险是 ECE；下一步应补 seed，而不是继续扫 CF/ID side channel
-- 实验 78 在当前伪主线上找到下一条可解释单 seed 信号，尚未合入伪主线默认:
+- 实验 78 在当前伪主线上找到下一条可解释信号，已合入 `exp/trellis-trial` 伪主线默认，尚未合入正式 `master`:
   - branch: `exp/concept-evidence-prior-next`
   - best config: 在实验 76 默认 prior 上追加 `--concept-evidence-readout-residual --concept-evidence-readout-min-count 1 --concept-evidence-readout-min-seen-ratio 1.0 --concept-evidence-readout-max-logit 0.5`
   - seed=2024 相对实验 76 伪主线: `AUC +0.002056`, `ACC +0.000171`, `RMSE -0.001082`, `Brier -0.000921`, `ECE -0.001524`
   - multi-seed: 正常学习 seeds `2024/2025/2027` 均值 `AUC +0.002542`, `ACC +0.002468`, `RMSE -0.001554`, `Brier -0.001325`, `ECE -0.000667`; 官方 `2024/2025/2026` 因 seed2026 baseline/candidate 同时退化，仅 AUC 均值保持正向
-  - 判断: 这是同源 student-concept evidence readout correction，仍可解释；收益集中在 `concept_count=1` 与 `all_seen`，`none_seen` / `partial_seen` 回撤，下一步先解释 seed2026 退化并补更多非退化 seeds
+  - 判断: 这是同源 student-concept evidence readout correction，仍可解释；收益集中在 `concept_count=1` 与 `all_seen`，`none_seen` / `partial_seen` 回撤；后续把它作为伪主线对照，继续追踪 seed2026 退化风险
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`

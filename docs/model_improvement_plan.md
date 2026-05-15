@@ -28,12 +28,13 @@
 ## 当前快照
 
 - 当前 Trellis 伪主线执行约束见 `.trellis/spec/backend/experiment-protocol.md`；正式 `master` accepted state 仍按下方实验 70 参考理解。
-- 从这份台账的实验视角看，当前 `exp/trellis-trial` 伪主线对应实验 76 候选底座:
+- 从这份台账的实验视角看，当前 `exp/trellis-trial` 伪主线对应实验 78 候选底座:
   - 以实验 34 为底座
   - 吸收实验 49 的 history-carrier pairwise interaction residual
   - 再吸收实验 51 的 interpretable readout expert residual
   - 再吸收实验 70 的 student-conditioned UKC `none_seen` readout sidecar
   - 再吸收实验 76 的 deterministic concept evidence prior residual
+  - 再吸收实验 78 的 concept evidence readout correction
 - 这里不再重复维护 Trellis spec 中的数据、图、超参数和 adapter 开关清单；需要确认默认运行口径时，优先查看 `.trellis/spec/backend/experiment-protocol.md`
 - `master` 正式主线仍以实验 70 三 seed 作为 accepted reference:
   - `test_auc = 0.765517`
@@ -41,27 +42,23 @@
   - `test_rmse = 0.427350`
   - `test_brier = 0.182628`
   - `test_ece = 0.049044`
-- 当前 `exp/trellis-trial` 伪主线已合入实验 76 单 seed 候选:
-  - `seed=2024 test_auc = 0.770505`
-  - `seed=2024 test_acc = 0.730651`
-  - `seed=2024 test_rmse = 0.425893`
-  - `seed=2024 test_brier = 0.181385`
-  - `seed=2024 test_ece = 0.053886`
+- 当前 `exp/trellis-trial` 伪主线已合入实验 78 候选:
+  - `seed=2024 test_auc = 0.772562`
+  - `seed=2024 test_acc = 0.730823`
+  - `seed=2024 test_rmse = 0.424811`
+  - `seed=2024 test_brier = 0.180464`
+  - `seed=2024 test_ece = 0.052361`
 - 当前结果报告默认主看 `AUC/ACC`
 - `RMSE/Brier/ECE/分桶校准` 默认作为次要指标
-- 当前冲刺目标是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对当前 `exp/trellis-trial` 伪主线 seed=2024 还需约 `AUC +0.0075` 到 `+0.0095`
+- 当前冲刺目标是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对当前 `exp/trellis-trial` 伪主线 seed=2024 还需约 `AUC +0.0055` 到 `+0.0075`
 - 这个距离明显大于近期小 residual / sidecar 的常见边际收益，后续默认优先探索 representation-level 大结构改动；局部小改只有在支撑大结构假设时才优先考虑
 
 - 当前已吸收的最新结构更新:
   - 实验 70: student-conditioned UKC `none_seen` readout sidecar 已进入 `master` 默认主线；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
   - 实验 76: deterministic concept evidence prior 已进入 `exp/trellis-trial` 伪主线默认运行口径；单 seed 相对实验 70 seed=2024 `AUC +0.005061`
+  - 实验 78: concept evidence readout correction 已进入 `exp/trellis-trial` 伪主线默认运行口径；正常学习 seeds `2024/2025/2027` 相对实验 76 matched baseline 均值 `AUC +0.002542`
 
 - 当前正向支线候选:
-  - 实验 78
-    - branch: `exp/concept-evidence-prior-next`
-    - 判断: 在实验 76 deterministic prior 伪主线上叠加同源 `concept_evidence_readout_residual(min_count=1, seen_ratio=1.0, max_logit=0.5)`；正常学习 seeds `2024/2025/2027` 均值相对伪主线 `AUC +0.002542`、`ACC +0.002468`、`RMSE -0.001554`、`Brier -0.001325`、`ECE -0.000667`
-    - 补充: 这仍然只使用 student-concept train-history evidence，经 Q 矩阵聚合，不使用 CF 或 student-exercise pair memory；主要风险是 `none_seen` 和小样本 `partial_seen` 回撤，且官方 seed2026 出现 baseline/candidate 同时不学习的退化点
-    - 详细指标见 `docs/experiments/078_concept_evidence_prior_readout_combo.md`
   - 实验 76
     - branch: `exp/evidence-calibrated-behavior-gate`
     - 判断: `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5` 已合入 `exp/trellis-trial` 伪主线；相对实验 70 seed=2024，`AUC +0.005061`、`ACC +0.000247`、`RMSE -0.001588`、`Brier -0.001355`，但 `ECE +0.002199`
@@ -295,7 +292,7 @@
 通用协作、运行与分支规则沿用 `.trellis/spec/backend/experiment-protocol.md`；这里仅补充历史台账导出的默认优先级:
 
 1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。默认目标仍是冲 `test_auc ~= 0.780`；`0.778` 可视为接近可接受。
-2. 实验 76 已给出新的可解释 CDM 强单 seed 信号并进入伪主线；实验 78 在同源 student-concept evidence readout correction 上给出 multi-seed 候选信号。下一步优先解释 seed2026 退化并补更多非退化 seeds，不要继续扩 CF/ID side channel 或盲扫同类 residual。
+2. 实验 78 已按用户要求进入伪主线默认口径；下一步从实验 78 伪主线或其后代继续自由探索，优先寻找新的可解释结构信号并做 matched multi-seed 验证，不要继续扩 CF/ID side channel。
 3. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益，实验 76 则说明单知识点 student-concept train-history mastery prior 能提供更大 ranking 信号。普通小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
 4. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
 5. 默认优先探索更大一级、真正改变表示瓶颈的模块，例如学生状态形成、target-conditioned history、受约束的图/Q 结构学习，或明确标注为 hybrid 的 side channel；普通 sidecar / residual 默认不进入这类 sweep。
