@@ -92,6 +92,12 @@ def load_model(
         student_conditioned_ukc_readout_residual=bool(
             summary.get("student_conditioned_ukc_readout_residual", False)
         ),
+        evidence_calibrated_behavior_gate=bool(summary.get("evidence_calibrated_behavior_gate", False)),
+        evidence_behavior_gate_max_logit=float(summary.get("evidence_behavior_gate_max_logit", 0.5)),
+        evidence_behavior_gate_trigger=str(summary.get("evidence_behavior_gate_trigger", "all")),
+        evidence_behavior_gate_low_attempt_threshold=float(
+            summary.get("evidence_behavior_gate_low_attempt_threshold", 3.0)
+        ),
     )
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state)
@@ -114,6 +120,7 @@ def predict_bundle(*, bundle: Any, model: DecoupledCDM, device: str) -> pd.DataF
             response_matrix=tensors["response_matrix"],
             student_tkc_mask=tensors["student_tkc_mask"],
             student_ukc_mask=tensors["student_ukc_mask"],
+            student_concept_evidence=tensors["student_concept_evidence"],
             target_student_ids=tensors["interaction_student_ids"],
             target_exercise_ids=tensors["interaction_exercise_ids"],
         )

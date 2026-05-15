@@ -1,3 +1,4 @@
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-from data import prepare_experiment_split_bundles, prepare_step_data_bundle
+from data import build_student_concept_evidence_tensor, prepare_experiment_split_bundles, prepare_step_data_bundle
 from data.datasets import StepDataBundle
 from trainers.engine import evaluate_model
 
@@ -25,6 +26,32 @@ class _ConstantProbModel(nn.Module):
 
 
 class HistoryVisibilityBundleTest(unittest.TestCase):
+    def test_student_concept_evidence_tensor_uses_history_rows_only(self) -> None:
+        interactions = pd.DataFrame(
+            [
+                {"stu_id": 1, "exer_id": 11, "cpt_seq": "A,B", "label": 1},
+                {"stu_id": 1, "exer_id": 12, "cpt_seq": "A", "label": 0},
+                {"stu_id": 2, "exer_id": 13, "cpt_seq": "B", "label": 1},
+            ]
+        )
+
+        evidence = build_student_concept_evidence_tensor(
+            interactions=interactions,
+            student_id_map={"1": 0, "2": 1},
+            concept_id_map={"A": 0, "B": 1},
+        )
+
+        self.assertEqual(tuple(evidence.shape), (2, 2, 6))
+        torch.testing.assert_close(
+            evidence[0, 0],
+            torch.tensor([2.0, 1.0, 1.0, 0.5, math.log1p(2.0), 1.0], dtype=torch.float32),
+        )
+        torch.testing.assert_close(
+            evidence[0, 1],
+            torch.tensor([1.0, 1.0, 0.0, 1.0, math.log1p(1.0), 1.0], dtype=torch.float32),
+        )
+        torch.testing.assert_close(evidence[1, 0], torch.zeros(6, dtype=torch.float32))
+
     def test_prepare_experiment_split_bundles_marks_eval_splits_as_history_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -72,6 +99,12 @@ class HistoryVisibilityBundleTest(unittest.TestCase):
         self.assertEqual(bundles["test"].split_name, "test")
         self.assertTrue(bundles["valid"].history_interactions.equals(bundles["train"].interactions))
         self.assertTrue(torch.equal(bundles["valid"].student_exercise_mask, bundles["train"].student_exercise_mask))
+        self.assertTrue(
+            torch.equal(
+                bundles["valid"].student_concept_evidence_tensor,
+                bundles["train"].student_concept_evidence_tensor,
+            )
+        )
 
     def test_prepare_step_data_bundle_marks_full_bundle_as_target_visible(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

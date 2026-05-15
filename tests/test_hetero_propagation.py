@@ -2,7 +2,12 @@ import unittest
 
 import torch
 
-from models.hetero_propagation import HeterogeneousGraphPropagation, _build_exercise_component, _logit
+from models.hetero_propagation import (
+    HeterogeneousGraphPropagation,
+    _build_exercise_component,
+    _evidence_trigger_mask,
+    _logit,
+)
 
 
 class ExerciseComponentAggregationTest(unittest.TestCase):
@@ -79,6 +84,59 @@ class GraphModeValidationTest(unittest.TestCase):
                 student_tkc_mask=torch.tensor([[1.0, 0.0]], dtype=torch.float32),
                 student_ukc_mask=torch.tensor([[0.0, 1.0]], dtype=torch.float32),
             )
+
+
+class EvidenceCalibratedBehaviorGateTest(unittest.TestCase):
+    def test_evidence_residual_layer_starts_at_zero(self) -> None:
+        propagation = HeterogeneousGraphPropagation(
+            concept_dim=2,
+            evidence_calibrated_behavior_gate=True,
+        )
+
+        self.assertIsNotNone(propagation.evidence_behavior_gate_residual)
+        layer = propagation.evidence_behavior_gate_residual
+        torch.testing.assert_close(layer.weight, torch.zeros_like(layer.weight))
+        torch.testing.assert_close(layer.bias, torch.zeros_like(layer.bias))
+
+    def test_enabled_evidence_gate_requires_evidence_tensor(self) -> None:
+        propagation = HeterogeneousGraphPropagation(
+            concept_dim=2,
+            evidence_calibrated_behavior_gate=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "student_concept_evidence is required"):
+            propagation(
+                concept_embeddings=torch.eye(2, dtype=torch.float32),
+                exercise_embeddings=torch.ones(1, 2, dtype=torch.float32),
+                q_matrix=torch.tensor([[1.0, 0.0]], dtype=torch.float32),
+                concept_graph=torch.eye(2, dtype=torch.float32),
+                prerequisite_graph=None,
+                similarity_graph=None,
+                student_exercise_mask=torch.ones(1, 1, dtype=torch.float32),
+                response_matrix=torch.ones(1, 1, dtype=torch.float32),
+                student_tkc_mask=torch.tensor([[1.0, 0.0]], dtype=torch.float32),
+                student_ukc_mask=torch.tensor([[0.0, 1.0]], dtype=torch.float32),
+            )
+
+    def test_low_evidence_trigger_uses_attempt_count_and_seen_flag(self) -> None:
+        evidence = torch.tensor(
+            [
+                [
+                    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    [2.0, 1.0, 1.0, 0.5, 1.1, 1.0],
+                    [5.0, 3.0, 2.0, 0.6, 1.8, 1.0],
+                ]
+            ],
+            dtype=torch.float32,
+        )
+
+        mask = _evidence_trigger_mask(
+            student_concept_evidence=evidence,
+            trigger="low_evidence",
+            low_attempt_threshold=3.0,
+        )
+
+        torch.testing.assert_close(mask.squeeze(-1), torch.tensor([[0.0, 1.0, 0.0]], dtype=torch.float32))
 
 
 class StudentGatePriorInitializationTest(unittest.TestCase):

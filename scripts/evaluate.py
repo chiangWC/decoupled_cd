@@ -90,6 +90,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable a zero-init none-seen readout residual from graph-adjacent student TKC states.",
     )
+    parser.add_argument(
+        "--evidence-calibrated-behavior-gate",
+        action="store_true",
+        help="Enable a zero-init student-concept evidence residual on the TKC correct/incorrect behavior gate.",
+    )
+    parser.add_argument("--evidence-behavior-gate-max-logit", type=float, default=0.5)
+    parser.add_argument(
+        "--evidence-behavior-gate-trigger",
+        choices=["all", "low_evidence"],
+        default="all",
+    )
+    parser.add_argument("--evidence-behavior-gate-low-attempt-threshold", type=float, default=3.0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--output", default="results/eval_summary.json")
@@ -109,6 +121,10 @@ def parse_args() -> argparse.Namespace:
         new_flag="--student-gate-prior-beta",
         legacy_flag="--beta",
     )
+    if args.evidence_behavior_gate_max_logit <= 0.0:
+        raise ValueError("--evidence-behavior-gate-max-logit must be positive.")
+    if args.evidence_behavior_gate_low_attempt_threshold < 0.0:
+        raise ValueError("--evidence-behavior-gate-low-attempt-threshold must be non-negative.")
     return args
 
 
@@ -202,6 +218,10 @@ def main() -> None:
         interpretable_readout_expert_adapter=args.interpretable_readout_expert_adapter,
         interpretable_readout_expert_count=args.interpretable_readout_expert_count,
         student_conditioned_ukc_readout_residual=args.student_conditioned_ukc_readout_residual,
+        evidence_calibrated_behavior_gate=args.evidence_calibrated_behavior_gate,
+        evidence_behavior_gate_max_logit=args.evidence_behavior_gate_max_logit,
+        evidence_behavior_gate_trigger=args.evidence_behavior_gate_trigger,
+        evidence_behavior_gate_low_attempt_threshold=args.evidence_behavior_gate_low_attempt_threshold,
     )
 
     payload = {
@@ -226,6 +246,10 @@ def main() -> None:
         "interpretable_readout_expert_adapter": args.interpretable_readout_expert_adapter,
         "interpretable_readout_expert_count": args.interpretable_readout_expert_count,
         "student_conditioned_ukc_readout_residual": args.student_conditioned_ukc_readout_residual,
+        "evidence_calibrated_behavior_gate": args.evidence_calibrated_behavior_gate,
+        "evidence_behavior_gate_max_logit": args.evidence_behavior_gate_max_logit,
+        "evidence_behavior_gate_trigger": args.evidence_behavior_gate_trigger,
+        "evidence_behavior_gate_low_attempt_threshold": args.evidence_behavior_gate_low_attempt_threshold,
         "train_metrics": evaluate_model(bundle=bundles["train"], model=model, device=device),
         "valid_metrics": evaluate_model(bundle=bundles["valid"], model=model, device=device),
         "test_metrics": evaluate_model(bundle=bundles["test"], model=model, device=device),

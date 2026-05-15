@@ -123,5 +123,31 @@ class StudentConditionedUkcReadoutResidualTest(unittest.TestCase):
         torch.testing.assert_close(output, torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32))
 
 
+class EvidenceCalibratedBehaviorGateModelTest(unittest.TestCase):
+    def test_evidence_gate_output_layer_starts_at_zero(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=2,
+            concept_dim=4,
+            evidence_calibrated_behavior_gate=True,
+        )
+
+        layer = model.propagation.evidence_behavior_gate_residual
+        self.assertIsNotNone(layer)
+        torch.testing.assert_close(layer.weight, torch.zeros_like(layer.weight))
+        torch.testing.assert_close(layer.bias, torch.zeros_like(layer.bias))
+
+    def test_evidence_gate_rejects_invalid_scale(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                evidence_behavior_gate_max_logit=0.0,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

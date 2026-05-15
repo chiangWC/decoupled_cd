@@ -49,6 +49,10 @@ class DecoupledCDM(nn.Module):
         interpretable_readout_expert_adapter: bool = False,
         interpretable_readout_expert_count: int = 3,
         student_conditioned_ukc_readout_residual: bool = False,
+        evidence_calibrated_behavior_gate: bool = False,
+        evidence_behavior_gate_max_logit: float = 0.5,
+        evidence_behavior_gate_trigger: str = "all",
+        evidence_behavior_gate_low_attempt_threshold: float = 3.0,
     ):
         super().__init__()
         if gs_mode not in {"constant", "conditional"}:
@@ -59,6 +63,12 @@ class DecoupledCDM(nn.Module):
             raise ValueError("pairwise_history_interaction_min_count must be at least 2.")
         if interpretable_readout_expert_count < 2:
             raise ValueError("interpretable_readout_expert_count must be at least 2.")
+        if evidence_behavior_gate_max_logit <= 0.0:
+            raise ValueError("evidence_behavior_gate_max_logit must be positive.")
+        if evidence_behavior_gate_trigger not in {"all", "low_evidence"}:
+            raise ValueError(f"Unsupported evidence_behavior_gate_trigger: {evidence_behavior_gate_trigger}")
+        if evidence_behavior_gate_low_attempt_threshold < 0.0:
+            raise ValueError("evidence_behavior_gate_low_attempt_threshold must be non-negative.")
         self.gs_mode = gs_mode
         self.high_concept_logit_adapter = high_concept_logit_adapter
         self.high_concept_logit_min_count = high_concept_logit_min_count
@@ -68,6 +78,10 @@ class DecoupledCDM(nn.Module):
         self.interpretable_readout_expert_adapter = interpretable_readout_expert_adapter
         self.interpretable_readout_expert_count = interpretable_readout_expert_count
         self.student_conditioned_ukc_readout_residual = student_conditioned_ukc_readout_residual
+        self.evidence_calibrated_behavior_gate = evidence_calibrated_behavior_gate
+        self.evidence_behavior_gate_max_logit = float(evidence_behavior_gate_max_logit)
+        self.evidence_behavior_gate_trigger = evidence_behavior_gate_trigger
+        self.evidence_behavior_gate_low_attempt_threshold = float(evidence_behavior_gate_low_attempt_threshold)
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
         self.exercise_difficulty = nn.Embedding(num_exercises, 1)
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
@@ -111,6 +125,10 @@ class DecoupledCDM(nn.Module):
             student_gate_prior_beta=student_gate_prior_beta,
             alpha=alpha,
             beta=beta,
+            evidence_calibrated_behavior_gate=evidence_calibrated_behavior_gate,
+            evidence_behavior_gate_max_logit=evidence_behavior_gate_max_logit,
+            evidence_behavior_gate_trigger=evidence_behavior_gate_trigger,
+            evidence_behavior_gate_low_attempt_threshold=evidence_behavior_gate_low_attempt_threshold,
         )
         self.cognitive_difficulty_adapter = nn.Sequential(
             nn.Linear(concept_dim * 4 + 1, concept_dim),
@@ -173,6 +191,7 @@ class DecoupledCDM(nn.Module):
         response_matrix: torch.Tensor,
         student_tkc_mask: torch.Tensor,
         student_ukc_mask: torch.Tensor,
+        student_concept_evidence: torch.Tensor | None = None,
         target_student_ids: torch.Tensor | None = None,
         target_exercise_ids: torch.Tensor | None = None,
     ) -> DecoupledForwardOutput:
@@ -189,6 +208,7 @@ class DecoupledCDM(nn.Module):
             response_matrix=response_matrix,
             student_tkc_mask=student_tkc_mask,
             student_ukc_mask=student_ukc_mask,
+            student_concept_evidence=student_concept_evidence,
         )
 
         if (target_student_ids is None) != (target_exercise_ids is None):

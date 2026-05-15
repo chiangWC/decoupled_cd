@@ -15,7 +15,7 @@ from .datasets import (
 )
 from .concept_graph import load_concept_graph_csv
 from .mappings import build_unified_id_mappings
-from .q_matrix import build_concept_graph_from_q, build_q_matrix_tensor
+from .q_matrix import build_concept_graph_from_q, build_q_matrix_tensor, normalize_concept_sequence
 from .readers import read_interactions, read_q_matrix
 
 
@@ -42,12 +42,46 @@ def build_history_tensors(
         student_id_map=student_id_map,
         exercise_id_map=exercise_id_map,
     )
+    student_concept_evidence_tensor = build_student_concept_evidence_tensor(
+        interactions=history_interactions,
+        student_id_map=student_id_map,
+        concept_id_map=concept_id_map,
+    )
     return {
         "student_exercise_mask": student_exercise_mask,
         "student_tkc_mask": student_tkc_mask,
         "student_ukc_mask": student_ukc_mask,
         "response_matrix_tensor": response_matrix_tensor,
+        "student_concept_evidence_tensor": student_concept_evidence_tensor,
     }
+
+
+def build_student_concept_evidence_tensor(
+    *,
+    interactions: pd.DataFrame,
+    student_id_map: Dict[str, int],
+    concept_id_map: Dict[str, int],
+) -> torch.Tensor:
+    attempt_counts = torch.zeros(len(student_id_map), len(concept_id_map), dtype=torch.float32)
+    correct_counts = torch.zeros_like(attempt_counts)
+
+    for row in interactions.itertuples(index=False):
+        student_index = student_id_map[str(row.stu_id)]
+        for concept_id in normalize_concept_sequence(row.cpt_seq):
+            concept_index = concept_id_map.get(concept_id)
+            if concept_index is None:
+                continue
+            attempt_counts[student_index, concept_index] += 1.0
+            correct_counts[student_index, concept_index] += float(row.label)
+
+    incorrect_counts = (attempt_counts - correct_counts).clamp_min(0.0)
+    accuracy = correct_counts / attempt_counts.clamp_min(1.0)
+    log_attempts = torch.log1p(attempt_counts)
+    seen = (attempt_counts > 0.0).to(dtype=torch.float32)
+    return torch.stack(
+        [attempt_counts, correct_counts, incorrect_counts, accuracy, log_attempts, seen],
+        dim=-1,
+    )
 
 
 def prepare_data_bundle(
@@ -129,6 +163,7 @@ def prepare_step_data_bundle(
         interaction_student_ids=interaction_student_ids,
         interaction_exercise_ids=interaction_exercise_ids,
         interaction_labels=interaction_labels,
+        student_concept_evidence_tensor=history_tensors["student_concept_evidence_tensor"],
         prerequisite_graph=prerequisite_graph,
         similarity_graph=similarity_graph,
     )
@@ -213,6 +248,7 @@ def prepare_experiment_split_bundles(
         "student_exercise_mask": history_tensors["student_exercise_mask"],
         "student_tkc_mask": history_tensors["student_tkc_mask"],
         "student_ukc_mask": history_tensors["student_ukc_mask"],
+        "student_concept_evidence_tensor": history_tensors["student_concept_evidence_tensor"],
     }
 
     def _bundle(
@@ -241,6 +277,7 @@ def prepare_experiment_split_bundles(
             interaction_student_ids=student_ids,
             interaction_exercise_ids=exercise_ids,
             interaction_labels=labels,
+            student_concept_evidence_tensor=history_tensors["student_concept_evidence_tensor"],
             prerequisite_graph=prerequisite_graph,
             similarity_graph=similarity_graph,
         )

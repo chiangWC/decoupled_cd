@@ -35,6 +35,11 @@ def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, t
         "student_exercise_mask": bundle.student_exercise_mask.to(device),
         "student_tkc_mask": bundle.student_tkc_mask.to(device),
         "student_ukc_mask": bundle.student_ukc_mask.to(device),
+        "student_concept_evidence": (
+            bundle.student_concept_evidence_tensor.to(device)
+            if bundle.student_concept_evidence_tensor is not None
+            else None
+        ),
         "interaction_student_ids": bundle.interaction_student_ids.to(device),
         "interaction_exercise_ids": bundle.interaction_exercise_ids.to(device),
         "interaction_labels": bundle.interaction_labels.to(device),
@@ -85,6 +90,7 @@ def evaluate_model(
             response_matrix=tensors["response_matrix"],
             student_tkc_mask=tensors["student_tkc_mask"],
             student_ukc_mask=tensors["student_ukc_mask"],
+            student_concept_evidence=tensors["student_concept_evidence"],
             target_student_ids=tensors["interaction_student_ids"],
             target_exercise_ids=tensors["interaction_exercise_ids"],
         )
@@ -220,6 +226,7 @@ def _train_full_batch_epoch(
         response_matrix=tensors["response_matrix"],
         student_tkc_mask=tensors["student_tkc_mask"],
         student_ukc_mask=tensors["student_ukc_mask"],
+        student_concept_evidence=tensors["student_concept_evidence"],
         target_student_ids=tensors["interaction_student_ids"],
         target_exercise_ids=tensors["interaction_exercise_ids"],
     )
@@ -256,6 +263,7 @@ def _train_recompute_minibatch_epoch(
             response_matrix=tensors["response_matrix"],
             student_tkc_mask=tensors["student_tkc_mask"],
             student_ukc_mask=tensors["student_ukc_mask"],
+            student_concept_evidence=tensors["student_concept_evidence"],
             target_student_ids=tensors["interaction_student_ids"][batch_indices],
             target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
         )

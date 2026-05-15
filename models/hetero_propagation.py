@@ -28,11 +28,25 @@ class HeterogeneousGraphPropagation(nn.Module):
         student_gate_prior_beta: float | None = None,
         alpha: float | None = None,
         beta: float | None = None,
+        evidence_calibrated_behavior_gate: bool = False,
+        evidence_behavior_gate_max_logit: float = 0.5,
+        evidence_behavior_gate_trigger: str = "all",
+        evidence_behavior_gate_low_attempt_threshold: float = 3.0,
     ):
         super().__init__()
         if graph_mode not in {"single", "dual"}:
             raise ValueError(f"Unsupported graph_mode: {graph_mode}")
+        if evidence_behavior_gate_max_logit <= 0.0:
+            raise ValueError("evidence_behavior_gate_max_logit must be positive.")
+        if evidence_behavior_gate_trigger not in {"all", "low_evidence"}:
+            raise ValueError(f"Unsupported evidence_behavior_gate_trigger: {evidence_behavior_gate_trigger}")
+        if evidence_behavior_gate_low_attempt_threshold < 0.0:
+            raise ValueError("evidence_behavior_gate_low_attempt_threshold must be non-negative.")
         self.graph_mode = graph_mode
+        self.evidence_calibrated_behavior_gate = evidence_calibrated_behavior_gate
+        self.evidence_behavior_gate_max_logit = float(evidence_behavior_gate_max_logit)
+        self.evidence_behavior_gate_trigger = evidence_behavior_gate_trigger
+        self.evidence_behavior_gate_low_attempt_threshold = float(evidence_behavior_gate_low_attempt_threshold)
         self.correct_exercise_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.incorrect_exercise_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.tkc_concept_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
@@ -43,6 +57,9 @@ class HeterogeneousGraphPropagation(nn.Module):
         self.ukc_similarity_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.graph_fusion_gate = nn.Linear(concept_dim * 2, 1, bias=True)
         self.exercise_behavior_gate = nn.Linear(concept_dim * 2, 1, bias=True)
+        self.evidence_behavior_gate_residual = (
+            nn.Linear(6, 1, bias=True) if evidence_calibrated_behavior_gate else None
+        )
         self.tkc_fusion_gate = nn.Linear(concept_dim * 2, 1, bias=True)
         self.student_fusion_gate = nn.Sequential(
             nn.Linear(concept_dim * 2 + 1, concept_dim),
@@ -69,6 +86,9 @@ class HeterogeneousGraphPropagation(nn.Module):
         )
         nn.init.zeros_(self.student_fusion_gate[-1].weight)
         nn.init.constant_(self.student_fusion_gate[-1].bias, _logit(fusion_prior))
+        if self.evidence_behavior_gate_residual is not None:
+            nn.init.zeros_(self.evidence_behavior_gate_residual.weight)
+            nn.init.zeros_(self.evidence_behavior_gate_residual.bias)
 
     def forward(
         self,
@@ -83,6 +103,7 @@ class HeterogeneousGraphPropagation(nn.Module):
         response_matrix: torch.Tensor,
         student_tkc_mask: torch.Tensor,
         student_ukc_mask: torch.Tensor,
+        student_concept_evidence: torch.Tensor | None = None,
     ) -> PropagationOutput:
         correct_exercise_messages = self.correct_exercise_to_concept(exercise_embeddings)
         incorrect_exercise_messages = self.incorrect_exercise_to_concept(exercise_embeddings)
@@ -124,7 +145,27 @@ class HeterogeneousGraphPropagation(nn.Module):
         )
 
         exercise_behavior_inputs = torch.cat([correct_tkc_component, incorrect_tkc_component], dim=-1)
-        exercise_behavior_gate = torch.sigmoid(self.exercise_behavior_gate(exercise_behavior_inputs))
+        exercise_behavior_gate_logits = self.exercise_behavior_gate(exercise_behavior_inputs)
+        if self.evidence_calibrated_behavior_gate:
+            if student_concept_evidence is None:
+                raise ValueError(
+                    "student_concept_evidence is required when evidence_calibrated_behavior_gate is enabled."
+                )
+            if student_concept_evidence.shape[:2] != exercise_behavior_gate_logits.shape[:2]:
+                raise ValueError("student_concept_evidence must have shape [students, concepts, features].")
+            if student_concept_evidence.size(-1) != 6:
+                raise ValueError("student_concept_evidence must contain 6 interpretable features.")
+            assert self.evidence_behavior_gate_residual is not None
+            evidence_residual = torch.tanh(
+                self.evidence_behavior_gate_residual(student_concept_evidence.to(exercise_behavior_inputs.dtype))
+            ) * self.evidence_behavior_gate_max_logit
+            trigger_mask = _evidence_trigger_mask(
+                student_concept_evidence=student_concept_evidence,
+                trigger=self.evidence_behavior_gate_trigger,
+                low_attempt_threshold=self.evidence_behavior_gate_low_attempt_threshold,
+            ).to(dtype=exercise_behavior_inputs.dtype)
+            exercise_behavior_gate_logits = exercise_behavior_gate_logits + evidence_residual * trigger_mask
+        exercise_behavior_gate = torch.sigmoid(exercise_behavior_gate_logits)
         tkc_exercise_component = (
             exercise_behavior_gate * correct_tkc_component
             + (1.0 - exercise_behavior_gate) * incorrect_tkc_component
@@ -168,6 +209,21 @@ def _masked_average(node_states: torch.Tensor, mask: torch.Tensor) -> torch.Tens
     total = (node_states * weights).sum(dim=1)
     denom = weights.sum(dim=1).clamp(min=1.0)
     return total / denom
+
+
+def _evidence_trigger_mask(
+    *,
+    student_concept_evidence: torch.Tensor,
+    trigger: str,
+    low_attempt_threshold: float,
+) -> torch.Tensor:
+    if trigger == "all":
+        return torch.ones_like(student_concept_evidence[..., :1])
+    if trigger == "low_evidence":
+        attempt_counts = student_concept_evidence[..., :1]
+        seen = student_concept_evidence[..., 5:6]
+        return ((attempt_counts <= float(low_attempt_threshold)) & (seen > 0.0)).to(dtype=student_concept_evidence.dtype)
+    raise ValueError(f"Unsupported evidence behavior gate trigger: {trigger}")
 
 
 def _resolve_student_gate_prior_arg(
