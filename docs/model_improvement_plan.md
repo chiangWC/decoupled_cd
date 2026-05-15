@@ -49,6 +49,11 @@
   - 实验 70: student-conditioned UKC `none_seen` readout sidecar 已进入 `master` 默认主线；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
 
 - 当前正向支线候选:
+  - 实验 76
+    - branch: `exp/evidence-calibrated-behavior-gate`
+    - 判断: `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5` 是新的可解释 CDM 单 seed 候选；相对当前主线 seed=2024，`AUC +0.005061`、`ACC +0.000247`、`RMSE -0.001588`、`Brier -0.001355`，但 `ECE +0.002199`
+    - 补充: 收益来自确定性的 student-concept train-history mastery prior，不使用 CF 或 student-exercise ID side channel；下一步优先补 seed，而不是继续堆同类 residual
+    - 详细指标见 `docs/experiments/076_interpretable_concept_evidence_residuals.md`
   - 实验 37
     - branch: `exp/training-modes`
     - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前主线，不作为默认 `master` 训练口径
@@ -82,6 +87,7 @@
   - 实验 69: student-conditioned UKC imputation 没有解决 `none_seen` 校准，反而显著做坏 `none_seen` 的 `ACC/RMSE/ECE`，不扩 seed
   - 实验 71: 实验 70 主线 + 实验 61 target-exclusion 训练口径只带来单 seed `AUC +0.000950`，但 `RMSE/Brier/ECE` 回撤，不扩 seed
   - 实验 75: history-conditioned Q representation 虽然改善少量多知识点 slice 校准，但 single seed overall `AUC/ACC/RMSE/Brier` 回撤，且 `none_seen` 排序回撤，不扩 seed
+  - 实验 76 的前两条可解释 evidence 结构已被拒绝: evidence-calibrated behavior gate 与 trainable target-local concept evidence readout 都没有形成 clean overall gain；保留的是 deterministic concept evidence prior 的 `min_count=1` 配置
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -251,6 +257,11 @@
   - 指标摘要: 单 seed `AUC -0.001620`, `ACC -0.000266`, `ECE -0.001822`
   - 判断: 多知识点 slice 有极小正向和校准改善，但 overall 排序回撤且 `none_seen` AUC 回撤，不扩 seed
 
+- 实验 76: interpretable concept evidence residuals
+  - 分支/详情: `exp/evidence-calibrated-behavior-gate`; `docs/experiments/076_interpretable_concept_evidence_residuals.md`
+  - 指标摘要: 最佳单 seed `AUC +0.005061`, `ACC +0.000247`, `RMSE -0.001588`, `Brier -0.001355`, `ECE +0.002199`
+  - 判断: deterministic concept evidence prior 的 `min_count=1` 是新的可解释 CDM 候选；behavior gate 和 trainable readout residual 子线已拒绝
+
 ## 旧口径的历史参考
 
 下面这些实验只说明某类信号曾经出现过，不能直接当作当前主线结论。
@@ -270,10 +281,11 @@
 通用协作、运行与分支规则沿用 `.trellis/spec/backend/experiment-protocol.md`；这里仅补充历史台账导出的默认优先级:
 
 1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。默认目标仍是冲 `test_auc ~= 0.780`；`0.778` 可视为接近可接受。
-2. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益，但多知识点题仍不是 clean win。单因素小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
-3. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
-4. 默认优先探索更大一级、真正改变表示瓶颈的模块，例如学生状态形成、target-conditioned history、受约束的图/Q 结构学习，或明确标注为 hybrid 的 side channel；普通 sidecar / residual 默认不进入这类 sweep。
-5. 若继续沿实验 51/70 的 readout 底座推进，默认保留实验 51 full-trigger expert 与实验 70 `none_seen` sidecar；但诊断 2 已提示实验 51 可能压制部分后续 clean structure 的边际表现。对 readout / `q_repr` / target-conditioned history / student-state 形成这类容易受实验 51 full-trigger expert 影响的 representation-level 改动，仍从 `exp/trellis-trial` 伪主线或其后代实现，但首轮实验设计默认至少包含 `B49 seed=2024` 与当前 `Exp70 seed=2024` 两格；不要只跑当前主线单格后直接下结论。若其它新结构在最新主线上表现为轻微负向、但语义足够干净，可优先追加一次实验 49 底座单 seed 交叉复验，再决定是否淘汰。
-6. 对已经系统复访但未形成 clean overall gain 的 readout / propagation / ranking-loss 路线，默认不再高优先级继续；只有在出现明确新假设、且机制上明显区别于已失败版本时，才考虑重开。
-7. 若用户明确要继续训练协议优化，当前优先候选是实验 37 与实验 61 两条支线；否则默认优先继续模型结构改动。
-8. 判断是否值得继续时，默认主看 `AUC/ACC`；局部推进仍需至少 `1e-3` 量级改善，冲 `0.78` 的大结构单 seed 若连 `AUC +0.002` 左右信号都没有，通常不优先扩 seed。`RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用。
+2. 实验 76 已给出新的可解释 CDM 强单 seed 信号；默认下一步优先补 `concept_evidence_prior_residual` 的 additional seeds，而不是继续扩 CF/ID side channel 或继续盲扫同类 residual。当前候选配置: `min_count=1`, `min_seen_ratio=1.0`, `max_logit=0.5`, `prior_strength=2.0`, `confidence_cap=20.0`。
+3. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益，实验 76 则说明单知识点 student-concept train-history mastery prior 能提供更大 ranking 信号。普通小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
+4. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
+5. 默认优先探索更大一级、真正改变表示瓶颈的模块，例如学生状态形成、target-conditioned history、受约束的图/Q 结构学习，或明确标注为 hybrid 的 side channel；普通 sidecar / residual 默认不进入这类 sweep。
+6. 若继续沿实验 51/70 的 readout 底座推进，默认保留实验 51 full-trigger expert 与实验 70 `none_seen` sidecar；但诊断 2 已提示实验 51 可能压制部分后续 clean structure 的边际表现。对 readout / `q_repr` / target-conditioned history / student-state 形成这类容易受实验 51 full-trigger expert 影响的 representation-level 改动，仍从 `exp/trellis-trial` 伪主线或其后代实现，但首轮实验设计默认至少包含 `B49 seed=2024` 与当前 `Exp70 seed=2024` 两格；不要只跑当前主线单格后直接下结论。若其它新结构在最新主线上表现为轻微负向、但语义足够干净，可优先追加一次实验 49 底座单 seed 交叉复验，再决定是否淘汰。
+7. 对已经系统复访但未形成 clean overall gain 的 readout / propagation / ranking-loss 路线，默认不再高优先级继续；只有在出现明确新假设、且机制上明显区别于已失败版本时，才考虑重开。
+8. 若用户明确要继续训练协议优化，当前优先候选是实验 37 与实验 61 两条支线；否则默认优先继续模型结构改动。
+9. 判断是否值得继续时，默认主看 `AUC/ACC`；局部推进仍需至少 `1e-3` 量级改善，冲 `0.78` 的大结构单 seed 若连 `AUC +0.002` 左右信号都没有，通常不优先扩 seed。`RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用。

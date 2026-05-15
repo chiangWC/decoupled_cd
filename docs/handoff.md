@@ -67,6 +67,11 @@
 
 - 实验 51 的 full-trigger 三专家 readout residual 已吸收到当前 `master`。
 - 实验 70 的 student-conditioned UKC `none_seen` readout sidecar 已吸收到当前 `master`，它不替换 `TKC/UKC/student_state` 主状态，只作为 target-local cognitive-logit residual。
+- 实验 76 的 deterministic concept evidence prior 是新的可解释 CDM 单 seed 候选，尚未吸收到正式主线:
+  - branch: `exp/evidence-calibrated-behavior-gate`
+  - best config: `--concept-evidence-prior-residual --concept-evidence-prior-min-count 1 --concept-evidence-prior-min-seen-ratio 1.0 --concept-evidence-prior-max-logit 0.5 --concept-evidence-prior-strength 2.0 --concept-evidence-prior-confidence-cap 20.0`
+  - seed=2024 相对当前主线: `AUC +0.005061`, `ACC +0.000247`, `RMSE -0.001588`, `Brier -0.001355`, `ECE +0.002199`
+  - 判断: 明显 ranking/error 信号，主要风险是 ECE；下一步应补 seed，而不是继续扫 CF/ID side channel
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
@@ -121,6 +126,7 @@
 - 诊断 3 的更早底座广扫没有推翻诊断 2: `q-conditioned local mastery` 在 `B33/B34` 只是小正，到 `B49` 才三 seed 明显正向；`concept-conditioned propagation` 的 `B33` 单 seed 强正未复现；multi-hop、qrepr-score、history stats、ranking loss、clean routing 多数只是误差/校准折中或早底座也不成立。后续更应直接隔离实验 51 expert，而不是盲目回退到更早主线。详细指标见 [experiment_themes.md](./experiment_themes.md) 的“诊断 3”。
 - 实验 72 的表示瓶颈探针没有给出 `0.77+` 排序突破: `B49 + q-conditioned local mastery + exp70 sidecar` 只改善 `ACC/RMSE/Brier/ECE` 但 `AUC -0.000389`；`target-conditioned student context` 叠加实验 70 后 `AUC -0.007201`。recency/sequence encoder 会改变数据与历史可见性口径，当前不作为同一轮结构验证继续推进。详细指标见 [072_representation_bottleneck_probes.md](./experiments/072_representation_bottleneck_probes.md)。
 - 实验 73 的当前主线口径扫没有发现 `0.77+` 训练配置；相对当前主线，最好的候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，三 seed 均值 `AUC +0.000928`、`ACC +0.001313`、`RMSE -0.000077`、`Brier -0.000066`、`ECE +0.002872`。它可作为 accuracy/ranking-oriented 候选口径，但不是 clean 默认切换。详细指标见 [073_current_mainline_protocol_sweep.md](./experiments/073_current_mainline_protocol_sweep.md)。
+- 实验 76 证明显式 student-concept train-history mastery prior 仍能在当前实验 70 主线上形成明显可解释信号。`min_count=1` 是关键转折点，说明单知识点题也应该纳入；`min_count=2` 只得到 `AUC +0.001` 左右且 ACC 不同向。evidence-calibrated behavior gate 与 trainable target-local concept evidence readout 均已拒绝。详细指标见 [076_interpretable_concept_evidence_residuals.md](./experiments/076_interpretable_concept_evidence_residuals.md)。
 - 近期若干 follow-up（如 hard-Q residual、propagation/readout 侧多知识点 residual、全局共享 `none_seen` calibration bias、exact-3 aggressive residual/readout）除实验 51 外，都只形成局部 slice 信号或 seed-sensitive 折中，不作为主线结构推进；若要复访，按实验号查 [experiment_index.jsonl](./experiment_index.jsonl)，再按需打开对应 detail doc。
 - 实验 38-40 的 CF 支线已确认主要依赖 ID-aware side channel，不作为纯 CDM 主线推进；若论文需要，可作为 optional hybrid / appendix 讨论。
 - 多知识点题按知识点数分摊在当前口径下相对实验 23 几乎持平，暂时不是必须优先合入的关键因素。
@@ -138,6 +144,7 @@
 - 若继续复核当前主线训练口径，优先参考 `exp/mainline-protocol-sweep`；当前最强候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，但只作为候选，不替换 `master` 默认口径。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
+- 若继续实验 76，优先留在当前 `exp/evidence-calibrated-behavior-gate` 分支或从 `exp/trellis-trial` 后代切新分支，补 `concept_evidence_prior_residual` 的 additional seeds；不要把已拒绝的 behavior gate/readout residual 子线作为默认继续方向。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先按实验号查 `docs/experiment_index.jsonl` 的 `status/reason_tags/verdict`，再按需打开对应 detail，确认是否真的出现了新的 slice 假设或机制假设后再决定是否重开。
 
 ## 当前关键文件
