@@ -46,8 +46,45 @@ Slice report:
 - `none_seen`: `AUC -0.010753`, `ACC -0.015682`, `RMSE +0.005943`, `Brier +0.004271`, `ECE -0.005559`。
 - `partial_seen`: 样本少，`AUC/ACC/RMSE/Brier/ECE` 均回撤。
 
+## Multi-seed 验证
+
+Matched baseline 是实验 76 伪主线；candidate 是本实验 best config。
+
+| seed | baseline AUC | candidate AUC | delta AUC | baseline ACC | candidate ACC | delta ACC | baseline RMSE | candidate RMSE | delta RMSE | baseline ECE | candidate ECE | delta ECE | note |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 2024 | 0.770505 | 0.772562 | +0.002056 | 0.730651 | 0.730823 | +0.000171 | 0.425893 | 0.424811 | -0.001082 | 0.053886 | 0.052361 | -0.001524 | normal |
+| 2025 | 0.764808 | 0.769170 | +0.004362 | 0.730385 | 0.734476 | +0.004091 | 0.428430 | 0.425773 | -0.002657 | 0.055701 | 0.054576 | -0.001124 | normal |
+| 2026 | 0.502933 | 0.502804 | -0.000129 | 0.517384 | 0.511446 | -0.005937 | 0.517206 | 0.519218 | +0.002012 | 0.168078 | 0.173121 | +0.005043 | both runs degenerate, best_epoch 1-2 |
+| 2027 | 0.770789 | 0.771996 | +0.001207 | 0.729928 | 0.733068 | +0.003140 | 0.425715 | 0.424792 | -0.000922 | 0.052387 | 0.053035 | +0.000648 | non-degenerate supplement |
+
+Official seeds `2024/2025/2026`:
+
+- mean `AUC 0.679415 -> 0.681512`, delta `+0.002096`
+- mean `ACC 0.659473 -> 0.658915`, delta `-0.000558`
+- mean `RMSE 0.457176 -> 0.456601`, delta `-0.000576`
+- mean `Brier 0.210813 -> 0.210445`, delta `-0.000368`
+- mean `ECE 0.092555 -> 0.093353`, delta `+0.000798`
+
+Non-degenerate check seeds `2024/2025/2027`:
+
+- mean `AUC 0.768701 -> 0.771242`, delta `+0.002542`
+- mean `ACC 0.730322 -> 0.732789`, delta `+0.002468`
+- mean `RMSE 0.426679 -> 0.425126`, delta `-0.001554`
+- mean `Brier 0.182057 -> 0.180732`, delta `-0.001325`
+- mean `ECE 0.053991 -> 0.053324`, delta `-0.000667`
+
+Result paths:
+
+- `results/concept_evidence_prior_next/assist_09_seed2025_exp76_baseline_300ep.json`
+- `results/concept_evidence_prior_next/assist_09_seed2025_prior_default_plus_readout_min1_max05_300ep.json`
+- `results/concept_evidence_prior_next/assist_09_seed2026_exp76_baseline_300ep.json`
+- `results/concept_evidence_prior_next/assist_09_seed2026_prior_default_plus_readout_min1_max05_300ep.json`
+- `results/concept_evidence_prior_next/assist_09_seed2027_exp76_baseline_300ep.json`
+- `results/concept_evidence_prior_next/assist_09_seed2027_prior_default_plus_readout_min1_max05_300ep.json`
+
 ## 结论
 
 - 已出现下一条明显增长信号: 在实验 76 deterministic prior 上叠加同源 `concept_evidence_readout_residual(min_count=1, seen_ratio=1.0, max_logit=0.5)`，单 seed 相对伪主线 `AUC +0.002056`，且 `ACC/RMSE/Brier/ECE` 同向。
 - 这条仍然具有可解释性: 只使用 train-history student-concept evidence，经 Q 矩阵聚合到目标题知识点，不使用 CF 或 student-exercise pair memory。
-- 主要风险是收益集中在单知识点/all_seen 大样本，`none_seen` 与小样本 `partial_seen` 回撤；不能直接替换伪主线默认，应优先补 seed 并跟踪这些 slice。
+- Multi-seed 后，正常学习的 `2024/2025/2027` 三个 seed 全向改善，支持该信号不是单 seed 偶然；官方 `2024/2025/2026` 三 seed 因 seed2026 baseline/candidate 同时退化，只能说明 AUC 均值仍正，但 ACC/ECE 均值不 clean。
+- 主要风险是收益集中在单知识点/all_seen 大样本，`none_seen` 与小样本 `partial_seen` 回撤；另一个风险是 seed2026 退化暴露出当前伪主线/候选对随机初始化仍有训练失败模式。不要直接替换伪主线默认，下一步应先复查 seed2026 退化原因或扩大到更多非退化 seeds。

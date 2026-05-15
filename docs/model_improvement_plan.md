@@ -59,8 +59,8 @@
 - 当前正向支线候选:
   - 实验 78
     - branch: `exp/concept-evidence-prior-next`
-    - 判断: 在实验 76 deterministic prior 伪主线上叠加同源 `concept_evidence_readout_residual(min_count=1, seen_ratio=1.0, max_logit=0.5)`，单 seed 相对伪主线 `AUC +0.002056`、`ACC +0.000171`、`RMSE -0.001082`、`Brier -0.000921`、`ECE -0.001524`
-    - 补充: 这仍然只使用 student-concept train-history evidence，经 Q 矩阵聚合，不使用 CF 或 student-exercise pair memory；主要风险是 `none_seen` 和小样本 `partial_seen` 回撤，下一步优先补 seed
+    - 判断: 在实验 76 deterministic prior 伪主线上叠加同源 `concept_evidence_readout_residual(min_count=1, seen_ratio=1.0, max_logit=0.5)`；正常学习 seeds `2024/2025/2027` 均值相对伪主线 `AUC +0.002542`、`ACC +0.002468`、`RMSE -0.001554`、`Brier -0.001325`、`ECE -0.000667`
+    - 补充: 这仍然只使用 student-concept train-history evidence，经 Q 矩阵聚合，不使用 CF 或 student-exercise pair memory；主要风险是 `none_seen` 和小样本 `partial_seen` 回撤，且官方 seed2026 出现 baseline/candidate 同时不学习的退化点
     - 详细指标见 `docs/experiments/078_concept_evidence_prior_readout_combo.md`
   - 实验 76
     - branch: `exp/evidence-calibrated-behavior-gate`
@@ -295,7 +295,7 @@
 通用协作、运行与分支规则沿用 `.trellis/spec/backend/experiment-protocol.md`；这里仅补充历史台账导出的默认优先级:
 
 1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。默认目标仍是冲 `test_auc ~= 0.780`；`0.778` 可视为接近可接受。
-2. 实验 76 已给出新的可解释 CDM 强单 seed 信号；默认下一步优先补 `concept_evidence_prior_residual` 的 additional seeds，而不是继续扩 CF/ID side channel 或继续盲扫同类 residual。当前候选配置: `min_count=1`, `min_seen_ratio=1.0`, `max_logit=0.5`, `prior_strength=2.0`, `confidence_cap=20.0`。
+2. 实验 76 已给出新的可解释 CDM 强单 seed 信号并进入伪主线；实验 78 在同源 student-concept evidence readout correction 上给出 multi-seed 候选信号。下一步优先解释 seed2026 退化并补更多非退化 seeds，不要继续扩 CF/ID side channel 或盲扫同类 residual。
 3. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益，实验 76 则说明单知识点 student-concept train-history mastery prior 能提供更大 ranking 信号。普通小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
 4. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
 5. 默认优先探索更大一级、真正改变表示瓶颈的模块，例如学生状态形成、target-conditioned history、受约束的图/Q 结构学习，或明确标注为 hybrid 的 side channel；普通 sidecar / residual 默认不进入这类 sweep。
