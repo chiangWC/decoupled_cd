@@ -53,6 +53,10 @@ class DecoupledCDM(nn.Module):
         evidence_behavior_gate_max_logit: float = 0.5,
         evidence_behavior_gate_trigger: str = "all",
         evidence_behavior_gate_low_attempt_threshold: float = 3.0,
+        concept_evidence_readout_residual: bool = False,
+        concept_evidence_readout_min_count: int = 2,
+        concept_evidence_readout_min_seen_ratio: float = 1.0,
+        concept_evidence_readout_max_logit: float = 0.5,
     ):
         super().__init__()
         if gs_mode not in {"constant", "conditional"}:
@@ -69,6 +73,12 @@ class DecoupledCDM(nn.Module):
             raise ValueError(f"Unsupported evidence_behavior_gate_trigger: {evidence_behavior_gate_trigger}")
         if evidence_behavior_gate_low_attempt_threshold < 0.0:
             raise ValueError("evidence_behavior_gate_low_attempt_threshold must be non-negative.")
+        if concept_evidence_readout_min_count < 1:
+            raise ValueError("concept_evidence_readout_min_count must be positive.")
+        if concept_evidence_readout_min_seen_ratio < 0.0 or concept_evidence_readout_min_seen_ratio > 1.0:
+            raise ValueError("concept_evidence_readout_min_seen_ratio must be in [0, 1].")
+        if concept_evidence_readout_max_logit <= 0.0:
+            raise ValueError("concept_evidence_readout_max_logit must be positive.")
         self.gs_mode = gs_mode
         self.high_concept_logit_adapter = high_concept_logit_adapter
         self.high_concept_logit_min_count = high_concept_logit_min_count
@@ -82,6 +92,10 @@ class DecoupledCDM(nn.Module):
         self.evidence_behavior_gate_max_logit = float(evidence_behavior_gate_max_logit)
         self.evidence_behavior_gate_trigger = evidence_behavior_gate_trigger
         self.evidence_behavior_gate_low_attempt_threshold = float(evidence_behavior_gate_low_attempt_threshold)
+        self.concept_evidence_readout_residual = concept_evidence_readout_residual
+        self.concept_evidence_readout_min_count = int(concept_evidence_readout_min_count)
+        self.concept_evidence_readout_min_seen_ratio = float(concept_evidence_readout_min_seen_ratio)
+        self.concept_evidence_readout_max_logit = float(concept_evidence_readout_max_logit)
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
         self.exercise_difficulty = nn.Embedding(num_exercises, 1)
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
@@ -165,6 +179,15 @@ class DecoupledCDM(nn.Module):
             if student_conditioned_ukc_readout_residual
             else None
         )
+        self.concept_evidence_readout_residual_head = (
+            nn.Sequential(
+                nn.Linear(7, concept_dim),
+                nn.ReLU(),
+                nn.Linear(concept_dim, 1),
+            )
+            if concept_evidence_readout_residual
+            else None
+        )
         nn.init.zeros_(self.cognitive_difficulty_adapter[-1].weight)
         nn.init.zeros_(self.cognitive_difficulty_adapter[-1].bias)
         nn.init.zeros_(self.high_concept_logit_residual[-1].weight)
@@ -179,6 +202,9 @@ class DecoupledCDM(nn.Module):
         if self.student_conditioned_ukc_readout_residual_head is not None:
             nn.init.zeros_(self.student_conditioned_ukc_readout_residual_head[-1].weight)
             nn.init.zeros_(self.student_conditioned_ukc_readout_residual_head[-1].bias)
+        if self.concept_evidence_readout_residual_head is not None:
+            nn.init.zeros_(self.concept_evidence_readout_residual_head[-1].weight)
+            nn.init.zeros_(self.concept_evidence_readout_residual_head[-1].bias)
 
     def forward(
         self,
@@ -291,6 +317,14 @@ class DecoupledCDM(nn.Module):
                 ukc_states=propagated.ukc_states,
                 student_state=student_state,
                 q_repr=q_repr,
+                concept_summary=concept_summary,
+                difficulty=difficulty,
+            )
+        if self.concept_evidence_readout_residual:
+            cognitive_logits = cognitive_logits + self._build_concept_evidence_readout_residual(
+                q_vectors=q_vectors,
+                target_student_ids=target_student_ids,
+                student_concept_evidence=student_concept_evidence,
                 concept_summary=concept_summary,
                 difficulty=difficulty,
             )
@@ -587,3 +621,54 @@ class DecoupledCDM(nn.Module):
             dtype=residual.dtype
         )
         return residual * target_mask
+
+    def _build_concept_evidence_readout_residual(
+        self,
+        *,
+        q_vectors: torch.Tensor,
+        target_student_ids: torch.Tensor,
+        student_concept_evidence: torch.Tensor | None,
+        concept_summary: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        difficulty: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.concept_evidence_readout_residual_head is None:
+            return difficulty.new_zeros(difficulty.size(0))
+        if student_concept_evidence is None:
+            raise ValueError(
+                "student_concept_evidence is required when concept_evidence_readout_residual is enabled."
+            )
+
+        concept_counts, _, _ = concept_summary
+        q_mask = (q_vectors > 0).to(dtype=difficulty.dtype)
+        target_evidence = student_concept_evidence[target_student_ids].to(dtype=difficulty.dtype)
+        target_seen = target_evidence[..., 5] * q_mask
+        seen_count = target_seen.sum(dim=1, keepdim=True)
+        seen_ratio = seen_count / concept_counts.clamp_min(1.0)
+        seen_denom = seen_count.clamp_min(1.0)
+
+        target_accuracy = target_evidence[..., 3]
+        target_log_attempts = target_evidence[..., 4]
+        mean_accuracy = (target_accuracy * target_seen).sum(dim=1, keepdim=True) / seen_denom
+        mean_log_attempts = (target_log_attempts * target_seen).sum(dim=1, keepdim=True) / seen_denom
+        min_accuracy = target_accuracy.masked_fill(target_seen <= 0.0, 1.0).min(dim=1, keepdim=True).values
+        max_accuracy = (target_accuracy * target_seen).max(dim=1, keepdim=True).values
+
+        residual_inputs = torch.cat(
+            [
+                (concept_counts - 1.0).detach(),
+                seen_ratio.detach(),
+                mean_accuracy.detach(),
+                min_accuracy.detach(),
+                max_accuracy.detach(),
+                mean_log_attempts.detach(),
+                difficulty.detach().unsqueeze(-1),
+            ],
+            dim=-1,
+        )
+        residual = torch.tanh(self.concept_evidence_readout_residual_head(residual_inputs).squeeze(-1))
+        residual = residual * self.concept_evidence_readout_max_logit
+        trigger_mask = (
+            (concept_counts.squeeze(-1) >= float(self.concept_evidence_readout_min_count))
+            & (seen_ratio.squeeze(-1) >= self.concept_evidence_readout_min_seen_ratio)
+        ).to(dtype=residual.dtype)
+        return residual * trigger_mask

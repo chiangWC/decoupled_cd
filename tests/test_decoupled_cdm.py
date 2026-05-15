@@ -149,5 +149,93 @@ class EvidenceCalibratedBehaviorGateModelTest(unittest.TestCase):
             )
 
 
+class ConceptEvidenceReadoutResidualTest(unittest.TestCase):
+    def test_residual_head_output_layer_starts_at_zero(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=2,
+            concept_dim=4,
+            concept_evidence_readout_residual=True,
+        )
+
+        self.assertIsNotNone(model.concept_evidence_readout_residual_head)
+        final_layer = model.concept_evidence_readout_residual_head[-1]
+        torch.testing.assert_close(final_layer.weight, torch.zeros_like(final_layer.weight))
+        torch.testing.assert_close(final_layer.bias, torch.zeros_like(final_layer.bias))
+
+    def test_residual_rejects_invalid_trigger_config(self) -> None:
+        with self.assertRaisesRegex(ValueError, "min_seen_ratio"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                concept_evidence_readout_min_seen_ratio=1.1,
+            )
+        with self.assertRaisesRegex(ValueError, "max_logit"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                concept_evidence_readout_max_logit=0.0,
+            )
+
+    def test_residual_only_fires_for_fully_seen_multiconcept_targets(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=3,
+            concept_dim=4,
+            concept_evidence_readout_residual=True,
+            concept_evidence_readout_min_count=2,
+            concept_evidence_readout_min_seen_ratio=1.0,
+            concept_evidence_readout_max_logit=0.5,
+        )
+        head = model.concept_evidence_readout_residual_head
+        self.assertIsNotNone(head)
+        with torch.no_grad():
+            head[-1].weight.zero_()
+            head[-1].bias.fill_(1.0)
+
+        q_vectors = torch.tensor(
+            [
+                [1.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+        student_concept_evidence = torch.zeros(2, 3, 6, dtype=torch.float32)
+        student_concept_evidence[0, 0] = torch.tensor(
+            [3.0, 2.0, 1.0, 2.0 / 3.0, 1.3862944, 1.0],
+            dtype=torch.float32,
+        )
+        student_concept_evidence[0, 1] = torch.tensor(
+            [2.0, 2.0, 0.0, 1.0, 1.0986123, 1.0],
+            dtype=torch.float32,
+        )
+        student_concept_evidence[1, 0] = torch.tensor(
+            [4.0, 1.0, 3.0, 0.25, 1.6094379, 1.0],
+            dtype=torch.float32,
+        )
+
+        output = model._build_concept_evidence_readout_residual(
+            q_vectors=q_vectors,
+            target_student_ids=torch.tensor([0, 1, 0], dtype=torch.long),
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=(
+                torch.tensor([[2.0], [2.0], [1.0]], dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+            ),
+            difficulty=torch.zeros(3, dtype=torch.float32),
+        )
+
+        self.assertGreater(float(output[0]), 0.0)
+        torch.testing.assert_close(output[1:], torch.zeros(2, dtype=torch.float32))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -98,6 +98,10 @@ def load_model(
         evidence_behavior_gate_low_attempt_threshold=float(
             summary.get("evidence_behavior_gate_low_attempt_threshold", 3.0)
         ),
+        concept_evidence_readout_residual=bool(summary.get("concept_evidence_readout_residual", False)),
+        concept_evidence_readout_min_count=int(summary.get("concept_evidence_readout_min_count", 2)),
+        concept_evidence_readout_min_seen_ratio=float(summary.get("concept_evidence_readout_min_seen_ratio", 1.0)),
+        concept_evidence_readout_max_logit=float(summary.get("concept_evidence_readout_max_logit", 0.5)),
     )
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state)
