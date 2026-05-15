@@ -57,6 +57,7 @@
   - 实验 70: student-conditioned UKC `none_seen` readout sidecar 已进入 `master` 默认主线；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
   - 实验 76: deterministic concept evidence prior 已进入 `exp/trellis-trial` 伪主线默认运行口径；单 seed 相对实验 70 seed=2024 `AUC +0.005061`
   - 实验 78: concept evidence readout correction 已进入 `exp/trellis-trial` 伪主线默认运行口径；正常学习 seeds `2024/2025/2027` 相对实验 76 matched baseline 均值 `AUC +0.002542`
+  - 实验 79: single-concept scoped readout 已验证为低幅稳定化信号但不合入；正常学习 seeds `2024/2025/2027` 相对实验 78 matched baseline 均值仅 `AUC +0.000769`
 
 - 当前正向支线候选:
   - 实验 76
@@ -99,6 +100,7 @@
   - 实验 75: history-conditioned Q representation 虽然改善少量多知识点 slice 校准，但 single seed overall `AUC/ACC/RMSE/Brier` 回撤，且 `none_seen` 排序回撤，不扩 seed
   - 实验 76 的前两条可解释 evidence 结构已被拒绝: evidence-calibrated behavior gate 与 trainable target-local concept evidence readout 都没有形成 clean overall gain；保留的是 deterministic concept evidence prior 的 `min_count=1` 配置
   - 实验 78 扫描中，`lr=7e-4` 是 calibration rescue 但 AUC 不升；`prior_strength=1.0` 有排序信号但误差/校准副作用过大；`prior_strength=1.5` 与 `max_logit=0.6` 都不是 clean win
+  - 实验 79: single-concept scoped readout 的四 seed AUC/RMSE/Brier/ECE 均正向，但正常学习 seeds mean `AUC +0.000769`，信号不够明显，按低幅稳定化诊断记录，不合入伪主线
   - 详细指标见对应实验条目
 
 ## 已验证有效

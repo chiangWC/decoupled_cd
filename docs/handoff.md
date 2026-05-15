@@ -82,6 +82,12 @@
   - seed=2024 相对实验 76 伪主线: `AUC +0.002056`, `ACC +0.000171`, `RMSE -0.001082`, `Brier -0.000921`, `ECE -0.001524`
   - multi-seed: 正常学习 seeds `2024/2025/2027` 均值 `AUC +0.002542`, `ACC +0.002468`, `RMSE -0.001554`, `Brier -0.001325`, `ECE -0.000667`; 官方 `2024/2025/2026` 因 seed2026 baseline/candidate 同时退化，仅 AUC 均值保持正向
   - 判断: 这是同源 student-concept evidence readout correction，仍可解释；收益集中在 `concept_count=1` 与 `all_seen`，`none_seen` / `partial_seen` 回撤；后续把它作为伪主线对照，继续追踪 seed2026 退化风险
+- 实验 79 是实验 78 后的低幅稳定化诊断，不合入伪主线:
+  - branch: `exp/concept-evidence-readout-next`
+  - best config: 在实验 78 默认口径上追加 `--concept-evidence-readout-max-count 1`
+  - seed=2024 相对实验 78 伪主线: `AUC +0.000303`, `ACC +0.003521`, `RMSE -0.000900`, `Brier -0.000764`, `ECE -0.001791`
+  - multi-seed: 正常学习 seeds `2024/2025/2027` 均值 `AUC +0.000769`, `ACC +0.000787`, `RMSE -0.000613`, `Brier -0.000521`, `ECE -0.002283`; 四 seeds AUC/RMSE/Brier/ECE 均正向，seed2027 的 ACC 回撤
+  - 判断: 信号不够明显，用户决定收尾并切回伪主线；不把该结构合入 `exp/trellis-trial`
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
