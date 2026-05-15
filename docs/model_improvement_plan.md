@@ -57,6 +57,11 @@
   - 实验 76: deterministic concept evidence prior 已进入 `exp/trellis-trial` 伪主线默认运行口径；单 seed 相对实验 70 seed=2024 `AUC +0.005061`
 
 - 当前正向支线候选:
+  - 实验 78
+    - branch: `exp/concept-evidence-prior-next`
+    - 判断: 在实验 76 deterministic prior 伪主线上叠加同源 `concept_evidence_readout_residual(min_count=1, seen_ratio=1.0, max_logit=0.5)`，单 seed 相对伪主线 `AUC +0.002056`、`ACC +0.000171`、`RMSE -0.001082`、`Brier -0.000921`、`ECE -0.001524`
+    - 补充: 这仍然只使用 student-concept train-history evidence，经 Q 矩阵聚合，不使用 CF 或 student-exercise pair memory；主要风险是 `none_seen` 和小样本 `partial_seen` 回撤，下一步优先补 seed
+    - 详细指标见 `docs/experiments/078_concept_evidence_prior_readout_combo.md`
   - 实验 76
     - branch: `exp/evidence-calibrated-behavior-gate`
     - 判断: `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5` 已合入 `exp/trellis-trial` 伪主线；相对实验 70 seed=2024，`AUC +0.005061`、`ACC +0.000247`、`RMSE -0.001588`、`Brier -0.001355`，但 `ECE +0.002199`
@@ -96,6 +101,7 @@
   - 实验 71: 实验 70 主线 + 实验 61 target-exclusion 训练口径只带来单 seed `AUC +0.000950`，但 `RMSE/Brier/ECE` 回撤，不扩 seed
   - 实验 75: history-conditioned Q representation 虽然改善少量多知识点 slice 校准，但 single seed overall `AUC/ACC/RMSE/Brier` 回撤，且 `none_seen` 排序回撤，不扩 seed
   - 实验 76 的前两条可解释 evidence 结构已被拒绝: evidence-calibrated behavior gate 与 trainable target-local concept evidence readout 都没有形成 clean overall gain；保留的是 deterministic concept evidence prior 的 `min_count=1` 配置
+  - 实验 78 扫描中，`lr=7e-4` 是 calibration rescue 但 AUC 不升；`prior_strength=1.0` 有排序信号但误差/校准副作用过大；`prior_strength=1.5` 与 `max_logit=0.6` 都不是 clean win
   - 详细指标见对应实验条目
 
 ## 已验证有效

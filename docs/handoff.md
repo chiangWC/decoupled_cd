@@ -76,6 +76,11 @@
   - best config: `--concept-evidence-prior-residual --concept-evidence-prior-min-count 1 --concept-evidence-prior-min-seen-ratio 1.0 --concept-evidence-prior-max-logit 0.5 --concept-evidence-prior-strength 2.0 --concept-evidence-prior-confidence-cap 20.0`
   - seed=2024 相对当前主线: `AUC +0.005061`, `ACC +0.000247`, `RMSE -0.001588`, `Brier -0.001355`, `ECE +0.002199`
   - 判断: 明显 ranking/error 信号，主要风险是 ECE；下一步应补 seed，而不是继续扫 CF/ID side channel
+- 实验 78 在当前伪主线上找到下一条可解释单 seed 信号，尚未合入伪主线默认:
+  - branch: `exp/concept-evidence-prior-next`
+  - best config: 在实验 76 默认 prior 上追加 `--concept-evidence-readout-residual --concept-evidence-readout-min-count 1 --concept-evidence-readout-min-seen-ratio 1.0 --concept-evidence-readout-max-logit 0.5`
+  - seed=2024 相对实验 76 伪主线: `AUC +0.002056`, `ACC +0.000171`, `RMSE -0.001082`, `Brier -0.000921`, `ECE -0.001524`
+  - 判断: 这是同源 student-concept evidence readout correction，仍可解释；收益集中在 `concept_count=1` 与 `all_seen`，`none_seen` / `partial_seen` 回撤，下一步先补 seed 与 slice 风险
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
