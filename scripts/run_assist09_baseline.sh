@@ -39,6 +39,12 @@ fi
   --interpretable-readout-expert-adapter \
   --interpretable-readout-expert-count 3 \
   --student-conditioned-ukc-readout-residual \
+  --concept-evidence-prior-residual \
+  --concept-evidence-prior-min-count 1 \
+  --concept-evidence-prior-min-seen-ratio 1.0 \
+  --concept-evidence-prior-max-logit 0.5 \
+  --concept-evidence-prior-strength 2.0 \
+  --concept-evidence-prior-confidence-cap 20.0 \
   --seed "${SEED:-2024}" \
-  --output "${OUTPUT:-results/assist_09_mainline_300ep.json}" \
+  --output "${OUTPUT:-results/assist_09_pseudo_mainline_300ep.json}" \
   "$@"

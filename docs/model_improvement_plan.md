@@ -27,31 +27,39 @@
 
 ## 当前快照
 
-- 当前 `master` 正式主线执行约束见 `.trellis/spec/backend/experiment-protocol.md`。
-- 从这份台账的实验视角看，它对应实验 70 主线:
+- 当前 Trellis 伪主线执行约束见 `.trellis/spec/backend/experiment-protocol.md`；正式 `master` accepted state 仍按下方实验 70 参考理解。
+- 从这份台账的实验视角看，当前 `exp/trellis-trial` 伪主线对应实验 76 候选底座:
   - 以实验 34 为底座
   - 吸收实验 49 的 history-carrier pairwise interaction residual
   - 再吸收实验 51 的 interpretable readout expert residual
   - 再吸收实验 70 的 student-conditioned UKC `none_seen` readout sidecar
+  - 再吸收实验 76 的 deterministic concept evidence prior residual
 - 这里不再重复维护 Trellis spec 中的数据、图、超参数和 adapter 开关清单；需要确认默认运行口径时，优先查看 `.trellis/spec/backend/experiment-protocol.md`
-- 当前主线三 seed 参考均值:
+- `master` 正式主线仍以实验 70 三 seed 作为 accepted reference:
   - `test_auc = 0.765517`
   - `test_acc = 0.729104`
   - `test_rmse = 0.427350`
   - `test_brier = 0.182628`
   - `test_ece = 0.049044`
+- 当前 `exp/trellis-trial` 伪主线已合入实验 76 单 seed 候选:
+  - `seed=2024 test_auc = 0.770505`
+  - `seed=2024 test_acc = 0.730651`
+  - `seed=2024 test_rmse = 0.425893`
+  - `seed=2024 test_brier = 0.181385`
+  - `seed=2024 test_ece = 0.053886`
 - 当前结果报告默认主看 `AUC/ACC`
 - `RMSE/Brier/ECE/分桶校准` 默认作为次要指标
-- 当前冲刺目标是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对当前主线约需 `AUC +0.0125` 到 `+0.0145`
+- 当前冲刺目标是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对当前 `exp/trellis-trial` 伪主线 seed=2024 还需约 `AUC +0.0075` 到 `+0.0095`
 - 这个距离明显大于近期小 residual / sidecar 的常见边际收益，后续默认优先探索 representation-level 大结构改动；局部小改只有在支撑大结构假设时才优先考虑
 
 - 当前已吸收的最新结构更新:
   - 实验 70: student-conditioned UKC `none_seen` readout sidecar 已进入 `master` 默认主线；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
+  - 实验 76: deterministic concept evidence prior 已进入 `exp/trellis-trial` 伪主线默认运行口径；单 seed 相对实验 70 seed=2024 `AUC +0.005061`
 
 - 当前正向支线候选:
   - 实验 76
     - branch: `exp/evidence-calibrated-behavior-gate`
-    - 判断: `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5` 是新的可解释 CDM 单 seed 候选；相对当前主线 seed=2024，`AUC +0.005061`、`ACC +0.000247`、`RMSE -0.001588`、`Brier -0.001355`，但 `ECE +0.002199`
+    - 判断: `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5` 已合入 `exp/trellis-trial` 伪主线；相对实验 70 seed=2024，`AUC +0.005061`、`ACC +0.000247`、`RMSE -0.001588`、`Brier -0.001355`，但 `ECE +0.002199`
     - 补充: 收益来自确定性的 student-concept train-history mastery prior，不使用 CF 或 student-exercise ID side channel；下一步优先补 seed，而不是继续堆同类 residual
     - 详细指标见 `docs/experiments/076_interpretable_concept_evidence_residuals.md`
   - 实验 37

@@ -51,9 +51,9 @@ git push origin "$(git branch --show-current)"
 
 ---
 
-## Current Mainline Contract
+## Current Pseudo-Mainline Contract
 
-The current model mainline is experiment 70 as tracked by `docs/model_improvement_plan.md` and `docs/handoff.md`. Preserve this protocol unless the active task explicitly changes it:
+The current Trellis pseudo-mainline is experiment 76 on top of experiment 70 as tracked by `docs/model_improvement_plan.md` and `docs/handoff.md`. The accepted `master` model-mainline may still lag behind this worktree state. Preserve this protocol unless the active task explicitly changes it:
 
 - Dataset: `data/assist_09_ordered`.
 - Graph: `data/assist_09_ordered/transition_graph/propagation_graph.csv`.
@@ -69,6 +69,12 @@ The current model mainline is experiment 70 as tracked by `docs/model_improvemen
 - `gs_difficulty_adapter` is enabled.
 - `interpretable_readout_expert_adapter` is enabled with `interpretable_readout_expert_count = 3`.
 - `student_conditioned_ukc_readout_residual` is enabled.
+- `concept_evidence_prior_residual` is enabled with:
+  - `concept_evidence_prior_min_count = 1`
+  - `concept_evidence_prior_min_seen_ratio = 1.0`
+  - `concept_evidence_prior_max_logit = 0.5`
+  - `concept_evidence_prior_strength = 2.0`
+  - `concept_evidence_prior_confidence_cap = 20.0`
 - Structural comparisons default to 300 epochs.
 
 The official run script encodes this mainline:

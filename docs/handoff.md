@@ -25,7 +25,7 @@
 - 当前主线基座结果目录:
   - `results/exp_tkc_exercise_aggregation/`
   - 三 seed 均值约 `test_auc = 0.7597`
-- 当前正式主线结果目录:
+- 当前正式 `master` 主线结果目录:
   - 代码口径已吸收实验 70；详细三 seed 指标见 [070_student_conditioned_ukc_readout_sidecar.md](./experiments/070_student_conditioned_ukc_readout_sidecar.md)
   - 三 seed 均值:
     - `test_auc = 0.765517`
@@ -39,10 +39,14 @@
   - `RMSE -0.004038`
   - `Brier -0.003468`
   - `ECE -0.013232`
+- 当前 `exp/trellis-trial` 伪主线:
+  - 已合入实验 76 deterministic concept evidence prior
+  - seed=2024 指标: `test_auc = 0.770505`, `test_acc = 0.730651`, `test_rmse = 0.425893`, `test_brier = 0.181385`, `test_ece = 0.053886`
+  - 默认 run script `scripts/run_assist09_baseline.sh` 在 `exp/trellis-trial` 上已启用实验 76 prior 配置
 - 当前冲刺目标:
   - `test_auc ~= 0.780`
   - `0.778` 可视为接近可接受
-  - 相对当前正式主线约需 `AUC +0.0125` 到 `+0.0145`
+  - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0075` 到 `+0.0095`
   - 这个距离已经超出常规小 residual / sidecar 的边际收益，后续默认优先考虑 representation-level 大结构改动
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
@@ -67,7 +71,7 @@
 
 - 实验 51 的 full-trigger 三专家 readout residual 已吸收到当前 `master`。
 - 实验 70 的 student-conditioned UKC `none_seen` readout sidecar 已吸收到当前 `master`，它不替换 `TKC/UKC/student_state` 主状态，只作为 target-local cognitive-logit residual。
-- 实验 76 的 deterministic concept evidence prior 是新的可解释 CDM 单 seed 候选，尚未吸收到正式主线:
+- 实验 76 的 deterministic concept evidence prior 是新的可解释 CDM 单 seed 候选，已吸收到 `exp/trellis-trial` 伪主线，尚未吸收到正式 `master`:
   - branch: `exp/evidence-calibrated-behavior-gate`
   - best config: `--concept-evidence-prior-residual --concept-evidence-prior-min-count 1 --concept-evidence-prior-min-seen-ratio 1.0 --concept-evidence-prior-max-logit 0.5 --concept-evidence-prior-strength 2.0 --concept-evidence-prior-confidence-cap 20.0`
   - seed=2024 相对当前主线: `AUC +0.005061`, `ACC +0.000247`, `RMSE -0.001588`, `Brier -0.001355`, `ECE +0.002199`

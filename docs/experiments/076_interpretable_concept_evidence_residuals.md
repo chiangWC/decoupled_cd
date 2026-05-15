@@ -6,7 +6,7 @@
   - `2749d2c` evidence-calibrated behavior gate
   - `16a033e` concept evidence readout residual
   - `d5e85e6` deterministic concept evidence prior residual
-- 代码状态: 探索性实现保留在实验分支；尚未合入正式主线
+- 代码状态: 已合入 `exp/trellis-trial` 伪主线；尚未合入正式 `master`
 - 主线参考: `results/assist_09_mainline_300ep.json`
 
 ## 动机
@@ -98,6 +98,6 @@ Best result path:
 ## 结论
 
 - 可以停止本轮自由探索: 已出现明显增长信号。
-- `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5, prior_strength=2.0, confidence_cap=20` 是新的可解释 CDM 候选。
+- `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5, prior_strength=2.0, confidence_cap=20` 是新的可解释 CDM 候选，并已作为 `exp/trellis-trial` 伪主线默认运行口径。
 - 单 seed 已达到 `AUC +0.005061`，且 `ACC/RMSE/Brier` 同向；主要风险是 `ECE +0.002199`。
 - 下一步应优先补 2 个 seed，而不是继续扩同类 final-logit 变体。若多 seed 稳定，再考虑 calibration rescue，例如较小 `max_logit` + `min_count=1` 或温度/校准后处理；不要用 CF/ID side channel 解释这条收益。
