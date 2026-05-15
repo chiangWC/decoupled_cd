@@ -33,10 +33,13 @@ bash scripts/remote_exec.sh <command>
 
 ## Branch And Commit Rules
 
-- `master` holds only accepted mainline state.
+- `master` holds only accepted upstream model-mainline state.
+- `exp/trellis-trial` is the Trellis-enabled pseudo-mainline for this worktree. Treat it as the default base for future local experiments and Trellis-managed docs/spec/task updates.
 - Exploratory experiments use `exp/<short-name>` branches.
-- New structure experiments normally start from latest `master`.
-- Any validation that requires code changes should happen on a non-`master` branch first.
+- This worktree is Trellis-managed on `exp/trellis-trial` and its descendants. Do not create new experiment branches directly from `master` in this worktree, because `master` may not contain the Trellis files/hooks required for session detection.
+- New structure experiments normally continue from `exp/trellis-trial`, the current Trellis-enabled branch, or an `exp/*` branch descended from `exp/trellis-trial`, unless the user explicitly asks for a different base.
+- Use `master` as the accepted model-mainline reference, not as the default branch base for Trellis-managed experimentation.
+- Any validation that requires code changes should happen on a non-`master`, Trellis-enabled branch first.
 - Before remote execution, commit local changes and push the current branch:
 
 ```bash
@@ -44,7 +47,7 @@ git push origin "$(git branch --show-current)"
 ```
 
 - Do not push unverified exploratory experiment code directly into `master`.
-- Even when exploratory code is not merged, completed experiment conclusions should return to `master` as doc-only ledger updates when they affect future decisions.
+- Even when exploratory code is not merged, completed experiment conclusions should return to the Trellis-enabled experiment line as doc-only ledger updates when they affect future decisions.
 
 ---
 

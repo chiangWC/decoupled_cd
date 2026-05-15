@@ -18,7 +18,7 @@ Before modifying code in this repository:
 
 1. Read [Experiment Protocol](./experiment-protocol.md).
 2. Run `git status --short --branch` and confirm the current branch matches the intended work.
-3. For experiment code, start from current `master` unless the user explicitly asks to continue an existing experiment branch.
+3. For experiment code in this Trellis-managed worktree, start from `exp/trellis-trial` (the local pseudo-mainline) or a descendant Trellis-enabled branch unless the user explicitly asks for a different base. Do not create new experiment branches directly from `master`.
 4. Search before changing constants, CLI flags, defaults, data paths, model switches, or metric names.
 5. Read the relevant files from this directory:
    - [Directory Structure](./directory-structure.md)
