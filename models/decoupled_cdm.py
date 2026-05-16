@@ -55,6 +55,7 @@ class DecoupledCDM(nn.Module):
         evidence_behavior_gate_low_attempt_threshold: float = 3.0,
         concept_evidence_readout_residual: bool = False,
         concept_evidence_readout_min_count: int = 2,
+        concept_evidence_readout_max_count: int = 0,
         concept_evidence_readout_min_seen_ratio: float = 1.0,
         concept_evidence_readout_max_logit: float = 0.5,
         concept_evidence_prior_residual: bool = False,
@@ -81,6 +82,12 @@ class DecoupledCDM(nn.Module):
             raise ValueError("evidence_behavior_gate_low_attempt_threshold must be non-negative.")
         if concept_evidence_readout_min_count < 1:
             raise ValueError("concept_evidence_readout_min_count must be positive.")
+        if concept_evidence_readout_max_count < 0:
+            raise ValueError("concept_evidence_readout_max_count must be non-negative.")
+        if concept_evidence_readout_max_count > 0 and concept_evidence_readout_max_count < concept_evidence_readout_min_count:
+            raise ValueError(
+                "concept_evidence_readout_max_count must be zero or at least concept_evidence_readout_min_count."
+            )
         if concept_evidence_readout_min_seen_ratio < 0.0 or concept_evidence_readout_min_seen_ratio > 1.0:
             raise ValueError("concept_evidence_readout_min_seen_ratio must be in [0, 1].")
         if concept_evidence_readout_max_logit <= 0.0:
@@ -110,6 +117,7 @@ class DecoupledCDM(nn.Module):
         self.evidence_behavior_gate_low_attempt_threshold = float(evidence_behavior_gate_low_attempt_threshold)
         self.concept_evidence_readout_residual = concept_evidence_readout_residual
         self.concept_evidence_readout_min_count = int(concept_evidence_readout_min_count)
+        self.concept_evidence_readout_max_count = int(concept_evidence_readout_max_count)
         self.concept_evidence_readout_min_seen_ratio = float(concept_evidence_readout_min_seen_ratio)
         self.concept_evidence_readout_max_logit = float(concept_evidence_readout_max_logit)
         self.concept_evidence_prior_residual = concept_evidence_prior_residual
@@ -696,10 +704,14 @@ class DecoupledCDM(nn.Module):
         )
         residual = torch.tanh(self.concept_evidence_readout_residual_head(residual_inputs).squeeze(-1))
         residual = residual * self.concept_evidence_readout_max_logit
+        concept_count_values = concept_counts.squeeze(-1)
         trigger_mask = (
-            (concept_counts.squeeze(-1) >= float(self.concept_evidence_readout_min_count))
+            (concept_count_values >= float(self.concept_evidence_readout_min_count))
             & (seen_ratio.squeeze(-1) >= self.concept_evidence_readout_min_seen_ratio)
-        ).to(dtype=residual.dtype)
+        )
+        if self.concept_evidence_readout_max_count > 0:
+            trigger_mask = trigger_mask & (concept_count_values <= float(self.concept_evidence_readout_max_count))
+        trigger_mask = trigger_mask.to(dtype=residual.dtype)
         return residual * trigger_mask
 
     def _build_concept_evidence_prior_residual(

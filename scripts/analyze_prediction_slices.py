@@ -100,6 +100,7 @@ def load_model(
         ),
         concept_evidence_readout_residual=bool(summary.get("concept_evidence_readout_residual", False)),
         concept_evidence_readout_min_count=int(summary.get("concept_evidence_readout_min_count", 2)),
+        concept_evidence_readout_max_count=int(summary.get("concept_evidence_readout_max_count", 0)),
         concept_evidence_readout_min_seen_ratio=float(summary.get("concept_evidence_readout_min_seen_ratio", 1.0)),
         concept_evidence_readout_max_logit=float(summary.get("concept_evidence_readout_max_logit", 0.5)),
         concept_evidence_prior_residual=bool(summary.get("concept_evidence_prior_residual", False)),

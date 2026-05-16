@@ -108,6 +108,7 @@ def parse_args() -> argparse.Namespace:
         help="Enable a zero-init target-local student-concept evidence residual on the cognitive readout.",
     )
     parser.add_argument("--concept-evidence-readout-min-count", type=int, default=2)
+    parser.add_argument("--concept-evidence-readout-max-count", type=int, default=0)
     parser.add_argument("--concept-evidence-readout-min-seen-ratio", type=float, default=1.0)
     parser.add_argument("--concept-evidence-readout-max-logit", type=float, default=0.5)
     parser.add_argument(
@@ -145,6 +146,13 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--evidence-behavior-gate-low-attempt-threshold must be non-negative.")
     if args.concept_evidence_readout_min_count < 1:
         raise ValueError("--concept-evidence-readout-min-count must be positive.")
+    if args.concept_evidence_readout_max_count < 0:
+        raise ValueError("--concept-evidence-readout-max-count must be non-negative.")
+    if (
+        args.concept_evidence_readout_max_count > 0
+        and args.concept_evidence_readout_max_count < args.concept_evidence_readout_min_count
+    ):
+        raise ValueError("--concept-evidence-readout-max-count must be zero or at least --concept-evidence-readout-min-count.")
     if args.concept_evidence_readout_min_seen_ratio < 0.0 or args.concept_evidence_readout_min_seen_ratio > 1.0:
         raise ValueError("--concept-evidence-readout-min-seen-ratio must be in [0, 1].")
     if args.concept_evidence_readout_max_logit <= 0.0:
@@ -258,6 +266,7 @@ def main() -> None:
         evidence_behavior_gate_low_attempt_threshold=args.evidence_behavior_gate_low_attempt_threshold,
         concept_evidence_readout_residual=args.concept_evidence_readout_residual,
         concept_evidence_readout_min_count=args.concept_evidence_readout_min_count,
+        concept_evidence_readout_max_count=args.concept_evidence_readout_max_count,
         concept_evidence_readout_min_seen_ratio=args.concept_evidence_readout_min_seen_ratio,
         concept_evidence_readout_max_logit=args.concept_evidence_readout_max_logit,
         concept_evidence_prior_residual=args.concept_evidence_prior_residual,
@@ -296,6 +305,7 @@ def main() -> None:
         "evidence_behavior_gate_low_attempt_threshold": args.evidence_behavior_gate_low_attempt_threshold,
         "concept_evidence_readout_residual": args.concept_evidence_readout_residual,
         "concept_evidence_readout_min_count": args.concept_evidence_readout_min_count,
+        "concept_evidence_readout_max_count": args.concept_evidence_readout_max_count,
         "concept_evidence_readout_min_seen_ratio": args.concept_evidence_readout_min_seen_ratio,
         "concept_evidence_readout_max_logit": args.concept_evidence_readout_max_logit,
         "concept_evidence_prior_residual": args.concept_evidence_prior_residual,
