@@ -6,7 +6,7 @@
   - `2749d2c` evidence-calibrated behavior gate
   - `16a033e` concept evidence readout residual
   - `d5e85e6` deterministic concept evidence prior residual
-- 代码状态: 已合入 `exp/trellis-trial` 伪主线；尚未合入正式 `master`
+- 代码状态: 历史上曾合入 `exp/trellis-trial` 伪主线；`2026-05-16` 因 official multi-seed 暴露 `seed2026` 退化而从当前 trial 默认口径回退；尚未合入正式 `master`
 - 主线参考: `results/assist_09_mainline_300ep.json`
 
 ## 动机
@@ -123,3 +123,4 @@ Validation result paths:
 - 单 seed 已达到 `AUC +0.005061`，且 `ACC/RMSE/Brier` 同向；主要风险是 `ECE +0.002199`。
 - `2026-05-16` 补 official multi-seed 后，已确认 `seed2026` 的训练失败模式从实验 76 就存在，不是实验 78 才引入。`seed2026` 会在 `best_epoch=2` 退化到随机附近。
 - 因此实验 76 的 single-seed 突破不能直接当成 clean official multi-seed 结论；后续所有基于实验 76 的 promote 或 follow-up，都应把 `seed2026` 视作已知风险，而不是后继实验的新增问题。
+- 当前决策: 保留实验事实和代码开关，但不再作为 `exp/trellis-trial` 默认运行口径；当前 trial 默认已回退到实验 70 结构基线。

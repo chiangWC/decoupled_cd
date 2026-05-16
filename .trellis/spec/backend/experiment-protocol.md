@@ -54,7 +54,7 @@ git push origin "$(git branch --show-current)"
 
 ## Current Pseudo-Mainline Contract
 
-The current Trellis pseudo-mainline is experiment 78 on top of experiment 76 and experiment 70 as tracked by `docs/model_improvement_plan.md` and `docs/handoff.md`. The accepted `master` model-mainline may still lag behind this worktree state. Preserve this protocol unless the active task explicitly changes it:
+The current Trellis pseudo-mainline has been rolled back to the experiment 70 structure baseline after experiment 76 / 78 exposed an unrecovered `seed2026` degeneration in official multi-seed validation. The accepted `master` model-mainline uses the same structure reference. Preserve this protocol unless the active task explicitly changes it:
 
 - Dataset: `data/assist_09_ordered`.
 - Graph: `data/assist_09_ordered/transition_graph/propagation_graph.csv`.
@@ -70,16 +70,6 @@ The current Trellis pseudo-mainline is experiment 78 on top of experiment 76 and
 - `gs_difficulty_adapter` is enabled.
 - `interpretable_readout_expert_adapter` is enabled with `interpretable_readout_expert_count = 3`.
 - `student_conditioned_ukc_readout_residual` is enabled.
-- `concept_evidence_readout_residual` is enabled with:
-  - `concept_evidence_readout_min_count = 1`
-  - `concept_evidence_readout_min_seen_ratio = 1.0`
-  - `concept_evidence_readout_max_logit = 0.5`
-- `concept_evidence_prior_residual` is enabled with:
-  - `concept_evidence_prior_min_count = 1`
-  - `concept_evidence_prior_min_seen_ratio = 1.0`
-  - `concept_evidence_prior_max_logit = 0.5`
-  - `concept_evidence_prior_strength = 2.0`
-  - `concept_evidence_prior_confidence_cap = 20.0`
 - Structural comparisons default to 300 epochs.
 
 The official run script encodes this mainline:

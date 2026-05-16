@@ -40,13 +40,13 @@
   - `Brier -0.003468`
   - `ECE -0.013232`
 - 当前 `exp/trellis-trial` 伪主线:
-  - 已合入实验 78 deterministic concept evidence prior + concept evidence readout correction
-  - seed=2024 指标: `test_auc = 0.772562`, `test_acc = 0.730823`, `test_rmse = 0.424811`, `test_brier = 0.180464`, `test_ece = 0.052361`
-  - 默认 run script `scripts/run_assist09_baseline.sh` 在 `exp/trellis-trial` 上已启用实验 78 prior + readout 配置
+  - 已回退到实验 70 结构基线；实验 76 / 78 的 evidence stack 不再作为当前默认 trial 口径
+  - seed=2024 指标: `test_auc = 0.765368`, `test_acc = 0.728558`, `test_rmse = 0.427880`, `test_brier = 0.183082`, `test_ece = 0.052010`
+  - 默认 run script `scripts/run_assist09_baseline.sh` 在 `exp/trellis-trial` 上仅保留实验 70 结构配置
 - 当前冲刺目标:
   - `test_auc ~= 0.780`
   - `0.778` 可视为接近可接受
-  - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0055` 到 `+0.0075`
+  - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0125` 到 `+0.0145`
   - 这个距离已经超出常规小 residual / sidecar 的边际收益，后续默认优先考虑 representation-level 大结构改动
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
@@ -71,17 +71,17 @@
 
 - 实验 51 的 full-trigger 三专家 readout residual 已吸收到当前 `master`。
 - 实验 70 的 student-conditioned UKC `none_seen` readout sidecar 已吸收到当前 `master`，它不替换 `TKC/UKC/student_state` 主状态，只作为 target-local cognitive-logit residual。
-- 实验 76 的 deterministic concept evidence prior 是新的可解释 CDM 单 seed 候选，已吸收到 `exp/trellis-trial` 伪主线，尚未吸收到正式 `master`:
+- 实验 76 的 deterministic concept evidence prior 是历史上的可解释 CDM 单 seed 候选，但已从当前 `exp/trellis-trial` 伪主线回退，尚未吸收到正式 `master`:
   - branch: `exp/evidence-calibrated-behavior-gate`
   - best config: `--concept-evidence-prior-residual --concept-evidence-prior-min-count 1 --concept-evidence-prior-min-seen-ratio 1.0 --concept-evidence-prior-max-logit 0.5 --concept-evidence-prior-strength 2.0 --concept-evidence-prior-confidence-cap 20.0`
   - seed=2024 相对当前主线: `AUC +0.005061`, `ACC +0.000247`, `RMSE -0.001588`, `Brier -0.001355`, `ECE +0.002199`
-  - 判断: 明显 ranking/error 信号，主要风险是 ECE；下一步应补 seed，而不是继续扫 CF/ID side channel
-- 实验 78 在当前伪主线上找到下一条可解释信号，已合入 `exp/trellis-trial` 伪主线默认，尚未合入正式 `master`:
+  - 判断: 单 seed ranking/error 信号明显，但 official multi-seed 暴露 `seed2026` 在实验 76 本体上直接退化；因此不再作为当前 trial 默认组件
+- 实验 78 在实验 76 底座上找到过下一条可解释信号，但已随实验 76 一并从当前 `exp/trellis-trial` 伪主线回退，尚未合入正式 `master`:
   - branch: `exp/concept-evidence-prior-next`
   - best config: 在实验 76 默认 prior 上追加 `--concept-evidence-readout-residual --concept-evidence-readout-min-count 1 --concept-evidence-readout-min-seen-ratio 1.0 --concept-evidence-readout-max-logit 0.5`
   - seed=2024 相对实验 76 伪主线: `AUC +0.002056`, `ACC +0.000171`, `RMSE -0.001082`, `Brier -0.000921`, `ECE -0.001524`
   - multi-seed: 正常学习 seeds `2024/2025/2027` 均值 `AUC +0.002542`, `ACC +0.002468`, `RMSE -0.001554`, `Brier -0.001325`, `ECE -0.000667`; 官方 `2024/2025/2026` 因 seed2026 baseline/candidate 同时退化，仅 AUC 均值保持正向
-  - 判断: 这是同源 student-concept evidence readout correction，仍可解释；收益集中在 `concept_count=1` 与 `all_seen`，`none_seen` / `partial_seen` 回撤；`2026-05-16` 已复跑确认 `seed2026` candidate 与历史结果逐项一致，因此后续把它作为伪主线对照时应把 seed2026 退化视为已确认失败模式
+  - 判断: 这是同源 student-concept evidence readout correction，仍可解释；但它建立在已确认退化的实验 76 trial 底座上，`2026-05-16` 复跑也确认 `seed2026` candidate 与历史结果逐项一致，因此当前不再作为默认 trial 组件
 - 实验 79 是实验 78 后的低幅稳定化诊断，不合入伪主线:
   - branch: `exp/concept-evidence-readout-next`
   - best config: 在实验 78 默认口径上追加 `--concept-evidence-readout-max-count 1`
@@ -158,10 +158,10 @@
 - 具体分支以 `git branch -a` 为准；路线定位先看 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的摘要。只有已知实验号、分支名或要按状态筛选时，再查 [experiment_index.jsonl](./experiment_index.jsonl)，必要时打开 `docs/experiments/` 下的 detail 文件。
 - 若继续优化 calibration-oriented 训练协议，优先从 `exp/training-modes` 出发。
 - 若继续复核当前主线训练口径，优先参考 `exp/mainline-protocol-sweep`；当前最强候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，但只作为候选，不替换 `master` 默认口径。
-- 若继续推进当前最强结构候选，优先留在 `exp/target-concept-interaction-qrepr`：当前最高优先级组合是 `--concept-evidence-readout-max-count 1` 加 `--target-concept-interaction-qrepr-adapter --target-concept-interaction-min-count 3 --target-concept-interaction-max-count 3 --target-concept-interaction-max-scale 0.25`，其四 seed 相对实验 78 matched baseline mean `AUC +0.001326`，正常学习 seeds mean `AUC +0.001728`。
+- 若继续复访实验 80，优先留在 `exp/target-concept-interaction-qrepr`，但先把核心假设 rebase 到实验 70 结构基线；不要直接把建立在实验 78 底座上的组合当作当前 trial promote 候选。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
-- 若继续实验 76，优先留在当前 `exp/evidence-calibrated-behavior-gate` 分支或从 `exp/trellis-trial` 后代切新分支，补 `concept_evidence_prior_residual` 的 additional seeds；不要把已拒绝的 behavior gate/readout residual 子线作为默认继续方向。
+- 若继续实验 76，默认按“历史候选待重构”处理：可以留在当前 `exp/evidence-calibrated-behavior-gate` 分支复访，但不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；若要继续，应优先设计避免 `seed2026` 退化的新约束或新触发方式。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先按实验号查 `docs/experiment_index.jsonl` 的 `status/reason_tags/verdict`，再按需打开对应 detail，确认是否真的出现了新的 slice 假设或机制假设后再决定是否重开。
 
 ## 当前关键文件

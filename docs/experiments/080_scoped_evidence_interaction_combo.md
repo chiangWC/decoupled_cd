@@ -2,7 +2,7 @@
 
 - 分支: `exp/target-concept-interaction-qrepr`
 - base: `exp/trellis-trial` pseudo-mainline `4e27684`
-- 代码状态: candidate branch，已完成 matched multi-seed 验证，暂未 promote 到 `exp/trellis-trial`
+- 代码状态: candidate branch，已完成 matched multi-seed 验证；由于实验 76/78 已从当前 trial 默认口径回退，这条候选暂不作为当前 `exp/trellis-trial` 直接 promote 目标，后续若继续应先在实验 70 结构基线上重验证
 - 对照: 实验 78 伪主线默认 `concept_evidence_prior + concept_evidence_readout(min_count=1, max_count=0, seen_ratio=1.0, max_logit=0.5)`
 
 ## 动机
@@ -122,5 +122,5 @@ Slice result paths:
   - `seed2027` 的 `ACC/RMSE/ECE` 出现轻微反向
   - `seed2026` baseline/candidate 仍同步退化，不提供真正的语义区分
 - 当前决策:
-  - 保留为高优先级候选，不立即 promote 到 `exp/trellis-trial`
-  - 若下一步继续，优先围绕这条组合做 very small confirmation sweep 或 matched promotion check，而不是回到无约束的 residual 扩线
+  - 保留为历史正向候选，但由于它建立在已回退的实验 78 底座上，暂不作为当前 `exp/trellis-trial` 直接 promote 目标
+  - 若下一步继续，先把核心假设 rebase 到实验 70 结构基线，再做 matched confirmation sweep；不要直接沿已回退的 evidence stack 扩线
