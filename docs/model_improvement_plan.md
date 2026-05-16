@@ -58,8 +58,14 @@
   - 实验 76: deterministic concept evidence prior 已进入 `exp/trellis-trial` 伪主线默认运行口径；单 seed 相对实验 70 seed=2024 `AUC +0.005061`
   - 实验 78: concept evidence readout correction 已进入 `exp/trellis-trial` 伪主线默认运行口径；正常学习 seeds `2024/2025/2027` 相对实验 76 matched baseline 均值 `AUC +0.002542`
   - 实验 79: single-concept scoped readout 已验证为低幅稳定化信号但不合入；正常学习 seeds `2024/2025/2027` 相对实验 78 matched baseline 均值仅 `AUC +0.000769`
+  - 实验 80: `single-only readout + exact-3 target interaction qrepr` 已形成当前最高优先级候选；四 seed 相对实验 78 matched baseline mean `AUC +0.001326`，正常学习 seeds `2024/2025/2027` mean `AUC +0.001728`
 
 - 当前正向支线候选:
+  - 实验 80
+    - branch: `exp/target-concept-interaction-qrepr`
+    - 判断: 这是当前最值得继续的结构候选。关键不是单个新模块，而是按 `concept_count` 分治: `concept_count=1` 用 single-only concept-evidence readout，`concept_count=3` 用 bounded target-concept interaction qrepr，其余样本保持当前主链
+    - 补充: 四 seed 相对实验 78 matched baseline mean `AUC +0.001326`、`ACC +0.001551`、`RMSE/Brier/ECE` 同向；正常学习 seeds `2024/2025/2027` mean `AUC +0.001728`。`seed2025` 是 strongest win；`seed2027` 有 `ACC/RMSE/ECE` 轻微反向；`seed2026` baseline/candidate 仍同步退化
+    - 详细指标见 `docs/experiments/080_scoped_evidence_interaction_combo.md`
   - 实验 76
     - branch: `exp/evidence-calibrated-behavior-gate`
     - 判断: `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5` 已合入 `exp/trellis-trial` 伪主线；相对实验 70 seed=2024，`AUC +0.005061`、`ACC +0.000247`、`RMSE -0.001588`、`Brier -0.001355`，但 `ECE +0.002199`
@@ -101,6 +107,10 @@
   - 实验 76 的前两条可解释 evidence 结构已被拒绝: evidence-calibrated behavior gate 与 trainable target-local concept evidence readout 都没有形成 clean overall gain；保留的是 deterministic concept evidence prior 的 `min_count=1` 配置
   - 实验 78 扫描中，`lr=7e-4` 是 calibration rescue 但 AUC 不升；`prior_strength=1.0` 有排序信号但误差/校准副作用过大；`prior_strength=1.5` 与 `max_logit=0.6` 都不是 clean win
   - 实验 79: single-concept scoped readout 的四 seed AUC/RMSE/Brier/ECE 均正向，但正常学习 seeds mean `AUC +0.000769`，信号不够明显，按低幅稳定化诊断记录，不合入伪主线
+  - 实验 80 之前的几条单模块近邻已经判清:
+    - `target_concept_interaction_qrepr` 单独最好点是 `exact-3, scale=0.25`，相对实验 78 seed=2024 `AUC +0.000423`
+    - `no-expert` 与 `no-expert + exact-3` 都没有放大这条信号，因此当前不把“实验 51 expert 压制”作为这条候选的主结论
+    - 真正形成 clean candidate 的是实验 79 single-only readout 与 exact-3 interaction 的组合，而不是任何一条单模块独立成立
   - 详细指标见对应实验条目
 
 ## 已验证有效

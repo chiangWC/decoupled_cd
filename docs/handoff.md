@@ -158,6 +158,7 @@
 - 具体分支以 `git branch -a` 为准；路线定位先看 [docs/model_improvement_plan.md](./model_improvement_plan.md) 的摘要。只有已知实验号、分支名或要按状态筛选时，再查 [experiment_index.jsonl](./experiment_index.jsonl)，必要时打开 `docs/experiments/` 下的 detail 文件。
 - 若继续优化 calibration-oriented 训练协议，优先从 `exp/training-modes` 出发。
 - 若继续复核当前主线训练口径，优先参考 `exp/mainline-protocol-sweep`；当前最强候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，但只作为候选，不替换 `master` 默认口径。
+- 若继续推进当前最强结构候选，优先留在 `exp/target-concept-interaction-qrepr`：当前最高优先级组合是 `--concept-evidence-readout-max-count 1` 加 `--target-concept-interaction-qrepr-adapter --target-concept-interaction-min-count 3 --target-concept-interaction-max-count 3 --target-concept-interaction-max-scale 0.25`，其四 seed 相对实验 78 matched baseline mean `AUC +0.001326`，正常学习 seeds mean `AUC +0.001728`。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
 - 若继续实验 76，优先留在当前 `exp/evidence-calibrated-behavior-gate` 分支或从 `exp/trellis-trial` 后代切新分支，补 `concept_evidence_prior_residual` 的 additional seeds；不要把已拒绝的 behavior gate/readout residual 子线作为默认继续方向。
