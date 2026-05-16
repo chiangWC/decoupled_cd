@@ -48,6 +48,7 @@ git push origin "$(git branch --show-current)"
 
 - Do not push unverified exploratory experiment code directly into `master`.
 - Even when exploratory code is not merged, completed experiment conclusions should return to the Trellis-enabled experiment line as doc-only ledger updates when they affect future decisions.
+- If those ledger updates are first written on a descendant `exp/*` branch, do not leave them there only. Before wrapping up, sync the doc-only ledger commits back onto `exp/trellis-trial` and push `origin/exp/trellis-trial`, because new sessions bootstrap from `exp/trellis-trial` rather than from arbitrary descendant branches.
 
 ---
 
@@ -130,3 +131,4 @@ When an experiment finishes:
 - Add or update a detail doc when seed metrics, diagnostics, commands, or result paths matter.
 - Update `docs/handoff.md` only when the current mainline, default priority, or recommended branch changes.
 - Keep long metrics in detail docs; keep ledger summaries compressed.
+- If any of the ledger files above were updated on a non-`exp/trellis-trial` branch and the new content changes future-session judgment, cherry-pick or otherwise sync those doc-only updates onto `exp/trellis-trial` before considering the experiment wrapped up.
