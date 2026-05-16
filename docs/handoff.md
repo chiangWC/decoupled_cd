@@ -40,13 +40,13 @@
   - `Brier -0.003468`
   - `ECE -0.013232`
 - 当前 `exp/trellis-trial` 伪主线:
-  - 已回退到实验 70 结构基线；实验 76 / 78 的 evidence stack 不再作为当前默认 trial 口径
-  - seed=2024 指标: `test_auc = 0.765368`, `test_acc = 0.728558`, `test_rmse = 0.427880`, `test_brier = 0.183082`, `test_ece = 0.052010`
-  - 默认 run script `scripts/run_assist09_baseline.sh` 在 `exp/trellis-trial` 上仅保留实验 70 结构配置
+  - 已从纯 experiment 70 结构基线 promote 到 `experiment 70 + experiment 81 single-only concept-evidence readout`
+  - seed=2024 指标: `test_auc = 0.767478`, `test_acc = 0.734248`, `test_rmse = 0.425562`, `test_brier = 0.181103`, `test_ece = 0.046972`
+  - 默认 run script `scripts/run_assist09_baseline.sh` 已默认开启 `concept_evidence_readout_residual(min_count=1, max_count=1, min_seen_ratio=1.0, max_logit=0.5)`
 - 当前冲刺目标:
   - `test_auc ~= 0.780`
   - `0.778` 可视为接近可接受
-  - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0125` 到 `+0.0145`
+  - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0105` 到 `+0.0125`
   - 这个距离已经超出常规小 residual / sidecar 的边际收益，后续默认优先考虑 representation-level 大结构改动
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
@@ -88,6 +88,11 @@
   - seed=2024 相对实验 78 伪主线: `AUC +0.000303`, `ACC +0.003521`, `RMSE -0.000900`, `Brier -0.000764`, `ECE -0.001791`
   - multi-seed: 正常学习 seeds `2024/2025/2027` 均值 `AUC +0.000769`, `ACC +0.000787`, `RMSE -0.000613`, `Brier -0.000521`, `ECE -0.002283`; 四 seeds AUC/RMSE/Brier/ECE 均正向，seed2027 的 ACC 回撤
   - 判断: 信号不够明显，用户决定收尾并切回伪主线；不把该结构合入 `exp/trellis-trial`
+- 实验 81 是当前 `exp/trellis-trial` 语义下最新的强正向候选，建立在已回退后的 experiment 70 底座上:
+  - branch: `exp/exp70-evidence-readout-scope`
+  - best config: `--concept-evidence-readout-residual --concept-evidence-readout-min-count 1 --concept-evidence-readout-max-count 1 --concept-evidence-readout-min-seen-ratio 1.0 --concept-evidence-readout-max-logit 0.5`
+  - three-seed 相对 experiment 70 official baseline mean: `AUC +0.004617`, `ACC +0.004275`, `RMSE -0.002404`, `Brier -0.002049`, `ECE -0.001043`
+  - 判断: 这条线现已 promote 到 `exp/trellis-trial` 默认口径；详细 seed 结果放在 [081_exp70_single_only_evidence_readout_rebase.md](./experiments/081_exp70_single_only_evidence_readout_rebase.md)。`B49 seed=2024` 交叉复验保留为 promote 后 follow-up
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
@@ -159,6 +164,7 @@
 - 若继续优化 calibration-oriented 训练协议，优先从 `exp/training-modes` 出发。
 - 若继续复核当前主线训练口径，优先参考 `exp/mainline-protocol-sweep`；当前最强候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，但只作为候选，不替换 `master` 默认口径。
 - 若继续复访实验 80，优先留在 `exp/target-concept-interaction-qrepr`，但先把核心假设 rebase 到实验 70 结构基线；不要直接把建立在实验 78 底座上的组合当作当前 trial promote 候选。
+- 若继续当前最强 evidence readout 候选，优先留在 `exp/exp70-evidence-readout-scope`；默认下一步是补 `B49 seed=2024` 交叉复验，而不是重新开始自由扫结构。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
 - 若继续实验 76，默认按“历史候选待重构”处理：可以留在当前 `exp/evidence-calibrated-behavior-gate` 分支复访，但不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；若要继续，应优先设计避免 `seed2026` 退化的新约束或新触发方式。

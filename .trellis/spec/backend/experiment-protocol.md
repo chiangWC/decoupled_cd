@@ -29,6 +29,8 @@ bash scripts/remote_exec.sh <command>
 
 `scripts/remote_exec.sh` verifies that the remote branch exists, remote branch `HEAD` matches local `HEAD`, and the remote worktree is clean before running the command.
 
+- Do not launch multiple `scripts/remote_exec.sh` commands against the same remote repository at the same time. Each invocation checks git status and runs `git switch` on `xph-pc`; concurrent calls can race on `.git/index.lock` before the actual training or test command starts.
+
 ---
 
 ## Branch And Commit Rules
@@ -54,7 +56,7 @@ git push origin "$(git branch --show-current)"
 
 ## Current Pseudo-Mainline Contract
 
-The current Trellis pseudo-mainline has been rolled back to the experiment 70 structure baseline after experiment 76 / 78 exposed an unrecovered `seed2026` degeneration in official multi-seed validation. The accepted `master` model-mainline uses the same structure reference. Preserve this protocol unless the active task explicitly changes it:
+The current Trellis pseudo-mainline is the experiment 70 structure baseline plus experiment 81's single-only concept-evidence readout, promoted after exp70-based multi-seed validation. The accepted `master` model-mainline still uses the experiment 70 structure reference. Preserve this protocol unless the active task explicitly changes it:
 
 - Dataset: `data/assist_09_ordered`.
 - Graph: `data/assist_09_ordered/transition_graph/propagation_graph.csv`.
@@ -70,6 +72,7 @@ The current Trellis pseudo-mainline has been rolled back to the experiment 70 st
 - `gs_difficulty_adapter` is enabled.
 - `interpretable_readout_expert_adapter` is enabled with `interpretable_readout_expert_count = 3`.
 - `student_conditioned_ukc_readout_residual` is enabled.
+- `concept_evidence_readout_residual` is enabled with `min_count = 1`, `max_count = 1`, `min_seen_ratio = 1.0`, `max_logit = 0.5`.
 - Structural comparisons default to 300 epochs.
 
 The official run script encodes this mainline:

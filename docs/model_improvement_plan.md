@@ -28,11 +28,12 @@
 ## 当前快照
 
 - 当前 Trellis 伪主线执行约束见 `.trellis/spec/backend/experiment-protocol.md`；正式 `master` accepted state 仍按下方实验 70 参考理解。
-- 从这份台账的实验视角看，当前 `exp/trellis-trial` 伪主线已回退到实验 70 结构底座:
+- 从这份台账的实验视角看，当前 `exp/trellis-trial` 伪主线是实验 70 结构底座再叠加实验 81 的 single-only concept-evidence readout:
   - 以实验 34 为底座
   - 吸收实验 49 的 history-carrier pairwise interaction residual
   - 再吸收实验 51 的 interpretable readout expert residual
   - 再吸收实验 70 的 student-conditioned UKC `none_seen` readout sidecar
+  - 再吸收实验 81 的 `concept_evidence_readout_residual(min_count=1, max_count=1)`
 - 这里不再重复维护 Trellis spec 中的数据、图、超参数和 adapter 开关清单；需要确认默认运行口径时，优先查看 `.trellis/spec/backend/experiment-protocol.md`
 - `master` 正式主线仍以实验 70 三 seed 作为 accepted reference:
   - `test_auc = 0.765517`
@@ -40,15 +41,15 @@
   - `test_rmse = 0.427350`
   - `test_brier = 0.182628`
   - `test_ece = 0.049044`
-- 当前 `exp/trellis-trial` 默认口径已回退到实验 70 结构基线:
-  - `seed=2024 test_auc = 0.765368`
-  - `seed=2024 test_acc = 0.728558`
-  - `seed=2024 test_rmse = 0.427880`
-  - `seed=2024 test_brier = 0.183082`
-  - `seed=2024 test_ece = 0.052010`
+- 当前 `exp/trellis-trial` 默认口径已 promote 到实验 81:
+  - `seed=2024 test_auc = 0.767478`
+  - `seed=2024 test_acc = 0.734248`
+  - `seed=2024 test_rmse = 0.425562`
+  - `seed=2024 test_brier = 0.181103`
+  - `seed=2024 test_ece = 0.046972`
 - 当前结果报告默认主看 `AUC/ACC`
 - `RMSE/Brier/ECE/分桶校准` 默认作为次要指标
-- 当前冲刺目标是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对当前 `exp/trellis-trial` 伪主线 seed=2024 还需约 `AUC +0.0125` 到 `+0.0145`
+- 当前冲刺目标是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对当前 `exp/trellis-trial` 伪主线 seed=2024 还需约 `AUC +0.0105` 到 `+0.0125`
 - 这个距离明显大于近期小 residual / sidecar 的常见边际收益，后续默认优先探索 representation-level 大结构改动；局部小改只有在支撑大结构假设时才优先考虑
 
 - 当前已吸收的最新结构更新:
@@ -57,6 +58,7 @@
   - 实验 78: concept evidence readout correction 曾进入 `exp/trellis-trial` 伪主线默认运行口径，但它建立在已回退的实验 76 底座上，现已随实验 76 一并回退
   - 实验 79: single-concept scoped readout 已验证为低幅稳定化信号但不合入；正常学习 seeds `2024/2025/2027` 相对实验 78 matched baseline 均值仅 `AUC +0.000769`
   - 实验 80: `single-only readout + exact-3 target interaction qrepr` 在实验 78 底座上形成过正向候选，但当前需先 rebase 到实验 70 结构基线，不能直接当作 trial promote 候选
+  - 实验 81: `single-only` concept-evidence readout 已在 experiment 70 当前底座上完成三 seed 重验证，并已 promote 到 `exp/trellis-trial` 默认口径；相对 experiment 70 official three-seed baseline mean `AUC +0.004617`、`ACC +0.004275`、`RMSE/Brier/ECE` 同向改善
 
 - 当前正向支线候选:
   - 实验 80
@@ -104,6 +106,7 @@
     - `target_concept_interaction_qrepr` 单独最好点是 `exact-3, scale=0.25`，相对实验 78 seed=2024 `AUC +0.000423`
     - `no-expert` 与 `no-expert + exact-3` 都没有放大这条信号，因此当前不把“实验 51 expert 压制”作为这条候选的主结论
     - 真正形成 clean candidate 的是实验 79 single-only readout 与 exact-3 interaction 的组合，而不是任何一条单模块独立成立
+  - 实验 81: 同一个 `single-only` readout 假设 rebased 到 experiment 70 后，不再是低幅稳定化信号，而是当前底座上的 clear multi-seed win，并已 promote 到当前 pseudo-mainline；后续若继续，优先补 `B49 seed=2024` 交叉复验或在此底座上复访 experiment 80 的 rebase
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -297,11 +300,11 @@
 通用协作、运行与分支规则沿用 `.trellis/spec/backend/experiment-protocol.md`；这里仅补充历史台账导出的默认优先级:
 
 1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。默认目标仍是冲 `test_auc ~= 0.780`；`0.778` 可视为接近可接受。
-2. 实验 76 / 78 已因 official multi-seed 暴露 `seed2026` 失败模式而从伪主线默认口径回退；下一步默认从实验 70 结构基线或其后代继续自由探索，不要继续把实验 76 / 78 当作当前 trial 的既定主线。
+2. 实验 76 / 78 已因 official multi-seed 暴露 `seed2026` 失败模式而从伪主线默认口径回退；实验 81 已作为 exp70-based follow-up promote 到当前 `exp/trellis-trial`。下一步默认不再继续自由扫新 readout 小改，而是围绕实验 81 补 `B49 seed=2024` 交叉复验，或在这个新底座上继续更大的结构假设。
 3. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益。实验 76 说明单知识点 student-concept train-history mastery prior 在单 seed 上有大 ranking 信号，但这条线当前只能作为历史候选或待重构假设，不能直接视作当前主线组件。普通小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
 4. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
 5. 默认优先探索更大一级、真正改变表示瓶颈的模块，例如学生状态形成、target-conditioned history、受约束的图/Q 结构学习，或明确标注为 hybrid 的 side channel；普通 sidecar / residual 默认不进入这类 sweep。
-6. 若继续沿实验 51/70 的 readout 底座推进，默认保留实验 51 full-trigger expert 与实验 70 `none_seen` sidecar；但诊断 2 已提示实验 51 可能压制部分后续 clean structure 的边际表现。对 readout / `q_repr` / target-conditioned history / student-state 形成这类容易受实验 51 full-trigger expert 影响的 representation-level 改动，仍从 `exp/trellis-trial` 伪主线或其后代实现，但首轮实验设计默认至少包含 `B49 seed=2024` 与当前 `Exp70 seed=2024` 两格；不要只跑当前主线单格后直接下结论。若其它新结构在最新主线上表现为轻微负向、但语义足够干净，可优先追加一次实验 49 底座单 seed 交叉复验，再决定是否淘汰。
+6. 若继续沿实验 51/70 的 readout 底座推进，默认保留实验 51 full-trigger expert 与实验 70 `none_seen` sidecar；但诊断 2 已提示实验 51 可能压制部分后续 clean structure 的边际表现。对 readout / `q_repr` / target-conditioned history / student-state 形成这类容易受实验 51 full-trigger expert 影响的 representation-level 改动，仍从 `exp/trellis-trial` 伪主线或其后代实现，但首轮实验设计默认至少包含 `B49 seed=2024` 与当前 `Exp70 seed=2024` 两格；不要只跑当前主线单格后直接下结论。实验 81 已先按 exp70-based three-seed strong gain promote，`B49` 交叉复验转为 promote 后的确认项。
 7. 对已经系统复访但未形成 clean overall gain 的 readout / propagation / ranking-loss 路线，默认不再高优先级继续；只有在出现明确新假设、且机制上明显区别于已失败版本时，才考虑重开。
 8. 若用户明确要继续训练协议优化，当前优先候选是实验 37 与实验 61 两条支线；否则默认优先继续模型结构改动。
 9. 判断是否值得继续时，默认主看 `AUC/ACC`；局部推进仍需至少 `1e-3` 量级改善，冲 `0.78` 的大结构单 seed 若连 `AUC +0.002` 左右信号都没有，通常不优先扩 seed。`RMSE/Brier/ECE` 与分桶校准默认只用于判断副作用。

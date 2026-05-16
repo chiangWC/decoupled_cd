@@ -39,6 +39,11 @@ fi
   --interpretable-readout-expert-adapter \
   --interpretable-readout-expert-count 3 \
   --student-conditioned-ukc-readout-residual \
+  --concept-evidence-readout-residual \
+  --concept-evidence-readout-min-count 1 \
+  --concept-evidence-readout-max-count 1 \
+  --concept-evidence-readout-min-seen-ratio 1.0 \
+  --concept-evidence-readout-max-logit 0.5 \
   --seed "${SEED:-2024}" \
   --output "${OUTPUT:-results/assist_09_pseudo_mainline_300ep.json}" \
   "$@"
