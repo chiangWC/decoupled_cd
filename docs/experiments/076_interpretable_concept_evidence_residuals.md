@@ -85,6 +85,27 @@ Best result path:
   - `results/concept_evidence_prior/assist_09_seed2024_min1_seen1_max05_strength2_cap20_slices.json`
   - `results/concept_evidence_prior/assist_09_mainline_slices_for_prior_compare.json`
 
+## Multi-seed 验证
+
+Official seeds `2024/2025/2026`，对照仍是实验 70 当前 `master` 主线。
+
+| seed | exp70 AUC | exp76 AUC | delta AUC | exp70 ACC | exp76 ACC | delta ACC | exp70 RMSE | exp76 RMSE | delta RMSE | exp70 ECE | exp76 ECE | delta ECE | note |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 2024 | 0.765368 | 0.770505 | +0.005137 | 0.728558 | 0.730651 | +0.002093 | 0.427880 | 0.425893 | -0.001987 | 0.052010 | 0.053886 | +0.001876 | strong normal |
+| 2025 | 0.766528 | 0.764808 | -0.001720 | 0.729605 | 0.730385 | +0.000780 | 0.426968 | 0.428430 | +0.001462 | 0.049967 | 0.055701 | +0.005734 | weak regression |
+| 2026 | 0.764655 | 0.502933 | -0.261722 | 0.729148 | 0.517384 | -0.211764 | 0.427201 | 0.517206 | +0.090005 | 0.045154 | 0.168078 | +0.122924 | degenerate, best_epoch=2 |
+
+Official means `2024/2025/2026`:
+
+- exp70: `AUC 0.765517`, `ACC 0.729104`, `RMSE 0.427350`, `Brier 0.182628`, `ECE 0.049044`
+- exp76: `AUC 0.679415`, `ACC 0.659473`, `RMSE 0.457176`, `Brier 0.210813`, `ECE 0.092555`
+- delta: `AUC -0.086102`, `ACC -0.069631`, `RMSE +0.029826`, `Brier +0.028185`, `ECE +0.043511`
+
+Validation result paths:
+
+- `results/exp76_multiseed_validation/assist_09_seed2025_min1_seen1_max05_strength2_cap20_300ep.json`
+- `results/exp76_multiseed_validation/assist_09_seed2026_min1_seen1_max05_strength2_cap20_300ep.json`
+
 ## Slice 对照
 
 相对当前主线 seed=2024:
@@ -100,4 +121,5 @@ Best result path:
 - 可以停止本轮自由探索: 已出现明显增长信号。
 - `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5, prior_strength=2.0, confidence_cap=20` 是新的可解释 CDM 候选，并已作为 `exp/trellis-trial` 伪主线默认运行口径。
 - 单 seed 已达到 `AUC +0.005061`，且 `ACC/RMSE/Brier` 同向；主要风险是 `ECE +0.002199`。
-- 下一步应优先补 2 个 seed，而不是继续扩同类 final-logit 变体。若多 seed 稳定，再考虑 calibration rescue，例如较小 `max_logit` + `min_count=1` 或温度/校准后处理；不要用 CF/ID side channel 解释这条收益。
+- `2026-05-16` 补 official multi-seed 后，已确认 `seed2026` 的训练失败模式从实验 76 就存在，不是实验 78 才引入。`seed2026` 会在 `best_epoch=2` 退化到随机附近。
+- 因此实验 76 的 single-seed 突破不能直接当成 clean official multi-seed 结论；后续所有基于实验 76 的 promote 或 follow-up，都应把 `seed2026` 视作已知风险，而不是后继实验的新增问题。

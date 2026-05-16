@@ -55,7 +55,7 @@
 
 - 当前已吸收的最新结构更新:
   - 实验 70: student-conditioned UKC `none_seen` readout sidecar 已进入 `master` 默认主线；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
-  - 实验 76: deterministic concept evidence prior 已进入 `exp/trellis-trial` 伪主线默认运行口径；单 seed 相对实验 70 seed=2024 `AUC +0.005061`
+  - 实验 76: deterministic concept evidence prior 已进入 `exp/trellis-trial` 伪主线默认运行口径；单 seed 相对实验 70 seed=2024 `AUC +0.005061`，但 `2026-05-16` 补 official multi-seed 后确认 `seed2026` 从实验 76 开始就会退化
   - 实验 78: concept evidence readout correction 已进入 `exp/trellis-trial` 伪主线默认运行口径；正常学习 seeds `2024/2025/2027` 相对实验 76 matched baseline 均值 `AUC +0.002542`
   - 实验 79: single-concept scoped readout 已验证为低幅稳定化信号但不合入；正常学习 seeds `2024/2025/2027` 相对实验 78 matched baseline 均值仅 `AUC +0.000769`
   - 实验 80: `single-only readout + exact-3 target interaction qrepr` 已形成当前最高优先级候选；四 seed 相对实验 78 matched baseline mean `AUC +0.001326`，正常学习 seeds `2024/2025/2027` mean `AUC +0.001728`
@@ -69,7 +69,7 @@
   - 实验 76
     - branch: `exp/evidence-calibrated-behavior-gate`
     - 判断: `concept_evidence_prior_residual` 的 `min_count=1, seen_ratio=1.0, max_logit=0.5` 已合入 `exp/trellis-trial` 伪主线；相对实验 70 seed=2024，`AUC +0.005061`、`ACC +0.000247`、`RMSE -0.001588`、`Brier -0.001355`，但 `ECE +0.002199`
-    - 补充: 收益来自确定性的 student-concept train-history mastery prior，不使用 CF 或 student-exercise ID side channel；下一步优先补 seed，而不是继续堆同类 residual
+    - 补充: `2026-05-16` 已补 official seeds `2025/2026`，确认 `seed2026` 会在实验 76 本体上直接退化到 `best_epoch=2 / test_auc≈0.503`；因此这条线的 seed 风险起点是实验 76，不是实验 78
     - 详细指标见 `docs/experiments/076_interpretable_concept_evidence_residuals.md`
   - 实验 37
     - branch: `exp/training-modes`

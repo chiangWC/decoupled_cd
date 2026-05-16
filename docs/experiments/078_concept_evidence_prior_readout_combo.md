@@ -81,10 +81,12 @@ Result paths:
 - `results/concept_evidence_prior_next/assist_09_seed2026_prior_default_plus_readout_min1_max05_300ep.json`
 - `results/concept_evidence_prior_next/assist_09_seed2027_exp76_baseline_300ep.json`
 - `results/concept_evidence_prior_next/assist_09_seed2027_prior_default_plus_readout_min1_max05_300ep.json`
+- `results/seed2026_validation/assist_09_seed2026_exp78_rerun.json`
 
 ## 结论
 
 - 已出现下一条明显增长信号: 在实验 76 deterministic prior 上叠加同源 `concept_evidence_readout_residual(min_count=1, seen_ratio=1.0, max_logit=0.5)`，单 seed 相对伪主线 `AUC +0.002056`，且 `ACC/RMSE/Brier/ECE` 同向。
 - 这条仍然具有可解释性: 只使用 train-history student-concept evidence，经 Q 矩阵聚合到目标题知识点，不使用 CF 或 student-exercise pair memory。
 - Multi-seed 后，正常学习的 `2024/2025/2027` 三个 seed 全向改善，支持该信号不是单 seed 偶然；官方 `2024/2025/2026` 三 seed 因 seed2026 baseline/candidate 同时退化，只能说明 AUC 均值仍正，但 ACC/ECE 均值不 clean。
+- `2026-05-16` 对 `seed2026` 的 exp78 candidate 复跑与历史结果逐项完全一致: `best_epoch=1`, `test_auc=0.5028039712218827`, `test_acc=0.5114464594949476`, `test_rmse=0.5192177580984236`, `test_brier=0.26958708032475315`, `test_ece=0.17312081488190587`。这确认 exp78 的 `seed2026` 退化不是偶发波动。
 - 主要风险是收益集中在单知识点/all_seen 大样本，`none_seen` 与小样本 `partial_seen` 回撤；另一个风险是 seed2026 退化暴露出当前伪主线/候选对随机初始化仍有训练失败模式。该配置已按用户要求合入伪主线默认，后续探索应把它作为新对照并继续跟踪 seed 退化风险。

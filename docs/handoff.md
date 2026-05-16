@@ -81,7 +81,7 @@
   - best config: 在实验 76 默认 prior 上追加 `--concept-evidence-readout-residual --concept-evidence-readout-min-count 1 --concept-evidence-readout-min-seen-ratio 1.0 --concept-evidence-readout-max-logit 0.5`
   - seed=2024 相对实验 76 伪主线: `AUC +0.002056`, `ACC +0.000171`, `RMSE -0.001082`, `Brier -0.000921`, `ECE -0.001524`
   - multi-seed: 正常学习 seeds `2024/2025/2027` 均值 `AUC +0.002542`, `ACC +0.002468`, `RMSE -0.001554`, `Brier -0.001325`, `ECE -0.000667`; 官方 `2024/2025/2026` 因 seed2026 baseline/candidate 同时退化，仅 AUC 均值保持正向
-  - 判断: 这是同源 student-concept evidence readout correction，仍可解释；收益集中在 `concept_count=1` 与 `all_seen`，`none_seen` / `partial_seen` 回撤；后续把它作为伪主线对照，继续追踪 seed2026 退化风险
+  - 判断: 这是同源 student-concept evidence readout correction，仍可解释；收益集中在 `concept_count=1` 与 `all_seen`，`none_seen` / `partial_seen` 回撤；`2026-05-16` 已复跑确认 `seed2026` candidate 与历史结果逐项一致，因此后续把它作为伪主线对照时应把 seed2026 退化视为已确认失败模式
 - 实验 79 是实验 78 后的低幅稳定化诊断，不合入伪主线:
   - branch: `exp/concept-evidence-readout-next`
   - best config: 在实验 78 默认口径上追加 `--concept-evidence-readout-max-count 1`
