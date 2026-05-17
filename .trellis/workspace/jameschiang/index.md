@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-05-16
+- **Total Sessions**: 3
+- **Last Active**: 2026-05-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~74 | Active |
+| `journal-1.md` | ~107 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-05-17 | Sync experiment ledger back to trial | `059276c` | `exp/trellis-trial` |
 | 2 | 2026-05-16 | Promote Exp70 Single-Only Evidence Readout | `765bc68`, `cf56641` | `exp/trellis-trial` |
 | 1 | 2026-05-12 | Finalize Trellis initialization | `15d035a` | `exp/trellis-trial` |
 <!-- @@@/auto:session-history -->

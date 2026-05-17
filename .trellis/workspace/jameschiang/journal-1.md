@@ -72,3 +72,36 @@ Added concept_evidence_readout_max_count, validated the exp70 single-only eviden
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Sync experiment ledger back to trial
+
+**Date**: 2026-05-17
+**Task**: Sync experiment ledger back to trial
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Committed experiment 82 and 83 ledger docs, synced the doc-only ledger commit back onto exp/trellis-trial, and restored trial as the durable bootstrap source for future experiment branches.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `059276c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
