@@ -105,4 +105,4 @@ Result paths live under `results/expert_output_modulation/`, using the config na
 - The usable prior cap boundary is below `0.1875`: seed2027 at `max_logit=0.1875` still loses `AUC -0.005042`, while `max_logit=0.125` is only weak/mixed and not a promotion signal.
 - The likely failure is not just multi-concept scope, final-position placement, or overconfidence. Single-only, final-logit, eval-only, and global cognitive scaling each fail at least one critical seed.
 - Do not continue micro-tuning `concept_evidence_prior_*` on exp81 unless a new mechanism explains seed2026 specifically.
-- For future work, prioritize representation/state formation changes or a different expert architecture rather than more deterministic evidence-prior residual variants.
+- Follow-up note: experiment 85 tried the immediate state/qrepr formation variants from this conclusion; state rewrite and target evidence attention qrepr were also rejected. Future work should use a materially different expert architecture or training objective, not the same target-local evidence signal moved to another residual surface.
