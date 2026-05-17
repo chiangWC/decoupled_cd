@@ -92,6 +92,69 @@ bash scripts/run_assist09_baseline.sh
 
 ---
 
+## Hybrid Stacker Evaluation Contract
+
+### 1. Scope / Trigger
+
+- Trigger: `scripts/evaluate_ensemble.py` supports opt-in `stack_*` combiners and `--stack-feature-set hybrid`.
+- This is an explicitly hybrid evaluator, not a default CDM training or promotion path.
+
+### 2. Signatures
+
+```bash
+python3 scripts/evaluate_ensemble.py \
+  --summaries <summary.json> [<summary.json> ...] \
+  --combiner average|stack_logistic|stack_hist_gradient|stack_gradient_boosting|stack_extra_trees \
+  --stack-feature-set predictions|hybrid \
+  --average prob|logit \
+  --split valid|test \
+  --output <result.json>
+```
+
+### 3. Contracts
+
+- `--summaries` must point to training summary JSON files with `best_checkpoint_path` and matching split/data paths.
+- `average` controls member prediction features: raw probability or logit-transformed probability.
+- `stack_*` combiners fit only on the validation split, then evaluate on `--split`.
+- `--stack-feature-set hybrid` may add train-history tabular features from student, exercise, student-exercise, concept, and student-concept aggregates.
+- Hybrid feature construction must use `train` history only; target split labels are used only as labels for the combiner fit/evaluation, not as feature inputs.
+
+### 4. Validation & Error Matrix
+
+- Missing `best_checkpoint_path` -> `ValueError`.
+- Missing checkpoint file -> `FileNotFoundError`.
+- Weight count mismatch -> `ValueError`.
+- `--stack-feature-set hybrid` without train-history feature state in stack code -> `ValueError`.
+- Valid/test history containing target rows -> existing `_validate_history_visibility` `ValueError`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `stack_hist_gradient --stack-feature-set hybrid` trained on valid and evaluated on test, with all feature values derived from train history plus checkpoint predictions.
+- Base: `combiner=average --stack-feature-set predictions`, which is ordinary checkpoint ensembling without learned hybrid features.
+- Bad: fitting a combiner on test labels, or deriving student/exercise/concept aggregates from valid/test target rows.
+
+### 6. Tests Required
+
+- Add or keep a unit test proving target labels do not affect hybrid history features.
+- Keep remote `py_compile` and focused `unittest` verification before reporting evaluator changes.
+- Experiment conclusions from hybrid stackers must record the combiner, feature set, member summaries, output path, and valid/test metrics.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```text
+Report a hybrid stacker result as if it were the default CDM model or `run_assist09_baseline.sh` output.
+```
+
+Correct:
+
+```text
+Report it as an opt-in hybrid evaluator candidate and require multi-seed validation or a separate model-integration task before promotion.
+```
+
+---
+
 ## Experiment Design Rules
 
 - New hypotheses should control one structural factor first.
