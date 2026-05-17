@@ -115,6 +115,11 @@
   - hybrid ID residual probe: 最好只有 `AUC +0.000218`，但 RMSE/Brier/ECE 改善；不推广为主线候选
   - deterministic evidence prior `max_logit=0.25`: seed2024 达到 `test_auc 0.773261`，相对当前 exp81 伪主线 `+0.005783`
   - 判断: `0.005` 级 overall seed 信号已确认，但它来自实验 84 已知有 seed2026/seed2027 负尾的 evidence-prior 家族；后续如果继续，优先做稳定化/重参数化，而不是直接合入 raw prior 或继续微调 `max_logit`。详细结果见 [087_growth_signal_exploration.md](./experiments/087_growth_signal_exploration.md)。
+- 实验 88 已测试 evidence-prior 稳定门控:
+  - branch: `exp/evidence-prior-stability-gate`
+  - best gate: `concept_evidence_prior_min_confidence=0.75`、`concept_evidence_prior_min_abs_mastery=0.5`、`max_logit=0.25`
+  - 结果: seed2024 保留 `AUC +0.005049`；seed2027 从 raw prior `-0.011524` 收到约 `-0.000889`；seed2026 仍约 `-0.001683`；三 seed 均值约 `AUC +0.000826`
+  - 判断: 这是 evidence prior 最强稳定化诊断，但不是 trial candidate；不要继续附近 threshold / max_logit / single-only / eval-only 小扫，下一步必须换成新的训练交互或可靠性估计机制。详细结果见 [088_evidence_prior_stability_gate.md](./experiments/088_evidence_prior_stability_gate.md)。
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
@@ -190,7 +195,7 @@
 - 若继续 `q-local` / readout expert 这条 representation-level 线，不要直接把 `q-local` 叠回当前带 `expert` 的 trial，也不要继续扫 coverage gate、bounded expert、post-expert replay、target-evidence state/qrepr 前移或 contrastive common-mode removal；先看 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)、[084_exp81_expert_output_modulation.md](./experiments/084_exp81_expert_output_modulation.md)、[085_exp81_state_and_attention_qrepr_adapters.md](./experiments/085_exp81_state_and_attention_qrepr_adapters.md)、[086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)，只有出现 materially different 的 expert architecture / training objective 假设时再重开。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
-- 若继续实验 76，默认按“历史候选待重构”处理：可以留在当前 `exp/evidence-calibrated-behavior-gate` 分支复访，但不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；若要继续，应优先设计避免 `seed2026` 退化的新约束或新触发方式。
+- 若继续实验 76 / deterministic evidence prior，默认按“历史候选待重构”处理：不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；实验 88 已证明 confidence/mastery 门控只能稳定到低幅均值正向，后续必须有新的训练交互或可靠性估计机制才值得重开。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先按实验号查 `docs/experiment_index.jsonl` 的 `status/reason_tags/verdict`，再按需打开对应 detail，确认是否真的出现了新的 slice 假设或机制假设后再决定是否重开。
 
 ## 当前关键文件
