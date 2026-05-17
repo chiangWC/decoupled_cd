@@ -110,6 +110,11 @@
   - 机制: 保留当前 expert gate，但在 gate mixing 前对每个样本的 expert scores 做均值中心化，移除 common-mode additive capacity
   - 三 seed 相对当前 exp81 伪主线均值: `AUC +0.000256`、`ACC -0.000818`、`RMSE -0.000104`、`Brier -0.000088`、`ECE +0.000233`
   - 判断: seed2024 有 `AUC +0.002000` 的诊断信号，但 seed2025/2026 回撤；不合入 trial，不继续同类 centering / common-mode removal 小改。详细结果见 [086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)。
+- 实验 87 已按“直到出现 `0.005` 级增长信号”做自由探索:
+  - branch: `exp/hybrid-id-residual-growth`
+  - hybrid ID residual probe: 最好只有 `AUC +0.000218`，但 RMSE/Brier/ECE 改善；不推广为主线候选
+  - deterministic evidence prior `max_logit=0.25`: seed2024 达到 `test_auc 0.773261`，相对当前 exp81 伪主线 `+0.005783`
+  - 判断: `0.005` 级 overall seed 信号已确认，但它来自实验 84 已知有 seed2026/seed2027 负尾的 evidence-prior 家族；后续如果继续，优先做稳定化/重参数化，而不是直接合入 raw prior 或继续微调 `max_logit`。详细结果见 [087_growth_signal_exploration.md](./experiments/087_growth_signal_exploration.md)。
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
