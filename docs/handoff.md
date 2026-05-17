@@ -47,6 +47,7 @@
   - `test_auc ~= 0.780`
   - `0.778` 可视为接近可接受
   - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0105` 到 `+0.0125`
+  - 本轮修正后的停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`；不能只和最低的 seed2024 比
   - 这个距离已经超出常规小 residual / sidecar 的边际收益，后续默认优先考虑 representation-level 大结构改动
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
@@ -124,6 +125,12 @@
   - model-agreement gate margin1.0 有 seed2024 `AUC +0.005566`，但 ACC/RMSE/Brier/ECE 明显变差，seed2027 `AUC 0.771672` 也不如实验 88 best gate
   - `train_only`、positive-only、negative-only 都没过 seed2024 `+0.005` 阈值
   - 判断: 不继续 deterministic prior mask/scope 小改；若重开 evidence prior，必须改成 representation/objective 层消费 student-concept evidence。详细结果见 [089_evidence_prior_interaction_scopes.md](./experiments/089_evidence_prior_interaction_scopes.md)。
+- 实验 91 已给出本轮修正口径下的强增长信号:
+  - branch: `exp/evidence-prior-calibrated-readout`
+  - 机制: 四个 seed2024 checkpoint 预测 + train-history tabular features，由 valid-trained hybrid stacker 组合
+  - best: hist-gradient combiner `test_auc 0.787288`，相对 exp81 high-water seed2027 `0.772682` 为 `+0.014606`
+  - 次要指标也同向: `ACC +0.011380`、`RMSE -0.010642`、`Brier -0.008919`、`ECE -0.044329`
+  - 判断: 已满足用户要求的 high-water `+0.004` 停止条件；但它是明确 hybrid evaluator，不是默认 CDM run script 组件，下一步要多 seed 验证或把同一特征族整合到 readout/objective。详细结果见 [091_corrected_high_water_hybrid_stacker.md](./experiments/091_corrected_high_water_hybrid_stacker.md)。
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
@@ -198,6 +205,7 @@
 - 若继续当前最强 evidence readout 候选，优先留在 `exp/exp70-evidence-readout-scope`；默认下一步是补 `B49 seed=2024` 交叉复验，而不是重新开始自由扫结构。
 - 若继续 `q-local` / readout expert 这条 representation-level 线，不要直接把 `q-local` 叠回当前带 `expert` 的 trial，也不要继续扫 coverage gate、bounded expert、post-expert replay、target-evidence state/qrepr 前移或 contrastive common-mode removal；先看 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)、[084_exp81_expert_output_modulation.md](./experiments/084_exp81_expert_output_modulation.md)、[085_exp81_state_and_attention_qrepr_adapters.md](./experiments/085_exp81_state_and_attention_qrepr_adapters.md)、[086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)，只有出现 materially different 的 expert architecture / training objective 假设时再重开。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
+- 若继续本轮已过线的 `0.78+` hybrid 信号，优先留在 `exp/evidence-prior-calibrated-readout`，先按 [091_corrected_high_water_hybrid_stacker.md](./experiments/091_corrected_high_water_hybrid_stacker.md) 做多 seed stacker 验证；不要把它误记为已 promote 的纯 CDM 主线。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
 - 若继续实验 76 / deterministic evidence prior，默认按“历史候选待重构”处理：不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；实验 88/89 已证明 confidence/mastery、agreement、train-only、direction-only 等 deterministic mask/scope 只能稳定到低幅或单 seed AUC tradeoff，后续必须有 representation/objective 层的新机制才值得重开。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先按实验号查 `docs/experiment_index.jsonl` 的 `status/reason_tags/verdict`，再按需打开对应 detail，确认是否真的出现了新的 slice 假设或机制假设后再决定是否重开。

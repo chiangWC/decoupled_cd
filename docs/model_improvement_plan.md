@@ -50,6 +50,7 @@
 - 当前结果报告默认主看 `AUC/ACC`
 - `RMSE/Brier/ECE/分桶校准` 默认作为次要指标
 - 当前冲刺目标是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对当前 `exp/trellis-trial` 伪主线 seed=2024 还需约 `AUC +0.0105` 到 `+0.0125`
+- 用户已修正本轮停止口径: seed2024 是当前 exp81 伪主线最低项，不能只和它比；当前 high-water 是 seed2027 `AUC 0.772682`，`+0.004` 停止阈值是 `0.776682`
 - 这个距离明显大于近期小 residual / sidecar 的常见边际收益，后续默认优先探索 representation-level 大结构改动；局部小改只有在支撑大结构假设时才优先考虑
 
 - 当前已吸收的最新结构更新:
@@ -70,8 +71,15 @@
     - 但实验 84 已证明同族配置有 seed2026/seed2027 负尾，因此该结果只作为 admission signal；下一步若继续，应解决 evidence prior 的稳定性，而不是直接合入或继续微调 max_logit
   - 实验 88: 在 deterministic evidence prior 上增加 high-confidence / high-mastery 门控后，`conf0.75 abs0.50 max0.25` 能保留 seed2024 `AUC +0.005049`，并把 seed2027 raw `-0.011524` 负尾收敛到约 `-0.000889`；但 seed2026 仍约 `-0.001683`，三 seed 均值只有 `AUC +0.000826`，因此记录为 stabilization diagnostic，不合入 trial，不继续附近 threshold / max_logit 微扫
   - 实验 89: 继续测试 evidence prior 的 model-agreement gate、`train_only` 应用和 positive/negative direction scope；agreement margin1.0 虽有 seed2024 `AUC +0.005566`，但 ACC/RMSE/Brier/ECE 明显变差且 seed2027 不如实验 88，其他方向都没过 seed2024 阈值，因此不再继续 deterministic prior mask/scope 小改
+  - 实验 90: 重新核对本轮增长信号口径后，raw deterministic prior max0.25 只是在 matched seed2024 上复现 `+0.005783`，相对 high-water seed2027 `0.772682` 仅 `+0.000579`，不满足修正后的 `+0.004` 停止条件
+  - 实验 91: valid-trained hybrid stacker 首次真正越过修正 high-water 停止线；4 个 seed2024 checkpoint 预测加 train-history tabular features，经 hist-gradient combiner 得到 `test_auc 0.787288`，相对 high-water `+0.014606`，且 `ACC/RMSE/Brier/ECE` 同向明显改善；这不是默认 CDM 主线组件，需作为明确 hybrid 候选做多 seed 验证或再整合进 readout/objective
 
 - 当前正向支线候选:
+  - 实验 91
+    - branch: `exp/evidence-prior-calibrated-readout`
+    - 判断: 这是当前最强 `0.78+` 级增长信号，已经满足修正后的 high-water `+0.004` 停止条件；但它是 valid-trained hybrid stacker，不是 `scripts/run_assist09_baseline.sh` 默认模型结构
+    - 补充: 下一步优先做多 seed hybrid stacker 验证，并决定保留为 optional hybrid evaluator，还是把同一组 train-history 特征转成可训练 readout/objective 机制
+    - 详细指标见 `docs/experiments/091_corrected_high_water_hybrid_stacker.md`
   - 实验 37
     - branch: `exp/training-modes`
     - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前主线，不作为默认 `master` 训练口径
@@ -121,6 +129,7 @@
   - 实验 87: hybrid ID residual 不是突破路径；deterministic evidence prior `max_logit=0.25` 再次确认 seed2024 `AUC +0.005783` 的强 admission signal，但仍受实验 84 的跨 seed 负尾约束，不作为 trial promote 候选
   - 实验 88: evidence-prior high-confidence/high-mastery gate 是目前最好的稳定化诊断，能保留 seed2024 `+0.005` 且大幅收窄 seed2027 负尾；但三 seed 均值只有 `AUC +0.000826` 且坏 seeds 未转正，不合入 trial，不继续同类确定性 residual scope/threshold 小扫
   - 实验 89: evidence-prior agreement / train-only / direction-only 三类补救均未优于实验 88；尤其 agreement margin1.0 只是用误差和校准换 seed2024 AUC，seed2027 还略差，因此后续不要继续 deterministic prior mask/scope 小改
+  - 实验 90: raw prior 的 matched-seed admission signal 不是修正 high-water breakthrough；不要再把 seed2024 低参考当作停止条件
   - 详细指标见对应实验条目
 
 ## 已验证有效
