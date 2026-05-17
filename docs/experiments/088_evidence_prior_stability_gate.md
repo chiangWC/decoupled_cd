@@ -91,6 +91,31 @@ Best stabilized three-seed AUC mean delta:
 (+0.005049 - 0.001683 - 0.000889) / 3 = +0.000826
 ```
 
+## Comparison With Experiment 84
+
+Against experiment 84 raw `cognitive max0.25`, experiment 88 trades a small amount of seed2024 upside for much better tail control:
+
+| config | seed2024 AUC / delta | seed2026 AUC / delta | seed2027 AUC / delta | 2024/2026/2027 mean AUC | mean delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| exp84 raw max0.25 | 0.773261 / +0.005783 | 0.767959 / -0.003304 | 0.761157 / -0.011524 | 0.767459 | -0.003015 |
+| exp88 conf0.75 abs0.50 max0.25 | 0.772527 / +0.005049 | 0.769580 / -0.001683 | 0.771792 / -0.000889 | 0.771300 | +0.000826 |
+
+Net relative to exp84 raw max0.25:
+
+- Seed2024: `-0.000734` AUC, still keeps the `+0.005` admission signal.
+- Seed2026: `+0.001621` AUC.
+- Seed2027: `+0.010635` AUC, removing most of the raw negative tail.
+- Three-seed mean: `+0.003841` AUC.
+
+Against experiment 84 lower cap `cognitive max0.125`, experiment 88 is not a clear AUC improvement:
+
+| config | seed2024 AUC / delta | seed2026 AUC / delta | seed2027 AUC / delta | 2024/2026/2027 mean AUC | mean delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| exp84 max0.125 | 0.772614 / +0.005136 | 0.770272 / -0.000991 | 0.771382 / -0.001300 | 0.771423 | +0.000948 |
+| exp88 conf0.75 abs0.50 max0.25 | 0.772527 / +0.005049 | 0.769580 / -0.001683 | 0.771792 / -0.000889 | 0.771300 | +0.000826 |
+
+So the main exp88 value is not beating the best exp84 low-cap AUC mean. Its value is diagnostic: it shows high-confidence/high-mastery gating can preserve the seed2024 signal while specifically fixing most of the exp84 raw max0.25 seed2027 tail. It remains below promotion threshold because the stabilized bad seeds are still slightly negative.
+
 ## Decision
 
 - Do not promote this branch into `exp/trellis-trial`.
