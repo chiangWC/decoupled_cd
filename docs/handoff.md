@@ -48,6 +48,7 @@
   - `0.778` 可视为接近可接受
   - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0105` 到 `+0.0125`
   - 本轮修正后的停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`；不能只和最低的 seed2024 比
+  - 实验 92 已用固定等权 train-history evidence output-logit prior 达到 seed2027 `test_auc 0.776813`，超过该阈值；但它是 readout-prior diagnostic，误差/校准回撤明显，不能直接当作默认纯 cognitive CDM 主线
   - 这个距离已经超出常规小 residual / sidecar 的边际收益，后续默认优先考虑 representation-level 大结构改动
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
@@ -131,6 +132,12 @@
   - best: hist-gradient combiner `test_auc 0.787288`，相对 exp81 high-water seed2027 `0.772682` 为 `+0.014606`
   - 次要指标也同向: `ACC +0.011380`、`RMSE -0.010642`、`Brier -0.008919`、`ECE -0.044329`
   - 判断: 已满足用户要求的 high-water `+0.004` 停止条件；但它是明确 hybrid evaluator，不是默认 CDM run script 组件，下一步要多 seed 验证或把同一特征族整合到 readout/objective。详细结果见 [091_corrected_high_water_hybrid_stacker.md](./experiments/091_corrected_high_water_hybrid_stacker.md)。
+- 实验 92 已给出非 hybrid 的过线 readout-prior 诊断信号:
+  - branch: `exp/evidence-prior-calibrated-readout`
+  - 机制: student/exercise/target-concept/global-concept/mastery 五项 train-history evidence 固定等权 `0.22`，作为 `history_evidence_logit_prior_location=output` 的 final output-logit prior
+  - seed2027 high-water checkpoint 上结果: `test_auc 0.776813`，相对 `0.772682` 为 `+0.004132`
+  - 副作用: `ACC -0.000285`、`RMSE +0.004140`、`Brier +0.003531`、`ECE +0.029074`
+  - 判断: 满足 corrected high-water AUC 停止线，但只是 interpretable deterministic readout-prior diagnostic；不要合入默认 run script，也不要把它称为纯 cognitive CDM。详细结果见 [092_history_evidence_output_logit_prior.md](./experiments/092_history_evidence_output_logit_prior.md)。
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`

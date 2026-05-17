@@ -73,8 +73,14 @@
   - 实验 89: 继续测试 evidence prior 的 model-agreement gate、`train_only` 应用和 positive/negative direction scope；agreement margin1.0 虽有 seed2024 `AUC +0.005566`，但 ACC/RMSE/Brier/ECE 明显变差且 seed2027 不如实验 88，其他方向都没过 seed2024 阈值，因此不再继续 deterministic prior mask/scope 小改
   - 实验 90: 重新核对本轮增长信号口径后，raw deterministic prior max0.25 只是在 matched seed2024 上复现 `+0.005783`，相对 high-water seed2027 `0.772682` 仅 `+0.000579`，不满足修正后的 `+0.004` 停止条件
   - 实验 91: valid-trained hybrid stacker 首次真正越过修正 high-water 停止线；4 个 seed2024 checkpoint 预测加 train-history tabular features，经 hist-gradient combiner 得到 `test_auc 0.787288`，相对 high-water `+0.014606`，且 `ACC/RMSE/Brier/ECE` 同向明显改善；这不是默认 CDM 主线组件，需作为明确 hybrid 候选做多 seed 验证或再整合进 readout/objective
+  - 实验 92: 把 experiment 91 的 train-history 信号压成固定等权 deterministic output-logit readout prior 后，在 corrected high-water seed2027 checkpoint 上达到 `test_auc 0.776813`，相对 `0.772682` 为 `+0.004132`，满足停止阈值且没有 valid-trained combiner；但 `RMSE/Brier/ECE` 明显回撤，且同一 prior 放进 cognitive logit 或从头训练都会退化，因此只作为可解释 readout-prior 诊断信号，不合入默认纯 cognitive CDM
 
 - 当前正向支线候选:
+  - 实验 92
+    - branch: `exp/evidence-prior-calibrated-readout`
+    - 判断: 这是当前最接近用户“纯 CDM”方向的过线信号；固定 `equal0.22` train-history evidence output-logit prior 在 seed2027 high-water checkpoint 上 `test_auc 0.776813`，超过修正停止线 `0.776682`
+    - 限制: 它作用在最终 output logit，而不是 mastery/cognitive logit；`RMSE/Brier/ECE` 回撤，不能作为默认主线或纯 cognitive CDM 组件推广
+    - 详细指标见 `docs/experiments/092_history_evidence_output_logit_prior.md`
   - 实验 91
     - branch: `exp/evidence-prior-calibrated-readout`
     - 判断: 这是当前最强 `0.78+` 级增长信号，已经满足修正后的 high-water `+0.004` 停止条件；但它是 valid-trained hybrid stacker，不是 `scripts/run_assist09_baseline.sh` 默认模型结构
@@ -130,6 +136,7 @@
   - 实验 88: evidence-prior high-confidence/high-mastery gate 是目前最好的稳定化诊断，能保留 seed2024 `+0.005` 且大幅收窄 seed2027 负尾；但三 seed 均值只有 `AUC +0.000826` 且坏 seeds 未转正，不合入 trial，不继续同类确定性 residual scope/threshold 小扫
   - 实验 89: evidence-prior agreement / train-only / direction-only 三类补救均未优于实验 88；尤其 agreement margin1.0 只是用误差和校准换 seed2024 AUC，seed2027 还略差，因此后续不要继续 deterministic prior mask/scope 小改
   - 实验 90: raw prior 的 matched-seed admission signal 不是修正 high-water breakthrough；不要再把 seed2024 低参考当作停止条件
+  - 实验 92: deterministic output-logit readout prior 是非 hybrid 的过线诊断，但误差和校准回撤明显；后续若要继续纯 CDM，应把这组 train-history evidence 移入校准目标或可靠性门控 readout，而不是直接推广 output-logit prior
   - 详细指标见对应实验条目
 
 ## 已验证有效
