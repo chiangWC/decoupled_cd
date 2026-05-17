@@ -61,6 +61,7 @@
   - 实验 81: `single-only` concept-evidence readout 已在 experiment 70 当前底座上完成三 seed 重验证，并已 promote 到 `exp/trellis-trial` 默认口径；相对 experiment 70 official three-seed baseline mean `AUC +0.004617`、`ACC +0.004275`、`RMSE/Brier/ECE` 同向改善
   - 实验 82: experiment 80 的 exact-3 interaction 已 rebased 到当前 exp81 伪主线并完成 matched seed=2024 验证；`scale=0.25` 全面回撤，`scale=0.125` 也只剩 `AUC +0.000054` 且 `ACC/RMSE/Brier/ECE` 仍反向，`concept_count=3` slice 也没有 clean 改善，因此拒绝
   - 实验 83: `q-local` 直接叠回当前 exp81 伪主线三 seed 判负；去掉 `expert` 后它会在 matched family 恢复，但 inverse / partial coverage gate 只会退化成 no-expert 轨迹，soft gate 更差，因此这条线当前留下的是“应改 expert 作用形式/位置”的结构诊断，而不是新的主线候选
+  - 实验 84: 沿实验 83 诊断继续改 expert 输出形式/位置，并复访 deterministic evidence prior 的 final-logit、single-only、eval-only 与 cognitive-scale rescue；seed2026 已系统性回撤，seed2027 又确认 `max_logit=0.25` 出现 `AUC -0.0115` 负尾，`0.1875` 仍明显负向，`0.125` 仅弱混合，因此这条线记录为 rejected diagnostic / not trial candidate，不再继续微调同类 prior residual
 
 - 当前正向支线候选:
   - 实验 37
@@ -106,6 +107,7 @@
   - 实验 81: 同一个 `single-only` readout 假设 rebased 到 experiment 70 后，不再是低幅稳定化信号，而是当前底座上的 clear multi-seed win，并已 promote 到当前 pseudo-mainline
   - 实验 82: 在当前 exp81 伪主线上复访 experiment 80 的 exact-3 interaction 后，matched baseline 证明 `scale=0.25` 直接负向、`scale=0.125` 也只有 near-neutral AUC 且 `ACC/RMSE/Brier/ECE` 继续回撤；`concept_count=3` 目标切片没有 clean 收益，因此不扩 seed、不再把这条 rebase 当作默认 follow-up
   - 实验 83: `q-local` 在当前 exp81 伪主线上三 seed 判负，但 no-expert matched family 会恢复；coverage gate 只会把模型退化成 no-expert 轨迹或重新带回负面影响，因此后续若继续这条线，默认改 `expert` 作用形式/位置，而不是继续调 coverage gate
+  - 实验 84: expert bound 单 seed 有信号但 seed2025 反转；post-expert q-local seed2025 仍明显负向；deterministic evidence prior 在 seed2024 有强排序信号，但 seed2027 证明 `max_logit=0.25` 与 `0.1875` 存在不可接受负尾，`0.125` 也只是弱混合结果；不合入 trial 候选，后续不要继续围绕 `concept_evidence_prior_*` 微调
   - 详细指标见对应实验条目
 
 ## 已验证有效
