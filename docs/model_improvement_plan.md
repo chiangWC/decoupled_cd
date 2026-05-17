@@ -57,15 +57,12 @@
   - 实验 76: deterministic concept evidence prior 曾进入 `exp/trellis-trial` 伪主线默认运行口径，但 `2026-05-16` 补 official multi-seed 后确认 `seed2026` 从实验 76 开始就会退化，现已回退
   - 实验 78: concept evidence readout correction 曾进入 `exp/trellis-trial` 伪主线默认运行口径，但它建立在已回退的实验 76 底座上，现已随实验 76 一并回退
   - 实验 79: single-concept scoped readout 已验证为低幅稳定化信号但不合入；正常学习 seeds `2024/2025/2027` 相对实验 78 matched baseline 均值仅 `AUC +0.000769`
-  - 实验 80: `single-only readout + exact-3 target interaction qrepr` 在实验 78 底座上形成过正向候选，但当前需先 rebase 到实验 70 结构基线，不能直接当作 trial promote 候选
+  - 实验 80: `single-only readout + exact-3 target interaction qrepr` 在实验 78 底座上形成过历史正向候选，但那条证据只保留为回退底座上的事实记录
   - 实验 81: `single-only` concept-evidence readout 已在 experiment 70 当前底座上完成三 seed 重验证，并已 promote 到 `exp/trellis-trial` 默认口径；相对 experiment 70 official three-seed baseline mean `AUC +0.004617`、`ACC +0.004275`、`RMSE/Brier/ECE` 同向改善
+  - 实验 82: experiment 80 的 exact-3 interaction 已 rebased 到当前 exp81 伪主线并完成 matched seed=2024 验证；`scale=0.25` 全面回撤，`scale=0.125` 也只剩 `AUC +0.000054` 且 `ACC/RMSE/Brier/ECE` 仍反向，`concept_count=3` slice 也没有 clean 改善，因此拒绝
+  - 实验 83: `q-local` 直接叠回当前 exp81 伪主线三 seed 判负；去掉 `expert` 后它会在 matched family 恢复，但 inverse / partial coverage gate 只会退化成 no-expert 轨迹，soft gate 更差，因此这条线当前留下的是“应改 expert 作用形式/位置”的结构诊断，而不是新的主线候选
 
 - 当前正向支线候选:
-  - 实验 80
-    - branch: `exp/target-concept-interaction-qrepr`
-    - 判断: 这是建立在已回退实验 78 底座上的历史正向候选，不再直接代表当前 trial 的最高优先级结构路线
-    - 补充: 四 seed 相对实验 78 matched baseline mean `AUC +0.001326`、`ACC +0.001551`、`RMSE/Brier/ECE` 同向；但由于实验 76/78 已从当前 trial 默认口径回退，若继续必须先 rebase 到实验 70 结构基线。`seed2025` 是 strongest win；`seed2027` 有 `ACC/RMSE/ECE` 轻微反向；`seed2026` baseline/candidate 仍同步退化
-    - 详细指标见 `docs/experiments/080_scoped_evidence_interaction_combo.md`
   - 实验 37
     - branch: `exp/training-modes`
     - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前主线，不作为默认 `master` 训练口径
@@ -106,7 +103,9 @@
     - `target_concept_interaction_qrepr` 单独最好点是 `exact-3, scale=0.25`，相对实验 78 seed=2024 `AUC +0.000423`
     - `no-expert` 与 `no-expert + exact-3` 都没有放大这条信号，因此当前不把“实验 51 expert 压制”作为这条候选的主结论
     - 真正形成 clean candidate 的是实验 79 single-only readout 与 exact-3 interaction 的组合，而不是任何一条单模块独立成立
-  - 实验 81: 同一个 `single-only` readout 假设 rebased 到 experiment 70 后，不再是低幅稳定化信号，而是当前底座上的 clear multi-seed win，并已 promote 到当前 pseudo-mainline；后续若继续，优先补 `B49 seed=2024` 交叉复验或在此底座上复访 experiment 80 的 rebase
+  - 实验 81: 同一个 `single-only` readout 假设 rebased 到 experiment 70 后，不再是低幅稳定化信号，而是当前底座上的 clear multi-seed win，并已 promote 到当前 pseudo-mainline
+  - 实验 82: 在当前 exp81 伪主线上复访 experiment 80 的 exact-3 interaction 后，matched baseline 证明 `scale=0.25` 直接负向、`scale=0.125` 也只有 near-neutral AUC 且 `ACC/RMSE/Brier/ECE` 继续回撤；`concept_count=3` 目标切片没有 clean 收益，因此不扩 seed、不再把这条 rebase 当作默认 follow-up
+  - 实验 83: `q-local` 在当前 exp81 伪主线上三 seed 判负，但 no-expert matched family 会恢复；coverage gate 只会把模型退化成 no-expert 轨迹或重新带回负面影响，因此后续若继续这条线，默认改 `expert` 作用形式/位置，而不是继续调 coverage gate
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -300,7 +299,7 @@
 通用协作、运行与分支规则沿用 `.trellis/spec/backend/experiment-protocol.md`；这里仅补充历史台账导出的默认优先级:
 
 1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。默认目标仍是冲 `test_auc ~= 0.780`；`0.778` 可视为接近可接受。
-2. 实验 76 / 78 已因 official multi-seed 暴露 `seed2026` 失败模式而从伪主线默认口径回退；实验 81 已作为 exp70-based follow-up promote 到当前 `exp/trellis-trial`。下一步默认不再继续自由扫新 readout 小改，而是围绕实验 81 补 `B49 seed=2024` 交叉复验，或在这个新底座上继续更大的结构假设。
+2. 实验 76 / 78 已因 official multi-seed 暴露 `seed2026` 失败模式而从伪主线默认口径回退；实验 81 已作为 exp70-based follow-up promote 到当前 `exp/trellis-trial`，实验 82 证明 experiment 80 的 exact-3 interaction rebase 到当前底座后不再成立，实验 83 又说明 `q-local` 的问题主要在当前 `expert` 吸收方式而不是 `q-local` 本身。下一步默认不再继续这条 readout/qrepr/coverage-gate 小组合，而是围绕实验 81 补 `B49 seed=2024` 交叉复验，或在这个新底座上继续更大的结构假设；若继续 `q-local` 方向，应直接改 `expert` 作用形式/位置。
 3. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益。实验 76 说明单知识点 student-concept train-history mastery prior 在单 seed 上有大 ranking 信号，但这条线当前只能作为历史候选或待重构假设，不能直接视作当前主线组件。普通小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
 4. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
 5. 默认优先探索更大一级、真正改变表示瓶颈的模块，例如学生状态形成、target-conditioned history、受约束的图/Q 结构学习，或明确标注为 hybrid 的 side channel；普通 sidecar / residual 默认不进入这类 sweep。
