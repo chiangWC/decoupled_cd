@@ -69,6 +69,7 @@
     - `concept_evidence_prior_residual max_logit=0.25` 在当前 exp81 伪主线 seed2024 复现 `AUC 0.773261`，相对参考 `+0.005783`
     - 但实验 84 已证明同族配置有 seed2026/seed2027 负尾，因此该结果只作为 admission signal；下一步若继续，应解决 evidence prior 的稳定性，而不是直接合入或继续微调 max_logit
   - 实验 88: 在 deterministic evidence prior 上增加 high-confidence / high-mastery 门控后，`conf0.75 abs0.50 max0.25` 能保留 seed2024 `AUC +0.005049`，并把 seed2027 raw `-0.011524` 负尾收敛到约 `-0.000889`；但 seed2026 仍约 `-0.001683`，三 seed 均值只有 `AUC +0.000826`，因此记录为 stabilization diagnostic，不合入 trial，不继续附近 threshold / max_logit 微扫
+  - 实验 89: 继续测试 evidence prior 的 model-agreement gate、`train_only` 应用和 positive/negative direction scope；agreement margin1.0 虽有 seed2024 `AUC +0.005566`，但 ACC/RMSE/Brier/ECE 明显变差且 seed2027 不如实验 88，其他方向都没过 seed2024 阈值，因此不再继续 deterministic prior mask/scope 小改
 
 - 当前正向支线候选:
   - 实验 37
@@ -119,6 +120,7 @@
   - 实验 86: contrastive readout expert 证明“限制 expert common-mode additive capacity”有单 seed 诊断信号，但跨 seed 幅度不足且 ACC/ECE 有副作用；不合入 trial，不继续同类 centering / common-mode removal 小改
   - 实验 87: hybrid ID residual 不是突破路径；deterministic evidence prior `max_logit=0.25` 再次确认 seed2024 `AUC +0.005783` 的强 admission signal，但仍受实验 84 的跨 seed 负尾约束，不作为 trial promote 候选
   - 实验 88: evidence-prior high-confidence/high-mastery gate 是目前最好的稳定化诊断，能保留 seed2024 `+0.005` 且大幅收窄 seed2027 负尾；但三 seed 均值只有 `AUC +0.000826` 且坏 seeds 未转正，不合入 trial，不继续同类确定性 residual scope/threshold 小扫
+  - 实验 89: evidence-prior agreement / train-only / direction-only 三类补救均未优于实验 88；尤其 agreement margin1.0 只是用误差和校准换 seed2024 AUC，seed2027 还略差，因此后续不要继续 deterministic prior mask/scope 小改
   - 详细指标见对应实验条目
 
 ## 已验证有效
