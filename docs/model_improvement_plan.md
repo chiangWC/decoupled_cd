@@ -63,6 +63,7 @@
   - 实验 83: `q-local` 直接叠回当前 exp81 伪主线三 seed 判负；去掉 `expert` 后它会在 matched family 恢复，但 inverse / partial coverage gate 只会退化成 no-expert 轨迹，soft gate 更差，因此这条线当前留下的是“应改 expert 作用形式/位置”的结构诊断，而不是新的主线候选
   - 实验 84: 沿实验 83 诊断继续改 expert 输出形式/位置，并复访 deterministic evidence prior 的 final-logit、single-only、eval-only 与 cognitive-scale rescue；seed2026 已系统性回撤，seed2027 又确认 `max_logit=0.25` 出现 `AUC -0.0115` 负尾，`0.1875` 仍明显负向，`0.125` 仅弱混合，因此这条线记录为 rejected diagnostic / not trial candidate，不再继续微调同类 prior residual
   - 实验 85: 把 target-local evidence 信号前移到 state / qrepr 后仍未形成 trial 候选；`target_conditioned_student_state` seed2024 直接大幅负向，`target_evidence_attention_qrepr exact3 scale0.125` 只有 seed2024 弱正，seed2025/2027 回撤，三 seed 均值 `AUC -0.000383`、`ACC -0.001351` 且误差/校准也反向，因此拒绝，不继续同形参数扫
+  - 实验 86: 把 readout expert 改成 per-sample contrastive / common-mode removed 参数化后，seed2024 达到 `AUC +0.002000` 且误差/校准改善，但 seed2025/2026 都小幅回撤；三 seed 均值只剩 `AUC +0.000256`，`ACC -0.000818`、`ECE +0.000233`，因此拒绝，不继续近邻 common-mode removal sweep
 
 - 当前正向支线候选:
   - 实验 37
@@ -110,6 +111,7 @@
   - 实验 83: `q-local` 在当前 exp81 伪主线上三 seed 判负，但 no-expert matched family 会恢复；coverage gate 只会把模型退化成 no-expert 轨迹或重新带回负面影响，因此后续若继续这条线，默认改 `expert` 作用形式/位置，而不是继续调 coverage gate
   - 实验 84: expert bound 单 seed 有信号但 seed2025 反转；post-expert q-local seed2025 仍明显负向；deterministic evidence prior 在 seed2024 有强排序信号，但 seed2027 证明 `max_logit=0.25` 与 `0.1875` 存在不可接受负尾，`0.125` 也只是弱混合结果；不合入 trial 候选，后续不要继续围绕 `concept_evidence_prior_*` 微调
   - 实验 85: concept-evidence state adapter、target-conditioned student-state rewrite 与 target-evidence attention qrepr 都没有跨 seed 成立；尤其 state rewrite 会大幅破坏排序，exact3 attention 也只是弱单 seed 信号，不合入 trial，不继续同形参数扫
+  - 实验 86: contrastive readout expert 证明“限制 expert common-mode additive capacity”有单 seed 诊断信号，但跨 seed 幅度不足且 ACC/ECE 有副作用；不合入 trial，不继续同类 centering / common-mode removal 小改
   - 详细指标见对应实验条目
 
 ## 已验证有效
@@ -303,7 +305,7 @@
 通用协作、运行与分支规则沿用 `.trellis/spec/backend/experiment-protocol.md`；这里仅补充历史台账导出的默认优先级:
 
 1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。默认目标仍是冲 `test_auc ~= 0.780`；`0.778` 可视为接近可接受。
-2. 实验 76 / 78 已因 official multi-seed 暴露 `seed2026` 失败模式而从伪主线默认口径回退；实验 81 已作为 exp70-based follow-up promote 到当前 `exp/trellis-trial`，实验 82 证明 experiment 80 的 exact-3 interaction rebase 到当前底座后不再成立，实验 83 又说明 `q-local` 的问题主要在当前 `expert` 吸收方式而不是 `q-local` 本身。下一步默认不再继续这条 readout/qrepr/coverage-gate 小组合，而是围绕实验 81 补 `B49 seed=2024` 交叉复验，或在这个新底座上继续更大的结构假设；若继续 `q-local` 方向，应直接改 `expert` 作用形式/位置。
+2. 实验 76 / 78 已因 official multi-seed 暴露 `seed2026` 失败模式而从伪主线默认口径回退；实验 81 已作为 exp70-based follow-up promote 到当前 `exp/trellis-trial`，实验 82 证明 experiment 80 的 exact-3 interaction rebase 到当前底座后不再成立，实验 83 又说明 `q-local` 的问题主要在当前 `expert` 吸收方式而不是 `q-local` 本身。实验 84-86 进一步说明 bounded / post-expert / state-qrepr 前移 / contrastive common-mode removal 都不是稳定 trial 候选。下一步默认不再继续这条 readout/qrepr/expert-output 小组合，而是围绕实验 81 补 `B49 seed=2024` 交叉复验，或在这个新底座上继续更大的结构假设。
 3. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益。实验 76 说明单知识点 student-concept train-history mastery prior 在单 seed 上有大 ranking 信号，但这条线当前只能作为历史候选或待重构假设，不能直接视作当前主线组件。普通小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
 4. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
 5. 默认优先探索更大一级、真正改变表示瓶颈的模块，例如学生状态形成、target-conditioned history、受约束的图/Q 结构学习，或明确标注为 hybrid 的 side channel；普通 sidecar / residual 默认不进入这类 sweep。

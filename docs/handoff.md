@@ -105,6 +105,11 @@
   - 去掉 `expert` 但保留 `sidecar + single-only` 后，matched family 三 seed 变为 `+ / ~ / +`，均值 `AUC +0.001193`
   - 再做 coverage gate follow-up 后，inverse / partial gate 都只会退化成 no-expert 轨迹；soft gate 则在 `seed=2024` 掉到 `AUC 0.766486`
   - 判断: 问题不在 `q-local` 本身，而在当前 `expert` 的吸收方式，尤其是 `all_seen` 区域；后续若继续这条线，应改 `expert` 作用形式/位置，而不是继续调 coverage gate。详细结果见 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)。
+- 实验 86 已测试 contrastive readout expert:
+  - branch: `exp/contrastive-readout-expert`
+  - 机制: 保留当前 expert gate，但在 gate mixing 前对每个样本的 expert scores 做均值中心化，移除 common-mode additive capacity
+  - 三 seed 相对当前 exp81 伪主线均值: `AUC +0.000256`、`ACC -0.000818`、`RMSE -0.000104`、`Brier -0.000088`、`ECE +0.000233`
+  - 判断: seed2024 有 `AUC +0.002000` 的诊断信号，但 seed2025/2026 回撤；不合入 trial，不继续同类 centering / common-mode removal 小改。详细结果见 [086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)。
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
@@ -177,7 +182,7 @@
 - 若继续复核当前主线训练口径，优先参考 `exp/mainline-protocol-sweep`；当前最强候选是 `lr=7e-4 + early_stop=20 + scheduler_patience=5`，但只作为候选，不替换 `master` 默认口径。
 - 若继续复访 experiment 80 系列，先看 [082_exp81_target_interaction_rebase.md](./experiments/082_exp81_target_interaction_rebase.md)：它已经证明 exact-3 interaction 重挂到当前 exp81 伪主线后不再形成 clean gain，因此这条分支不再是默认 follow-up；优先回到 experiment 81 的 `B49 seed=2024` 交叉复验或更大的 representation-level 假设。
 - 若继续当前最强 evidence readout 候选，优先留在 `exp/exp70-evidence-readout-scope`；默认下一步是补 `B49 seed=2024` 交叉复验，而不是重新开始自由扫结构。
-- 若继续 `q-local` / readout expert 这条 representation-level 线，不要直接把 `q-local` 叠回当前带 `expert` 的 trial，也不要继续扫 coverage gate；先看 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)，优先改 `expert` 的作用形式或作用位置。
+- 若继续 `q-local` / readout expert 这条 representation-level 线，不要直接把 `q-local` 叠回当前带 `expert` 的 trial，也不要继续扫 coverage gate、bounded expert、post-expert replay、target-evidence state/qrepr 前移或 contrastive common-mode removal；先看 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)、[084_exp81_expert_output_modulation.md](./experiments/084_exp81_expert_output_modulation.md)、[085_exp81_state_and_attention_qrepr_adapters.md](./experiments/085_exp81_state_and_attention_qrepr_adapters.md)、[086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)，只有出现 materially different 的 expert architecture / training objective 假设时再重开。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
 - 若继续实验 76，默认按“历史候选待重构”处理：可以留在当前 `exp/evidence-calibrated-behavior-gate` 分支复访，但不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；若要继续，应优先设计避免 `seed2026` 退化的新约束或新触发方式。
