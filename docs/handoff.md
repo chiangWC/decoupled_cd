@@ -39,17 +39,24 @@
   - `RMSE -0.004038`
   - `Brier -0.003468`
   - `ECE -0.013232`
-- 当前 `exp/trellis-trial` 伪主线:
-  - 已从纯 experiment 70 结构基线 promote 到 `experiment 70 + experiment 81 single-only concept-evidence readout`
+- 当前 `exp/trellis-trial` 伪主线有两个层次，后续不要混淆:
+  - 默认模型口径仍是 `experiment 70 + experiment 81 single-only concept-evidence readout`
   - seed=2024 指标: `test_auc = 0.767478`, `test_acc = 0.734248`, `test_rmse = 0.425562`, `test_brier = 0.181103`, `test_ece = 0.046972`
   - 默认 run script `scripts/run_assist09_baseline.sh` 已默认开启 `concept_evidence_readout_residual(min_count=1, max_count=1, min_seen_ratio=1.0, max_logit=0.5)`
+  - 分支内另有 named trial runner `scripts/run_assist09_history_alignment_trial.sh`，对应实验 95 的 `loss_only cogonly` history-evidence cognitive alignment:
+    - 推理期不加 output-logit prior，不使用 valid-trained combiner
+    - student/exercise direct history terms 已置 `0.0`
+    - target-concept `0.44`、global-concept/mastery `0.22`、alignment `0.05`
+    - 四 seed matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
+    - 这是当前最干净的纯 CDM trial candidate，但尚未替换 `scripts/run_assist09_baseline.sh`
 - 当前冲刺目标:
   - `test_auc ~= 0.780`
   - `0.778` 可视为接近可接受
-  - 相对当前 `exp/trellis-trial` 伪主线 seed=2024 约需 `AUC +0.0105` 到 `+0.0125`
+  - 相对当前默认模型口径 seed=2024 约需 `AUC +0.0105` 到 `+0.0125`
   - 本轮修正后的停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`；不能只和最低的 seed2024 比
+  - 实验 95 的 `cogonly` trial runner 在 seed2024 已达 `test_auc 0.777843`，四 seed mean 也过 `+0.004`，所以它是当前纯 CDM trial 起点，而不是普通 sidecar 继续小扫对象
   - 实验 92 已用固定等权 train-history evidence output-logit prior 达到 seed2027 `test_auc 0.776813`，超过该阈值；但它是 readout-prior diagnostic，误差/校准回撤明显，不能直接当作默认纯 cognitive CDM 主线
-  - 这个距离已经超出常规小 residual / sidecar 的边际收益，后续默认优先考虑 representation-level 大结构改动
+  - 若继续提升，应优先围绕实验 95 的训练目标形态做 smoother/bounded/correlation alignment，或转向 representation-level 大结构；不要回到 student/exercise history shortcut 或 output-logit prior
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
 当前正向训练策略支线:
@@ -225,6 +232,7 @@
 - 若继续 `q-local` / readout expert 这条 representation-level 线，不要直接把 `q-local` 叠回当前带 `expert` 的 trial，也不要继续扫 coverage gate、bounded expert、post-expert replay、target-evidence state/qrepr 前移或 contrastive common-mode removal；先看 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)、[084_exp81_expert_output_modulation.md](./experiments/084_exp81_expert_output_modulation.md)、[085_exp81_state_and_attention_qrepr_adapters.md](./experiments/085_exp81_state_and_attention_qrepr_adapters.md)、[086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)，只有出现 materially different 的 expert architecture / training objective 假设时再重开。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续本轮已过线的 `0.78+` hybrid 信号，优先留在 `exp/evidence-prior-calibrated-readout`，先按 [091_corrected_high_water_hybrid_stacker.md](./experiments/091_corrected_high_water_hybrid_stacker.md) 做多 seed stacker 验证；不要把它误记为已 promote 的纯 CDM 主线。
+- 若继续当前纯 CDM trial candidate，优先从 `exp/trellis-trial` 的 `scripts/run_assist09_history_alignment_trial.sh` 出发；该 runner 已是实验 95 的 `cogonly loss_only` 版本，不要再把 student/exercise direct history terms 加回默认 trial。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
 - 若继续实验 76 / deterministic evidence prior，默认按“历史候选待重构”处理：不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；实验 88/89 已证明 confidence/mastery、agreement、train-only、direction-only 等 deterministic mask/scope 只能稳定到低幅或单 seed AUC tradeoff，后续必须有 representation/objective 层的新机制才值得重开。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先按实验号查 `docs/experiment_index.jsonl` 的 `status/reason_tags/verdict`，再按需打开对应 detail，确认是否真的出现了新的 slice 假设或机制假设后再决定是否重开。
