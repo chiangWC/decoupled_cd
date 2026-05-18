@@ -2,7 +2,7 @@
 
 ## Status
 
-`trial_candidate_confirmed`, not promoted to default.
+`trial_candidate_refined`, not promoted to default baseline script.
 
 ## Question
 
@@ -10,7 +10,21 @@ Can the train-history signal from experiments 91/92 be consumed by the cognitive
 
 ## Mechanism
 
-Branch: `exp/evidence-prior-calibrated-readout`
+Original exploration branch: `exp/evidence-prior-calibrated-readout`
+
+Merged trial branch: `exp/trellis-trial`
+
+Current named runner:
+
+- `scripts/run_assist09_history_alignment_trial.sh`
+- current trial configuration: `loss_only cogonly`
+- student/exercise direct history terms: `0.0`
+- target concept: `0.44`
+- global concept: `0.22`
+- mastery: `0.22`
+- alignment weight: `0.05`
+
+The default baseline script remains `scripts/run_assist09_baseline.sh`; this trial runner has not replaced the default baseline run.
 
 New default-off training option:
 
@@ -72,7 +86,7 @@ The first over-threshold configuration, `target-concept doubled` with alignment 
 | 2026 | 0.771263 | 0.504198 | -0.267064 | -0.209994 | +0.090136 | +0.084680 | +0.114341 |
 | 2027 | 0.772682 | 0.776868 | +0.004187 | +0.004643 | -0.003158 | -0.002670 | -0.009771 |
 
-A lower-strength fixed configuration is stable across all four seeds:
+A lower-strength fixed configuration was stable across all four seeds before the CF-risk ablation:
 
 - trial runner: `scripts/run_assist09_history_alignment_trial.sh`
 - output pattern: `results/pure_cdm_hybrid_signal/seed{seed}_history_alignment_tc2w005_300ep.json`
@@ -92,7 +106,7 @@ A lower-strength fixed configuration is stable across all four seeds:
 | 2027 | 0.772682 | 0.775291 | +0.002609 | +0.003939 | -0.001748 | -0.001480 | -0.002681 |
 | mean | 0.770771 | 0.775599 | +0.004828 | +0.002840 | -0.002307 | -0.001955 | -0.001312 |
 
-This lower-strength configuration is the trial candidate. It does not hit the corrected high-water stop line on seed2027 alone, but it clears `+0.004` on four-seed matched mean and removes the seed2026 collapse.
+This lower-strength full configuration was the first stable trial candidate. It does not hit the corrected high-water stop line on seed2027 alone, but it clears `+0.004` on four-seed matched mean and removes the seed2026 collapse. After the CF-risk ablation below, the final named trial runner was refined to `cogonly`.
 
 ## CF-Risk Component Ablation
 
@@ -188,8 +202,8 @@ Seed2024 check for equal target `alignment=0.01`:
 This is the first pure CDM training-objective family with both:
 
 - a corrected high-water single-seed signal (`alignment=0.08810`, seed2027 AUC `+0.004187`)
-- a four-seed matched trial candidate (`alignment=0.05`, mean AUC `+0.004828`)
+- a four-seed matched final trial candidate (`alignment=0.05 cogonly`, mean AUC `+0.005508`)
 
-It should enter trial as the lower-strength `alignment=0.05` candidate, not as the hotter `0.08810` point. The hot point is useful for proving headroom, but seed2026 shows it is too brittle for default use.
+It should enter trial as the lower-strength `alignment=0.05 cogonly` candidate, not as the hotter `0.08810` point and not as the full student/exercise/target-concept/concept/mastery configuration. The hot point is useful for proving headroom, but seed2026 shows it is too brittle for default use.
 
-The cleaner trial version should use `cogonly`: target-concept/global-concept/mastery evidence only, with student and exercise direct history terms disabled. Do not promote directly to the default run script yet. Next step: test a smoother bounded/correlation alignment loss to recover some seed2027 headroom without reintroducing the seed2026 collapse.
+The cleaner trial version now uses `cogonly`: target-concept/global-concept/mastery evidence only, with student and exercise direct history terms disabled. Do not promote directly to the default baseline script yet. Next step: test a smoother bounded/correlation alignment loss to recover some seed2027 headroom without reintroducing the seed2026 collapse.
