@@ -193,10 +193,145 @@ def parse_args() -> argparse.Namespace:
         help="Enable a deterministic target-local student-concept mastery prior on the cognitive readout.",
     )
     parser.add_argument("--concept-evidence-prior-min-count", type=int, default=2)
+    parser.add_argument("--concept-evidence-prior-max-count", type=int, default=0)
     parser.add_argument("--concept-evidence-prior-min-seen-ratio", type=float, default=1.0)
     parser.add_argument("--concept-evidence-prior-max-logit", type=float, default=0.5)
     parser.add_argument("--concept-evidence-prior-strength", type=float, default=2.0)
     parser.add_argument("--concept-evidence-prior-confidence-cap", type=float, default=20.0)
+    parser.add_argument(
+        "--student-evidence-ability-prior-residual",
+        action="store_true",
+        help="Enable a deterministic train-history student global ability prior on the cognitive readout.",
+    )
+    parser.add_argument("--student-evidence-ability-prior-min-attempts", type=int, default=1)
+    parser.add_argument("--student-evidence-ability-prior-max-logit", type=float, default=0.25)
+    parser.add_argument("--student-evidence-ability-prior-strength", type=float, default=2.0)
+    parser.add_argument("--student-evidence-ability-prior-confidence-cap", type=float, default=200.0)
+    parser.add_argument(
+        "--student-evidence-gs-prior-residual",
+        action="store_true",
+        help="Enable a deterministic student ability prior on guess/slip logits.",
+    )
+    parser.add_argument("--student-evidence-gs-prior-min-attempts", type=int, default=1)
+    parser.add_argument("--student-evidence-gs-prior-max-logit", type=float, default=0.25)
+    parser.add_argument("--student-evidence-gs-prior-strength", type=float, default=2.0)
+    parser.add_argument("--student-evidence-gs-prior-confidence-cap", type=float, default=200.0)
+    parser.add_argument(
+        "--concept-evidence-calibrated-readout",
+        action="store_true",
+        help="Enable a bounded pure-CDM readout residual from student/target concept evidence summaries.",
+    )
+    parser.add_argument("--concept-evidence-calibrated-readout-min-count", type=int, default=1)
+    parser.add_argument("--concept-evidence-calibrated-readout-max-count", type=int, default=0)
+    parser.add_argument("--concept-evidence-calibrated-readout-min-seen-ratio", type=float, default=1.0)
+    parser.add_argument("--concept-evidence-calibrated-readout-max-logit", type=float, default=0.35)
+    parser.add_argument("--concept-evidence-calibrated-readout-prior-strength", type=float, default=2.0)
+    parser.add_argument("--concept-evidence-calibrated-readout-confidence-cap", type=float, default=20.0)
+    parser.add_argument(
+        "--history-evidence-fusion-readout",
+        action="store_true",
+        help="Enable a zero-init bounded cognitive readout over train-history concept, student, and exercise evidence.",
+    )
+    parser.add_argument("--history-evidence-fusion-min-count", type=int, default=1)
+    parser.add_argument("--history-evidence-fusion-max-count", type=int, default=0)
+    parser.add_argument("--history-evidence-fusion-min-seen-ratio", type=float, default=0.0)
+    parser.add_argument("--history-evidence-fusion-max-logit", type=float, default=0.5)
+    parser.add_argument("--history-evidence-fusion-prior-strength", type=float, default=2.0)
+    parser.add_argument("--history-evidence-fusion-concept-confidence-cap", type=float, default=20.0)
+    parser.add_argument("--history-evidence-fusion-exercise-confidence-cap", type=float, default=200.0)
+    parser.add_argument("--history-evidence-fusion-student-confidence-cap", type=float, default=200.0)
+    parser.add_argument(
+        "--history-evidence-linear-readout",
+        action="store_true",
+        help="Enable a zero-init 3-weight linear readout over concept, student, and exercise evidence priors.",
+    )
+    parser.add_argument("--history-evidence-linear-min-count", type=int, default=1)
+    parser.add_argument("--history-evidence-linear-max-count", type=int, default=0)
+    parser.add_argument("--history-evidence-linear-min-seen-ratio", type=float, default=0.0)
+    parser.add_argument("--history-evidence-linear-max-logit", type=float, default=0.5)
+    parser.add_argument("--history-evidence-linear-prior-strength", type=float, default=2.0)
+    parser.add_argument("--history-evidence-linear-concept-confidence-cap", type=float, default=20.0)
+    parser.add_argument("--history-evidence-linear-exercise-confidence-cap", type=float, default=200.0)
+    parser.add_argument("--history-evidence-linear-student-confidence-cap", type=float, default=200.0)
+    parser.add_argument(
+        "--history-evidence-logit-prior-residual",
+        action="store_true",
+        help="Enable a fixed interpretable log-odds prior from train-history evidence on the cognitive readout.",
+    )
+    parser.add_argument(
+        "--history-evidence-logit-prior-location",
+        choices=["cognitive", "output", "loss_only"],
+        default="cognitive",
+        help="Apply the fixed log-odds evidence prior in forward pass, or expose it for train-time loss only.",
+    )
+    parser.add_argument("--history-evidence-logit-prior-min-count", type=int, default=1)
+    parser.add_argument("--history-evidence-logit-prior-max-count", type=int, default=0)
+    parser.add_argument("--history-evidence-logit-prior-min-seen-ratio", type=float, default=0.0)
+    parser.add_argument("--history-evidence-logit-prior-max-logit", type=float, default=3.0)
+    parser.add_argument("--history-evidence-logit-prior-component-cap", type=float, default=3.0)
+    parser.add_argument("--history-evidence-logit-prior-weight-student", type=float, default=1.0)
+    parser.add_argument("--history-evidence-logit-prior-weight-exercise", type=float, default=1.0)
+    parser.add_argument("--history-evidence-logit-prior-weight-target-concept", type=float, default=0.6)
+    parser.add_argument("--history-evidence-logit-prior-weight-concept", type=float, default=0.35)
+    parser.add_argument("--history-evidence-logit-prior-weight-mastery", type=float, default=0.0)
+    parser.add_argument("--history-evidence-logit-prior-prior-weight", type=float, default=5.0)
+    parser.add_argument("--history-evidence-logit-prior-mastery-confidence-cap", type=float, default=20.0)
+    parser.add_argument(
+        "--history-evidence-cognitive-alignment-weight",
+        type=float,
+        default=0.0,
+        help="Standardized MSE loss weight aligning cognitive logits to loss-only history evidence logit prior.",
+    )
+    parser.add_argument(
+        "--history-evidence-output-calibration",
+        action="store_true",
+        help="Enable a zero-init bounded output-logit calibration from pure train-history evidence features.",
+    )
+    parser.add_argument("--history-evidence-output-calibration-min-count", type=int, default=1)
+    parser.add_argument("--history-evidence-output-calibration-max-count", type=int, default=0)
+    parser.add_argument("--history-evidence-output-calibration-min-seen-ratio", type=float, default=0.0)
+    parser.add_argument("--history-evidence-output-calibration-max-logit", type=float, default=0.5)
+    parser.add_argument("--history-evidence-output-calibration-prior-strength", type=float, default=2.0)
+    parser.add_argument("--history-evidence-output-calibration-concept-confidence-cap", type=float, default=20.0)
+    parser.add_argument("--history-evidence-output-calibration-exercise-confidence-cap", type=float, default=200.0)
+    parser.add_argument("--history-evidence-output-calibration-student-confidence-cap", type=float, default=200.0)
+    parser.add_argument(
+        "--exercise-evidence-prior-residual",
+        action="store_true",
+        help="Enable a bounded train-history exercise ease prior on the cognitive readout.",
+    )
+    parser.add_argument("--exercise-evidence-prior-min-count", type=int, default=1)
+    parser.add_argument("--exercise-evidence-prior-max-logit", type=float, default=0.25)
+    parser.add_argument("--exercise-evidence-prior-strength", type=float, default=2.0)
+    parser.add_argument("--exercise-evidence-prior-confidence-cap", type=float, default=200.0)
+    parser.add_argument(
+        "--exercise-evidence-difficulty-adapter",
+        action="store_true",
+        help="Enable a zero-init learnable global slope for bounded train-history exercise ease evidence.",
+    )
+    parser.add_argument("--exercise-evidence-difficulty-adapter-min-count", type=int, default=1)
+    parser.add_argument("--exercise-evidence-difficulty-adapter-max-logit", type=float, default=0.5)
+    parser.add_argument("--exercise-evidence-difficulty-adapter-strength", type=float, default=2.0)
+    parser.add_argument("--exercise-evidence-difficulty-adapter-confidence-cap", type=float, default=200.0)
+    parser.add_argument(
+        "--exercise-evidence-difficulty-init",
+        action="store_true",
+        help="Initialize learned exercise difficulty from bounded train-history exercise ease evidence.",
+    )
+    parser.add_argument("--exercise-evidence-difficulty-init-min-count", type=int, default=1)
+    parser.add_argument("--exercise-evidence-difficulty-init-max-abs-logit", type=float, default=0.25)
+    parser.add_argument("--exercise-evidence-difficulty-init-strength", type=float, default=2.0)
+    parser.add_argument("--exercise-evidence-difficulty-init-confidence-cap", type=float, default=200.0)
+    parser.add_argument(
+        "--exercise-evidence-difficulty-regularization-weight",
+        type=float,
+        default=0.0,
+        help="MSE penalty weight tying learned exercise difficulty to bounded train-history difficulty evidence.",
+    )
+    parser.add_argument("--exercise-evidence-difficulty-regularization-min-count", type=int, default=1)
+    parser.add_argument("--exercise-evidence-difficulty-regularization-max-abs-logit", type=float, default=0.25)
+    parser.add_argument("--exercise-evidence-difficulty-regularization-strength", type=float, default=2.0)
+    parser.add_argument("--exercise-evidence-difficulty-regularization-confidence-cap", type=float, default=200.0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None, help="Optional comma-separated GPU candidates when --device auto.")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap for quick smoke runs.")
@@ -242,6 +377,13 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--concept-evidence-readout-max-logit must be positive.")
     if args.concept_evidence_prior_min_count < 1:
         raise ValueError("--concept-evidence-prior-min-count must be positive.")
+    if args.concept_evidence_prior_max_count < 0:
+        raise ValueError("--concept-evidence-prior-max-count must be non-negative.")
+    if (
+        args.concept_evidence_prior_max_count > 0
+        and args.concept_evidence_prior_max_count < args.concept_evidence_prior_min_count
+    ):
+        raise ValueError("--concept-evidence-prior-max-count must be zero or at least --concept-evidence-prior-min-count.")
     if args.concept_evidence_prior_min_seen_ratio < 0.0 or args.concept_evidence_prior_min_seen_ratio > 1.0:
         raise ValueError("--concept-evidence-prior-min-seen-ratio must be in [0, 1].")
     if args.concept_evidence_prior_max_logit <= 0.0:
@@ -250,6 +392,190 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--concept-evidence-prior-strength must be positive.")
     if args.concept_evidence_prior_confidence_cap <= 0.0:
         raise ValueError("--concept-evidence-prior-confidence-cap must be positive.")
+    if args.student_evidence_ability_prior_min_attempts < 1:
+        raise ValueError("--student-evidence-ability-prior-min-attempts must be positive.")
+    if args.student_evidence_ability_prior_max_logit <= 0.0:
+        raise ValueError("--student-evidence-ability-prior-max-logit must be positive.")
+    if args.student_evidence_ability_prior_strength <= 0.0:
+        raise ValueError("--student-evidence-ability-prior-strength must be positive.")
+    if args.student_evidence_ability_prior_confidence_cap <= 0.0:
+        raise ValueError("--student-evidence-ability-prior-confidence-cap must be positive.")
+    if args.student_evidence_gs_prior_min_attempts < 1:
+        raise ValueError("--student-evidence-gs-prior-min-attempts must be positive.")
+    if args.student_evidence_gs_prior_max_logit <= 0.0:
+        raise ValueError("--student-evidence-gs-prior-max-logit must be positive.")
+    if args.student_evidence_gs_prior_strength <= 0.0:
+        raise ValueError("--student-evidence-gs-prior-strength must be positive.")
+    if args.student_evidence_gs_prior_confidence_cap <= 0.0:
+        raise ValueError("--student-evidence-gs-prior-confidence-cap must be positive.")
+    if args.concept_evidence_calibrated_readout_min_count < 1:
+        raise ValueError("--concept-evidence-calibrated-readout-min-count must be positive.")
+    if args.concept_evidence_calibrated_readout_max_count < 0:
+        raise ValueError("--concept-evidence-calibrated-readout-max-count must be non-negative.")
+    if (
+        args.concept_evidence_calibrated_readout_max_count > 0
+        and args.concept_evidence_calibrated_readout_max_count < args.concept_evidence_calibrated_readout_min_count
+    ):
+        raise ValueError(
+            "--concept-evidence-calibrated-readout-max-count must be zero or at least "
+            "--concept-evidence-calibrated-readout-min-count."
+        )
+    if (
+        args.concept_evidence_calibrated_readout_min_seen_ratio < 0.0
+        or args.concept_evidence_calibrated_readout_min_seen_ratio > 1.0
+    ):
+        raise ValueError("--concept-evidence-calibrated-readout-min-seen-ratio must be in [0, 1].")
+    if args.concept_evidence_calibrated_readout_max_logit <= 0.0:
+        raise ValueError("--concept-evidence-calibrated-readout-max-logit must be positive.")
+    if args.concept_evidence_calibrated_readout_prior_strength <= 0.0:
+        raise ValueError("--concept-evidence-calibrated-readout-prior-strength must be positive.")
+    if args.concept_evidence_calibrated_readout_confidence_cap <= 0.0:
+        raise ValueError("--concept-evidence-calibrated-readout-confidence-cap must be positive.")
+    if args.history_evidence_fusion_min_count < 1:
+        raise ValueError("--history-evidence-fusion-min-count must be positive.")
+    if args.history_evidence_fusion_max_count < 0:
+        raise ValueError("--history-evidence-fusion-max-count must be non-negative.")
+    if (
+        args.history_evidence_fusion_max_count > 0
+        and args.history_evidence_fusion_max_count < args.history_evidence_fusion_min_count
+    ):
+        raise ValueError("--history-evidence-fusion-max-count must be zero or at least --history-evidence-fusion-min-count.")
+    if args.history_evidence_fusion_min_seen_ratio < 0.0 or args.history_evidence_fusion_min_seen_ratio > 1.0:
+        raise ValueError("--history-evidence-fusion-min-seen-ratio must be in [0, 1].")
+    if args.history_evidence_fusion_max_logit <= 0.0:
+        raise ValueError("--history-evidence-fusion-max-logit must be positive.")
+    if args.history_evidence_fusion_prior_strength <= 0.0:
+        raise ValueError("--history-evidence-fusion-prior-strength must be positive.")
+    if args.history_evidence_fusion_concept_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-fusion-concept-confidence-cap must be positive.")
+    if args.history_evidence_fusion_exercise_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-fusion-exercise-confidence-cap must be positive.")
+    if args.history_evidence_fusion_student_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-fusion-student-confidence-cap must be positive.")
+    if args.history_evidence_linear_min_count < 1:
+        raise ValueError("--history-evidence-linear-min-count must be positive.")
+    if args.history_evidence_linear_max_count < 0:
+        raise ValueError("--history-evidence-linear-max-count must be non-negative.")
+    if (
+        args.history_evidence_linear_max_count > 0
+        and args.history_evidence_linear_max_count < args.history_evidence_linear_min_count
+    ):
+        raise ValueError("--history-evidence-linear-max-count must be zero or at least --history-evidence-linear-min-count.")
+    if args.history_evidence_linear_min_seen_ratio < 0.0 or args.history_evidence_linear_min_seen_ratio > 1.0:
+        raise ValueError("--history-evidence-linear-min-seen-ratio must be in [0, 1].")
+    if args.history_evidence_linear_max_logit <= 0.0:
+        raise ValueError("--history-evidence-linear-max-logit must be positive.")
+    if args.history_evidence_linear_prior_strength <= 0.0:
+        raise ValueError("--history-evidence-linear-prior-strength must be positive.")
+    if args.history_evidence_linear_concept_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-linear-concept-confidence-cap must be positive.")
+    if args.history_evidence_linear_exercise_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-linear-exercise-confidence-cap must be positive.")
+    if args.history_evidence_linear_student_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-linear-student-confidence-cap must be positive.")
+    if args.history_evidence_logit_prior_min_count < 1:
+        raise ValueError("--history-evidence-logit-prior-min-count must be positive.")
+    if args.history_evidence_logit_prior_max_count < 0:
+        raise ValueError("--history-evidence-logit-prior-max-count must be non-negative.")
+    if (
+        args.history_evidence_logit_prior_max_count > 0
+        and args.history_evidence_logit_prior_max_count < args.history_evidence_logit_prior_min_count
+    ):
+        raise ValueError(
+            "--history-evidence-logit-prior-max-count must be zero or at least "
+            "--history-evidence-logit-prior-min-count."
+        )
+    if (
+        args.history_evidence_logit_prior_min_seen_ratio < 0.0
+        or args.history_evidence_logit_prior_min_seen_ratio > 1.0
+    ):
+        raise ValueError("--history-evidence-logit-prior-min-seen-ratio must be in [0, 1].")
+    if args.history_evidence_logit_prior_max_logit <= 0.0:
+        raise ValueError("--history-evidence-logit-prior-max-logit must be positive.")
+    if args.history_evidence_logit_prior_component_cap <= 0.0:
+        raise ValueError("--history-evidence-logit-prior-component-cap must be positive.")
+    if args.history_evidence_logit_prior_prior_weight <= 0.0:
+        raise ValueError("--history-evidence-logit-prior-prior-weight must be positive.")
+    if args.history_evidence_logit_prior_mastery_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-logit-prior-mastery-confidence-cap must be positive.")
+    if args.history_evidence_cognitive_alignment_weight < 0.0:
+        raise ValueError("--history-evidence-cognitive-alignment-weight must be non-negative.")
+    if (
+        args.history_evidence_cognitive_alignment_weight > 0.0
+        and not args.history_evidence_logit_prior_residual
+    ):
+        raise ValueError(
+            "--history-evidence-logit-prior-residual must be enabled with "
+            "--history-evidence-cognitive-alignment-weight."
+        )
+    if (
+        args.history_evidence_cognitive_alignment_weight > 0.0
+        and args.history_evidence_logit_prior_location != "loss_only"
+    ):
+        raise ValueError(
+            "--history-evidence-logit-prior-location must be loss_only with "
+            "--history-evidence-cognitive-alignment-weight."
+        )
+    if args.history_evidence_output_calibration_min_count < 1:
+        raise ValueError("--history-evidence-output-calibration-min-count must be positive.")
+    if args.history_evidence_output_calibration_max_count < 0:
+        raise ValueError("--history-evidence-output-calibration-max-count must be non-negative.")
+    if (
+        args.history_evidence_output_calibration_max_count > 0
+        and args.history_evidence_output_calibration_max_count < args.history_evidence_output_calibration_min_count
+    ):
+        raise ValueError(
+            "--history-evidence-output-calibration-max-count must be zero or at least min-count."
+        )
+    if (
+        args.history_evidence_output_calibration_min_seen_ratio < 0.0
+        or args.history_evidence_output_calibration_min_seen_ratio > 1.0
+    ):
+        raise ValueError("--history-evidence-output-calibration-min-seen-ratio must be in [0, 1].")
+    if args.history_evidence_output_calibration_max_logit <= 0.0:
+        raise ValueError("--history-evidence-output-calibration-max-logit must be positive.")
+    if args.history_evidence_output_calibration_prior_strength <= 0.0:
+        raise ValueError("--history-evidence-output-calibration-prior-strength must be positive.")
+    if args.history_evidence_output_calibration_concept_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-output-calibration-concept-confidence-cap must be positive.")
+    if args.history_evidence_output_calibration_exercise_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-output-calibration-exercise-confidence-cap must be positive.")
+    if args.history_evidence_output_calibration_student_confidence_cap <= 0.0:
+        raise ValueError("--history-evidence-output-calibration-student-confidence-cap must be positive.")
+    if args.exercise_evidence_prior_min_count < 1:
+        raise ValueError("--exercise-evidence-prior-min-count must be positive.")
+    if args.exercise_evidence_prior_max_logit <= 0.0:
+        raise ValueError("--exercise-evidence-prior-max-logit must be positive.")
+    if args.exercise_evidence_prior_strength <= 0.0:
+        raise ValueError("--exercise-evidence-prior-strength must be positive.")
+    if args.exercise_evidence_prior_confidence_cap <= 0.0:
+        raise ValueError("--exercise-evidence-prior-confidence-cap must be positive.")
+    if args.exercise_evidence_difficulty_adapter_min_count < 1:
+        raise ValueError("--exercise-evidence-difficulty-adapter-min-count must be positive.")
+    if args.exercise_evidence_difficulty_adapter_max_logit <= 0.0:
+        raise ValueError("--exercise-evidence-difficulty-adapter-max-logit must be positive.")
+    if args.exercise_evidence_difficulty_adapter_strength <= 0.0:
+        raise ValueError("--exercise-evidence-difficulty-adapter-strength must be positive.")
+    if args.exercise_evidence_difficulty_adapter_confidence_cap <= 0.0:
+        raise ValueError("--exercise-evidence-difficulty-adapter-confidence-cap must be positive.")
+    if args.exercise_evidence_difficulty_init_min_count < 1:
+        raise ValueError("--exercise-evidence-difficulty-init-min-count must be positive.")
+    if args.exercise_evidence_difficulty_init_max_abs_logit <= 0.0:
+        raise ValueError("--exercise-evidence-difficulty-init-max-abs-logit must be positive.")
+    if args.exercise_evidence_difficulty_init_strength <= 0.0:
+        raise ValueError("--exercise-evidence-difficulty-init-strength must be positive.")
+    if args.exercise_evidence_difficulty_init_confidence_cap <= 0.0:
+        raise ValueError("--exercise-evidence-difficulty-init-confidence-cap must be positive.")
+    if args.exercise_evidence_difficulty_regularization_weight < 0.0:
+        raise ValueError("--exercise-evidence-difficulty-regularization-weight must be non-negative.")
+    if args.exercise_evidence_difficulty_regularization_min_count < 1:
+        raise ValueError("--exercise-evidence-difficulty-regularization-min-count must be positive.")
+    if args.exercise_evidence_difficulty_regularization_max_abs_logit <= 0.0:
+        raise ValueError("--exercise-evidence-difficulty-regularization-max-abs-logit must be positive.")
+    if args.exercise_evidence_difficulty_regularization_strength <= 0.0:
+        raise ValueError("--exercise-evidence-difficulty-regularization-strength must be positive.")
+    if args.exercise_evidence_difficulty_regularization_confidence_cap <= 0.0:
+        raise ValueError("--exercise-evidence-difficulty-regularization-confidence-cap must be positive.")
     return args
 
 
@@ -404,11 +730,100 @@ def main() -> None:
         concept_evidence_readout_max_logit=args.concept_evidence_readout_max_logit,
         concept_evidence_prior_residual=args.concept_evidence_prior_residual,
         concept_evidence_prior_min_count=args.concept_evidence_prior_min_count,
+        concept_evidence_prior_max_count=args.concept_evidence_prior_max_count,
         concept_evidence_prior_min_seen_ratio=args.concept_evidence_prior_min_seen_ratio,
         concept_evidence_prior_max_logit=args.concept_evidence_prior_max_logit,
         concept_evidence_prior_strength=args.concept_evidence_prior_strength,
         concept_evidence_prior_confidence_cap=args.concept_evidence_prior_confidence_cap,
+        student_evidence_ability_prior_residual=args.student_evidence_ability_prior_residual,
+        student_evidence_ability_prior_min_attempts=args.student_evidence_ability_prior_min_attempts,
+        student_evidence_ability_prior_max_logit=args.student_evidence_ability_prior_max_logit,
+        student_evidence_ability_prior_strength=args.student_evidence_ability_prior_strength,
+        student_evidence_ability_prior_confidence_cap=args.student_evidence_ability_prior_confidence_cap,
+        student_evidence_gs_prior_residual=args.student_evidence_gs_prior_residual,
+        student_evidence_gs_prior_min_attempts=args.student_evidence_gs_prior_min_attempts,
+        student_evidence_gs_prior_max_logit=args.student_evidence_gs_prior_max_logit,
+        student_evidence_gs_prior_strength=args.student_evidence_gs_prior_strength,
+        student_evidence_gs_prior_confidence_cap=args.student_evidence_gs_prior_confidence_cap,
+        concept_evidence_calibrated_readout=args.concept_evidence_calibrated_readout,
+        concept_evidence_calibrated_readout_min_count=args.concept_evidence_calibrated_readout_min_count,
+        concept_evidence_calibrated_readout_max_count=args.concept_evidence_calibrated_readout_max_count,
+        concept_evidence_calibrated_readout_min_seen_ratio=args.concept_evidence_calibrated_readout_min_seen_ratio,
+        concept_evidence_calibrated_readout_max_logit=args.concept_evidence_calibrated_readout_max_logit,
+        concept_evidence_calibrated_readout_prior_strength=args.concept_evidence_calibrated_readout_prior_strength,
+        concept_evidence_calibrated_readout_confidence_cap=args.concept_evidence_calibrated_readout_confidence_cap,
+        history_evidence_fusion_readout=args.history_evidence_fusion_readout,
+        history_evidence_fusion_min_count=args.history_evidence_fusion_min_count,
+        history_evidence_fusion_max_count=args.history_evidence_fusion_max_count,
+        history_evidence_fusion_min_seen_ratio=args.history_evidence_fusion_min_seen_ratio,
+        history_evidence_fusion_max_logit=args.history_evidence_fusion_max_logit,
+        history_evidence_fusion_prior_strength=args.history_evidence_fusion_prior_strength,
+        history_evidence_fusion_concept_confidence_cap=args.history_evidence_fusion_concept_confidence_cap,
+        history_evidence_fusion_exercise_confidence_cap=args.history_evidence_fusion_exercise_confidence_cap,
+        history_evidence_fusion_student_confidence_cap=args.history_evidence_fusion_student_confidence_cap,
+        history_evidence_linear_readout=args.history_evidence_linear_readout,
+        history_evidence_linear_min_count=args.history_evidence_linear_min_count,
+        history_evidence_linear_max_count=args.history_evidence_linear_max_count,
+        history_evidence_linear_min_seen_ratio=args.history_evidence_linear_min_seen_ratio,
+        history_evidence_linear_max_logit=args.history_evidence_linear_max_logit,
+        history_evidence_linear_prior_strength=args.history_evidence_linear_prior_strength,
+        history_evidence_linear_concept_confidence_cap=args.history_evidence_linear_concept_confidence_cap,
+        history_evidence_linear_exercise_confidence_cap=args.history_evidence_linear_exercise_confidence_cap,
+        history_evidence_linear_student_confidence_cap=args.history_evidence_linear_student_confidence_cap,
+        history_evidence_logit_prior_residual=args.history_evidence_logit_prior_residual,
+        history_evidence_logit_prior_location=args.history_evidence_logit_prior_location,
+        history_evidence_logit_prior_min_count=args.history_evidence_logit_prior_min_count,
+        history_evidence_logit_prior_max_count=args.history_evidence_logit_prior_max_count,
+        history_evidence_logit_prior_min_seen_ratio=args.history_evidence_logit_prior_min_seen_ratio,
+        history_evidence_logit_prior_max_logit=args.history_evidence_logit_prior_max_logit,
+        history_evidence_logit_prior_component_cap=args.history_evidence_logit_prior_component_cap,
+        history_evidence_logit_prior_weight_student=args.history_evidence_logit_prior_weight_student,
+        history_evidence_logit_prior_weight_exercise=args.history_evidence_logit_prior_weight_exercise,
+        history_evidence_logit_prior_weight_target_concept=args.history_evidence_logit_prior_weight_target_concept,
+        history_evidence_logit_prior_weight_concept=args.history_evidence_logit_prior_weight_concept,
+        history_evidence_logit_prior_weight_mastery=args.history_evidence_logit_prior_weight_mastery,
+        history_evidence_logit_prior_prior_weight=args.history_evidence_logit_prior_prior_weight,
+        history_evidence_logit_prior_mastery_confidence_cap=args.history_evidence_logit_prior_mastery_confidence_cap,
+        history_evidence_output_calibration=args.history_evidence_output_calibration,
+        history_evidence_output_calibration_min_count=args.history_evidence_output_calibration_min_count,
+        history_evidence_output_calibration_max_count=args.history_evidence_output_calibration_max_count,
+        history_evidence_output_calibration_min_seen_ratio=(
+            args.history_evidence_output_calibration_min_seen_ratio
+        ),
+        history_evidence_output_calibration_max_logit=args.history_evidence_output_calibration_max_logit,
+        history_evidence_output_calibration_prior_strength=(
+            args.history_evidence_output_calibration_prior_strength
+        ),
+        history_evidence_output_calibration_concept_confidence_cap=(
+            args.history_evidence_output_calibration_concept_confidence_cap
+        ),
+        history_evidence_output_calibration_exercise_confidence_cap=(
+            args.history_evidence_output_calibration_exercise_confidence_cap
+        ),
+        history_evidence_output_calibration_student_confidence_cap=(
+            args.history_evidence_output_calibration_student_confidence_cap
+        ),
+        exercise_evidence_prior_residual=args.exercise_evidence_prior_residual,
+        exercise_evidence_prior_min_count=args.exercise_evidence_prior_min_count,
+        exercise_evidence_prior_max_logit=args.exercise_evidence_prior_max_logit,
+        exercise_evidence_prior_strength=args.exercise_evidence_prior_strength,
+        exercise_evidence_prior_confidence_cap=args.exercise_evidence_prior_confidence_cap,
+        exercise_evidence_difficulty_adapter=args.exercise_evidence_difficulty_adapter,
+        exercise_evidence_difficulty_adapter_min_count=args.exercise_evidence_difficulty_adapter_min_count,
+        exercise_evidence_difficulty_adapter_max_logit=args.exercise_evidence_difficulty_adapter_max_logit,
+        exercise_evidence_difficulty_adapter_strength=args.exercise_evidence_difficulty_adapter_strength,
+        exercise_evidence_difficulty_adapter_confidence_cap=args.exercise_evidence_difficulty_adapter_confidence_cap,
     )
+    difficulty_init_count = 0
+    if args.exercise_evidence_difficulty_init:
+        difficulty_init_count = model.initialize_exercise_difficulty_from_evidence(
+            exercise_evidence=train_bundle.exercise_evidence_tensor,
+            min_count=args.exercise_evidence_difficulty_init_min_count,
+            max_abs_logit=args.exercise_evidence_difficulty_init_max_abs_logit,
+            strength=args.exercise_evidence_difficulty_init_strength,
+            confidence_cap=args.exercise_evidence_difficulty_init_confidence_cap,
+        )
+        logger.info("Initialized exercise difficulty from evidence for %s exercises.", difficulty_init_count)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_path = str(output_path.with_name(output_path.stem + "_best.pt"))
@@ -426,6 +841,14 @@ def main() -> None:
         lr_scheduler_factor=args.lr_scheduler_factor,
         min_learning_rate=args.min_learning_rate,
         checkpoint_path=checkpoint_path,
+        exercise_evidence_difficulty_regularization_weight=args.exercise_evidence_difficulty_regularization_weight,
+        exercise_evidence_difficulty_regularization_min_count=args.exercise_evidence_difficulty_regularization_min_count,
+        exercise_evidence_difficulty_regularization_max_abs_logit=args.exercise_evidence_difficulty_regularization_max_abs_logit,
+        exercise_evidence_difficulty_regularization_strength=args.exercise_evidence_difficulty_regularization_strength,
+        exercise_evidence_difficulty_regularization_confidence_cap=(
+            args.exercise_evidence_difficulty_regularization_confidence_cap
+        ),
+        history_evidence_cognitive_alignment_weight=args.history_evidence_cognitive_alignment_weight,
     )
     test_metrics = evaluate_model(bundle=test_bundle, model=model, device=resolved_device)
     valid_metrics = evaluate_model(bundle=valid_bundle, model=model, device=resolved_device) if valid_bundle is not None else None
@@ -470,10 +893,109 @@ def main() -> None:
         "concept_evidence_readout_max_logit": args.concept_evidence_readout_max_logit,
         "concept_evidence_prior_residual": args.concept_evidence_prior_residual,
         "concept_evidence_prior_min_count": args.concept_evidence_prior_min_count,
+        "concept_evidence_prior_max_count": args.concept_evidence_prior_max_count,
         "concept_evidence_prior_min_seen_ratio": args.concept_evidence_prior_min_seen_ratio,
         "concept_evidence_prior_max_logit": args.concept_evidence_prior_max_logit,
         "concept_evidence_prior_strength": args.concept_evidence_prior_strength,
         "concept_evidence_prior_confidence_cap": args.concept_evidence_prior_confidence_cap,
+        "student_evidence_ability_prior_residual": args.student_evidence_ability_prior_residual,
+        "student_evidence_ability_prior_min_attempts": args.student_evidence_ability_prior_min_attempts,
+        "student_evidence_ability_prior_max_logit": args.student_evidence_ability_prior_max_logit,
+        "student_evidence_ability_prior_strength": args.student_evidence_ability_prior_strength,
+        "student_evidence_ability_prior_confidence_cap": args.student_evidence_ability_prior_confidence_cap,
+        "student_evidence_gs_prior_residual": args.student_evidence_gs_prior_residual,
+        "student_evidence_gs_prior_min_attempts": args.student_evidence_gs_prior_min_attempts,
+        "student_evidence_gs_prior_max_logit": args.student_evidence_gs_prior_max_logit,
+        "student_evidence_gs_prior_strength": args.student_evidence_gs_prior_strength,
+        "student_evidence_gs_prior_confidence_cap": args.student_evidence_gs_prior_confidence_cap,
+        "concept_evidence_calibrated_readout": args.concept_evidence_calibrated_readout,
+        "concept_evidence_calibrated_readout_min_count": args.concept_evidence_calibrated_readout_min_count,
+        "concept_evidence_calibrated_readout_max_count": args.concept_evidence_calibrated_readout_max_count,
+        "concept_evidence_calibrated_readout_min_seen_ratio": args.concept_evidence_calibrated_readout_min_seen_ratio,
+        "concept_evidence_calibrated_readout_max_logit": args.concept_evidence_calibrated_readout_max_logit,
+        "concept_evidence_calibrated_readout_prior_strength": args.concept_evidence_calibrated_readout_prior_strength,
+        "concept_evidence_calibrated_readout_confidence_cap": args.concept_evidence_calibrated_readout_confidence_cap,
+        "history_evidence_fusion_readout": args.history_evidence_fusion_readout,
+        "history_evidence_fusion_min_count": args.history_evidence_fusion_min_count,
+        "history_evidence_fusion_max_count": args.history_evidence_fusion_max_count,
+        "history_evidence_fusion_min_seen_ratio": args.history_evidence_fusion_min_seen_ratio,
+        "history_evidence_fusion_max_logit": args.history_evidence_fusion_max_logit,
+        "history_evidence_fusion_prior_strength": args.history_evidence_fusion_prior_strength,
+        "history_evidence_fusion_concept_confidence_cap": args.history_evidence_fusion_concept_confidence_cap,
+        "history_evidence_fusion_exercise_confidence_cap": args.history_evidence_fusion_exercise_confidence_cap,
+        "history_evidence_fusion_student_confidence_cap": args.history_evidence_fusion_student_confidence_cap,
+        "history_evidence_linear_readout": args.history_evidence_linear_readout,
+        "history_evidence_linear_min_count": args.history_evidence_linear_min_count,
+        "history_evidence_linear_max_count": args.history_evidence_linear_max_count,
+        "history_evidence_linear_min_seen_ratio": args.history_evidence_linear_min_seen_ratio,
+        "history_evidence_linear_max_logit": args.history_evidence_linear_max_logit,
+        "history_evidence_linear_prior_strength": args.history_evidence_linear_prior_strength,
+        "history_evidence_linear_concept_confidence_cap": args.history_evidence_linear_concept_confidence_cap,
+        "history_evidence_linear_exercise_confidence_cap": args.history_evidence_linear_exercise_confidence_cap,
+        "history_evidence_linear_student_confidence_cap": args.history_evidence_linear_student_confidence_cap,
+        "history_evidence_logit_prior_residual": args.history_evidence_logit_prior_residual,
+        "history_evidence_logit_prior_location": args.history_evidence_logit_prior_location,
+        "history_evidence_logit_prior_min_count": args.history_evidence_logit_prior_min_count,
+        "history_evidence_logit_prior_max_count": args.history_evidence_logit_prior_max_count,
+        "history_evidence_logit_prior_min_seen_ratio": args.history_evidence_logit_prior_min_seen_ratio,
+        "history_evidence_logit_prior_max_logit": args.history_evidence_logit_prior_max_logit,
+        "history_evidence_logit_prior_component_cap": args.history_evidence_logit_prior_component_cap,
+        "history_evidence_logit_prior_weight_student": args.history_evidence_logit_prior_weight_student,
+        "history_evidence_logit_prior_weight_exercise": args.history_evidence_logit_prior_weight_exercise,
+        "history_evidence_logit_prior_weight_target_concept": args.history_evidence_logit_prior_weight_target_concept,
+        "history_evidence_logit_prior_weight_concept": args.history_evidence_logit_prior_weight_concept,
+        "history_evidence_logit_prior_weight_mastery": args.history_evidence_logit_prior_weight_mastery,
+        "history_evidence_logit_prior_prior_weight": args.history_evidence_logit_prior_prior_weight,
+        "history_evidence_logit_prior_mastery_confidence_cap": (
+            args.history_evidence_logit_prior_mastery_confidence_cap
+        ),
+        "history_evidence_cognitive_alignment_weight": args.history_evidence_cognitive_alignment_weight,
+        "history_evidence_output_calibration": args.history_evidence_output_calibration,
+        "history_evidence_output_calibration_min_count": args.history_evidence_output_calibration_min_count,
+        "history_evidence_output_calibration_max_count": args.history_evidence_output_calibration_max_count,
+        "history_evidence_output_calibration_min_seen_ratio": (
+            args.history_evidence_output_calibration_min_seen_ratio
+        ),
+        "history_evidence_output_calibration_max_logit": args.history_evidence_output_calibration_max_logit,
+        "history_evidence_output_calibration_prior_strength": (
+            args.history_evidence_output_calibration_prior_strength
+        ),
+        "history_evidence_output_calibration_concept_confidence_cap": (
+            args.history_evidence_output_calibration_concept_confidence_cap
+        ),
+        "history_evidence_output_calibration_exercise_confidence_cap": (
+            args.history_evidence_output_calibration_exercise_confidence_cap
+        ),
+        "history_evidence_output_calibration_student_confidence_cap": (
+            args.history_evidence_output_calibration_student_confidence_cap
+        ),
+        "exercise_evidence_prior_residual": args.exercise_evidence_prior_residual,
+        "exercise_evidence_prior_min_count": args.exercise_evidence_prior_min_count,
+        "exercise_evidence_prior_max_logit": args.exercise_evidence_prior_max_logit,
+        "exercise_evidence_prior_strength": args.exercise_evidence_prior_strength,
+        "exercise_evidence_prior_confidence_cap": args.exercise_evidence_prior_confidence_cap,
+        "exercise_evidence_difficulty_adapter": args.exercise_evidence_difficulty_adapter,
+        "exercise_evidence_difficulty_adapter_min_count": args.exercise_evidence_difficulty_adapter_min_count,
+        "exercise_evidence_difficulty_adapter_max_logit": args.exercise_evidence_difficulty_adapter_max_logit,
+        "exercise_evidence_difficulty_adapter_strength": args.exercise_evidence_difficulty_adapter_strength,
+        "exercise_evidence_difficulty_adapter_confidence_cap": args.exercise_evidence_difficulty_adapter_confidence_cap,
+        "exercise_evidence_difficulty_init": args.exercise_evidence_difficulty_init,
+        "exercise_evidence_difficulty_init_min_count": args.exercise_evidence_difficulty_init_min_count,
+        "exercise_evidence_difficulty_init_max_abs_logit": args.exercise_evidence_difficulty_init_max_abs_logit,
+        "exercise_evidence_difficulty_init_strength": args.exercise_evidence_difficulty_init_strength,
+        "exercise_evidence_difficulty_init_confidence_cap": args.exercise_evidence_difficulty_init_confidence_cap,
+        "exercise_evidence_difficulty_init_count": difficulty_init_count,
+        "exercise_evidence_difficulty_regularization_weight": args.exercise_evidence_difficulty_regularization_weight,
+        "exercise_evidence_difficulty_regularization_min_count": args.exercise_evidence_difficulty_regularization_min_count,
+        "exercise_evidence_difficulty_regularization_max_abs_logit": (
+            args.exercise_evidence_difficulty_regularization_max_abs_logit
+        ),
+        "exercise_evidence_difficulty_regularization_strength": (
+            args.exercise_evidence_difficulty_regularization_strength
+        ),
+        "exercise_evidence_difficulty_regularization_confidence_cap": (
+            args.exercise_evidence_difficulty_regularization_confidence_cap
+        ),
         "seed": args.seed,
         "device": resolved_device,
         "max_rows": args.max_rows,
@@ -528,10 +1050,109 @@ def main() -> None:
         "concept_evidence_readout_max_logit": args.concept_evidence_readout_max_logit,
         "concept_evidence_prior_residual": args.concept_evidence_prior_residual,
         "concept_evidence_prior_min_count": args.concept_evidence_prior_min_count,
+        "concept_evidence_prior_max_count": args.concept_evidence_prior_max_count,
         "concept_evidence_prior_min_seen_ratio": args.concept_evidence_prior_min_seen_ratio,
         "concept_evidence_prior_max_logit": args.concept_evidence_prior_max_logit,
         "concept_evidence_prior_strength": args.concept_evidence_prior_strength,
         "concept_evidence_prior_confidence_cap": args.concept_evidence_prior_confidence_cap,
+        "student_evidence_ability_prior_residual": args.student_evidence_ability_prior_residual,
+        "student_evidence_ability_prior_min_attempts": args.student_evidence_ability_prior_min_attempts,
+        "student_evidence_ability_prior_max_logit": args.student_evidence_ability_prior_max_logit,
+        "student_evidence_ability_prior_strength": args.student_evidence_ability_prior_strength,
+        "student_evidence_ability_prior_confidence_cap": args.student_evidence_ability_prior_confidence_cap,
+        "student_evidence_gs_prior_residual": args.student_evidence_gs_prior_residual,
+        "student_evidence_gs_prior_min_attempts": args.student_evidence_gs_prior_min_attempts,
+        "student_evidence_gs_prior_max_logit": args.student_evidence_gs_prior_max_logit,
+        "student_evidence_gs_prior_strength": args.student_evidence_gs_prior_strength,
+        "student_evidence_gs_prior_confidence_cap": args.student_evidence_gs_prior_confidence_cap,
+        "concept_evidence_calibrated_readout": args.concept_evidence_calibrated_readout,
+        "concept_evidence_calibrated_readout_min_count": args.concept_evidence_calibrated_readout_min_count,
+        "concept_evidence_calibrated_readout_max_count": args.concept_evidence_calibrated_readout_max_count,
+        "concept_evidence_calibrated_readout_min_seen_ratio": args.concept_evidence_calibrated_readout_min_seen_ratio,
+        "concept_evidence_calibrated_readout_max_logit": args.concept_evidence_calibrated_readout_max_logit,
+        "concept_evidence_calibrated_readout_prior_strength": args.concept_evidence_calibrated_readout_prior_strength,
+        "concept_evidence_calibrated_readout_confidence_cap": args.concept_evidence_calibrated_readout_confidence_cap,
+        "history_evidence_fusion_readout": args.history_evidence_fusion_readout,
+        "history_evidence_fusion_min_count": args.history_evidence_fusion_min_count,
+        "history_evidence_fusion_max_count": args.history_evidence_fusion_max_count,
+        "history_evidence_fusion_min_seen_ratio": args.history_evidence_fusion_min_seen_ratio,
+        "history_evidence_fusion_max_logit": args.history_evidence_fusion_max_logit,
+        "history_evidence_fusion_prior_strength": args.history_evidence_fusion_prior_strength,
+        "history_evidence_fusion_concept_confidence_cap": args.history_evidence_fusion_concept_confidence_cap,
+        "history_evidence_fusion_exercise_confidence_cap": args.history_evidence_fusion_exercise_confidence_cap,
+        "history_evidence_fusion_student_confidence_cap": args.history_evidence_fusion_student_confidence_cap,
+        "history_evidence_linear_readout": args.history_evidence_linear_readout,
+        "history_evidence_linear_min_count": args.history_evidence_linear_min_count,
+        "history_evidence_linear_max_count": args.history_evidence_linear_max_count,
+        "history_evidence_linear_min_seen_ratio": args.history_evidence_linear_min_seen_ratio,
+        "history_evidence_linear_max_logit": args.history_evidence_linear_max_logit,
+        "history_evidence_linear_prior_strength": args.history_evidence_linear_prior_strength,
+        "history_evidence_linear_concept_confidence_cap": args.history_evidence_linear_concept_confidence_cap,
+        "history_evidence_linear_exercise_confidence_cap": args.history_evidence_linear_exercise_confidence_cap,
+        "history_evidence_linear_student_confidence_cap": args.history_evidence_linear_student_confidence_cap,
+        "history_evidence_logit_prior_residual": args.history_evidence_logit_prior_residual,
+        "history_evidence_logit_prior_location": args.history_evidence_logit_prior_location,
+        "history_evidence_logit_prior_min_count": args.history_evidence_logit_prior_min_count,
+        "history_evidence_logit_prior_max_count": args.history_evidence_logit_prior_max_count,
+        "history_evidence_logit_prior_min_seen_ratio": args.history_evidence_logit_prior_min_seen_ratio,
+        "history_evidence_logit_prior_max_logit": args.history_evidence_logit_prior_max_logit,
+        "history_evidence_logit_prior_component_cap": args.history_evidence_logit_prior_component_cap,
+        "history_evidence_logit_prior_weight_student": args.history_evidence_logit_prior_weight_student,
+        "history_evidence_logit_prior_weight_exercise": args.history_evidence_logit_prior_weight_exercise,
+        "history_evidence_logit_prior_weight_target_concept": args.history_evidence_logit_prior_weight_target_concept,
+        "history_evidence_logit_prior_weight_concept": args.history_evidence_logit_prior_weight_concept,
+        "history_evidence_logit_prior_weight_mastery": args.history_evidence_logit_prior_weight_mastery,
+        "history_evidence_logit_prior_prior_weight": args.history_evidence_logit_prior_prior_weight,
+        "history_evidence_logit_prior_mastery_confidence_cap": (
+            args.history_evidence_logit_prior_mastery_confidence_cap
+        ),
+        "history_evidence_cognitive_alignment_weight": args.history_evidence_cognitive_alignment_weight,
+        "history_evidence_output_calibration": args.history_evidence_output_calibration,
+        "history_evidence_output_calibration_min_count": args.history_evidence_output_calibration_min_count,
+        "history_evidence_output_calibration_max_count": args.history_evidence_output_calibration_max_count,
+        "history_evidence_output_calibration_min_seen_ratio": (
+            args.history_evidence_output_calibration_min_seen_ratio
+        ),
+        "history_evidence_output_calibration_max_logit": args.history_evidence_output_calibration_max_logit,
+        "history_evidence_output_calibration_prior_strength": (
+            args.history_evidence_output_calibration_prior_strength
+        ),
+        "history_evidence_output_calibration_concept_confidence_cap": (
+            args.history_evidence_output_calibration_concept_confidence_cap
+        ),
+        "history_evidence_output_calibration_exercise_confidence_cap": (
+            args.history_evidence_output_calibration_exercise_confidence_cap
+        ),
+        "history_evidence_output_calibration_student_confidence_cap": (
+            args.history_evidence_output_calibration_student_confidence_cap
+        ),
+        "exercise_evidence_prior_residual": args.exercise_evidence_prior_residual,
+        "exercise_evidence_prior_min_count": args.exercise_evidence_prior_min_count,
+        "exercise_evidence_prior_max_logit": args.exercise_evidence_prior_max_logit,
+        "exercise_evidence_prior_strength": args.exercise_evidence_prior_strength,
+        "exercise_evidence_prior_confidence_cap": args.exercise_evidence_prior_confidence_cap,
+        "exercise_evidence_difficulty_adapter": args.exercise_evidence_difficulty_adapter,
+        "exercise_evidence_difficulty_adapter_min_count": args.exercise_evidence_difficulty_adapter_min_count,
+        "exercise_evidence_difficulty_adapter_max_logit": args.exercise_evidence_difficulty_adapter_max_logit,
+        "exercise_evidence_difficulty_adapter_strength": args.exercise_evidence_difficulty_adapter_strength,
+        "exercise_evidence_difficulty_adapter_confidence_cap": args.exercise_evidence_difficulty_adapter_confidence_cap,
+        "exercise_evidence_difficulty_init": args.exercise_evidence_difficulty_init,
+        "exercise_evidence_difficulty_init_min_count": args.exercise_evidence_difficulty_init_min_count,
+        "exercise_evidence_difficulty_init_max_abs_logit": args.exercise_evidence_difficulty_init_max_abs_logit,
+        "exercise_evidence_difficulty_init_strength": args.exercise_evidence_difficulty_init_strength,
+        "exercise_evidence_difficulty_init_confidence_cap": args.exercise_evidence_difficulty_init_confidence_cap,
+        "exercise_evidence_difficulty_init_count": difficulty_init_count,
+        "exercise_evidence_difficulty_regularization_weight": args.exercise_evidence_difficulty_regularization_weight,
+        "exercise_evidence_difficulty_regularization_min_count": args.exercise_evidence_difficulty_regularization_min_count,
+        "exercise_evidence_difficulty_regularization_max_abs_logit": (
+            args.exercise_evidence_difficulty_regularization_max_abs_logit
+        ),
+        "exercise_evidence_difficulty_regularization_strength": (
+            args.exercise_evidence_difficulty_regularization_strength
+        ),
+        "exercise_evidence_difficulty_regularization_confidence_cap": (
+            args.exercise_evidence_difficulty_regularization_confidence_cap
+        ),
         "seed": args.seed,
         "best_epoch": result.best_epoch,
         "best_val_auc": result.best_val_auc,

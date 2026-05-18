@@ -80,6 +80,7 @@
   - 实验 93/94
     - branch: `exp/evidence-prior-calibrated-readout`
     - 判断: 当前最符合“纯 CDM”方向的 trial candidate；history evidence 只作为训练期 cognitive alignment loss，推理时不加 output-logit sidecar，也没有 valid-trained combiner
+    - runner: `scripts/run_assist09_history_alignment_trial.sh`
     - trial config: target-concept evidence weight `0.44`、其他 evidence terms `0.22`、alignment `0.05`
     - 四 seed matched mean: `AUC +0.004828`、`ACC +0.002840`、`RMSE -0.002307`、`Brier -0.001955`、`ECE -0.001312`
     - 限制: hot config `alignment=0.08810` 虽然 seed2027 单点过线，但 seed2026 崩溃；trial 只能用 lower-strength `0.05`，下一步可测试更平滑 loss 以扩大稳定窗口

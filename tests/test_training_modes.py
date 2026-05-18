@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 from data.datasets import StepDataBundle
-from trainers.engine import train_model
+from trainers.engine import _standardized_mse_alignment_loss, train_model
 
 
 class _BiasOnlyModel(nn.Module):
@@ -70,6 +70,25 @@ class TrainingModeValidationTest(unittest.TestCase):
                 epochs=1,
                 training_mode="recompute_minibatch",
             )
+
+    def test_cognitive_alignment_weight_must_be_non_negative(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cognitive_alignment_weight"):
+            train_model(
+                train_bundle=_build_toy_bundle(),
+                model=_BiasOnlyModel(),
+                epochs=1,
+                history_evidence_cognitive_alignment_weight=-0.1,
+            )
+
+
+class CognitiveAlignmentLossTest(unittest.TestCase):
+    def test_standardized_alignment_loss_ignores_constant_target(self) -> None:
+        prediction = torch.tensor([0.1, 0.2, 0.3], dtype=torch.float32)
+        target = torch.ones(3, dtype=torch.float32)
+
+        loss = _standardized_mse_alignment_loss(prediction, target)
+
+        torch.testing.assert_close(loss, torch.tensor(0.0))
 
 
 class RecomputeMinibatchTrainingTest(unittest.TestCase):

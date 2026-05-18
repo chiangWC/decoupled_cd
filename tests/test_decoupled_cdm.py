@@ -314,6 +314,15 @@ class ConceptEvidencePriorResidualTest(unittest.TestCase):
                 concept_dim=4,
                 concept_evidence_prior_confidence_cap=0.0,
             )
+        with self.assertRaisesRegex(ValueError, "max_count"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                concept_evidence_prior_min_count=2,
+                concept_evidence_prior_max_count=1,
+            )
 
     def test_prior_uses_smoothed_target_concept_accuracy(self) -> None:
         model = DecoupledCDM(
@@ -323,10 +332,167 @@ class ConceptEvidencePriorResidualTest(unittest.TestCase):
             concept_dim=4,
             concept_evidence_prior_residual=True,
             concept_evidence_prior_min_count=2,
+            concept_evidence_prior_max_count=2,
             concept_evidence_prior_min_seen_ratio=1.0,
             concept_evidence_prior_max_logit=0.5,
             concept_evidence_prior_strength=2.0,
             concept_evidence_prior_confidence_cap=20.0,
+        )
+        q_vectors = torch.tensor(
+            [
+                [1.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+        student_concept_evidence = torch.zeros(2, 3, 6, dtype=torch.float32)
+        student_concept_evidence[0, 0] = torch.tensor([3.0, 3.0, 0.0, 1.0, 1.3862944, 1.0])
+        student_concept_evidence[0, 1] = torch.tensor([3.0, 3.0, 0.0, 1.0, 1.3862944, 1.0])
+        student_concept_evidence[0, 2] = torch.tensor([3.0, 3.0, 0.0, 1.0, 1.3862944, 1.0])
+        student_concept_evidence[1, 0] = torch.tensor([3.0, 0.0, 3.0, 0.0, 1.3862944, 1.0])
+
+        output = model._build_concept_evidence_prior_residual(
+            q_vectors=q_vectors,
+            target_student_ids=torch.tensor([0, 1, 0, 0], dtype=torch.long),
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=(
+                torch.tensor([[2.0], [2.0], [1.0], [3.0]], dtype=torch.float32),
+                torch.zeros(4, 4, dtype=torch.float32),
+                torch.zeros(4, 4, dtype=torch.float32),
+            ),
+        )
+
+        self.assertGreater(float(output[0]), 0.0)
+        torch.testing.assert_close(output[1:], torch.zeros(3, dtype=torch.float32))
+
+
+class ConceptEvidenceCalibratedReadoutTest(unittest.TestCase):
+    def test_calibrated_readout_output_layer_starts_at_zero(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=2,
+            concept_dim=4,
+            concept_evidence_calibrated_readout=True,
+        )
+
+        self.assertIsNotNone(model.concept_evidence_calibrated_readout_head)
+        final_layer = model.concept_evidence_calibrated_readout_head[-1]
+        torch.testing.assert_close(final_layer.weight, torch.zeros_like(final_layer.weight))
+        torch.testing.assert_close(final_layer.bias, torch.zeros_like(final_layer.bias))
+
+    def test_calibrated_readout_rejects_invalid_config(self) -> None:
+        with self.assertRaisesRegex(ValueError, "max_count"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                concept_evidence_calibrated_readout_min_count=2,
+                concept_evidence_calibrated_readout_max_count=1,
+            )
+        with self.assertRaisesRegex(ValueError, "min_seen_ratio"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                concept_evidence_calibrated_readout_min_seen_ratio=1.1,
+            )
+        with self.assertRaisesRegex(ValueError, "max_logit"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                concept_evidence_calibrated_readout_max_logit=0.0,
+            )
+
+    def test_calibrated_readout_is_bounded_and_triggered_by_seen_ratio(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=3,
+            concept_dim=4,
+            concept_evidence_calibrated_readout=True,
+            concept_evidence_calibrated_readout_min_count=2,
+            concept_evidence_calibrated_readout_min_seen_ratio=1.0,
+            concept_evidence_calibrated_readout_max_logit=0.25,
+        )
+        head = model.concept_evidence_calibrated_readout_head
+        self.assertIsNotNone(head)
+        with torch.no_grad():
+            head[-1].weight.zero_()
+            head[-1].bias.fill_(10.0)
+
+        q_vectors = torch.tensor(
+            [
+                [1.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+        student_concept_evidence = torch.zeros(2, 3, 6, dtype=torch.float32)
+        student_concept_evidence[0, 0] = torch.tensor([3.0, 3.0, 0.0, 1.0, 1.3862944, 1.0])
+        student_concept_evidence[0, 1] = torch.tensor([3.0, 2.0, 1.0, 2.0 / 3.0, 1.3862944, 1.0])
+        student_concept_evidence[1, 0] = torch.tensor([3.0, 0.0, 3.0, 0.0, 1.3862944, 1.0])
+
+        output = model._build_concept_evidence_calibrated_readout(
+            q_vectors=q_vectors,
+            target_student_ids=torch.tensor([0, 1, 0], dtype=torch.long),
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=(
+                torch.tensor([[2.0], [2.0], [1.0]], dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+            ),
+            difficulty=torch.zeros(3, dtype=torch.float32),
+        )
+
+        self.assertGreater(float(output[0]), 0.24)
+        self.assertLessEqual(float(output[0]), 0.25)
+        torch.testing.assert_close(output[1:], torch.zeros(2, dtype=torch.float32))
+
+class HistoryEvidenceFusionReadoutTest(unittest.TestCase):
+    def test_fusion_readout_rejects_invalid_config(self) -> None:
+        with self.assertRaisesRegex(ValueError, "fusion_min_count"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                history_evidence_fusion_min_count=0,
+            )
+        with self.assertRaisesRegex(ValueError, "fusion_max_logit"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                history_evidence_fusion_max_logit=0.0,
+            )
+        with self.assertRaisesRegex(ValueError, "student_confidence_cap"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                history_evidence_fusion_student_confidence_cap=0.0,
+            )
+
+    def test_fusion_readout_is_zero_init_bounded_and_triggered(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=3,
+            concept_dim=4,
+            history_evidence_fusion_readout=True,
+            history_evidence_fusion_min_count=2,
+            history_evidence_fusion_min_seen_ratio=0.5,
+            history_evidence_fusion_max_logit=0.25,
         )
         q_vectors = torch.tensor(
             [
@@ -338,13 +504,198 @@ class ConceptEvidencePriorResidualTest(unittest.TestCase):
         )
         student_concept_evidence = torch.zeros(2, 3, 6, dtype=torch.float32)
         student_concept_evidence[0, 0] = torch.tensor([3.0, 3.0, 0.0, 1.0, 1.3862944, 1.0])
-        student_concept_evidence[0, 1] = torch.tensor([3.0, 3.0, 0.0, 1.0, 1.3862944, 1.0])
+        student_concept_evidence[0, 1] = torch.tensor([3.0, 2.0, 1.0, 2.0 / 3.0, 1.3862944, 1.0])
         student_concept_evidence[1, 0] = torch.tensor([3.0, 0.0, 3.0, 0.0, 1.3862944, 1.0])
+        exercise_evidence = torch.tensor(
+            [
+                [4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0],
+                [4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0],
+                [4.0, 2.0, 2.0, 0.5, 1.6094379, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+        student_exercise_mask = torch.ones(2, 3, dtype=torch.float32)
+        response_matrix = torch.tensor(
+            [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0]],
+            dtype=torch.float32,
+        )
+        kwargs = {
+            "q_vectors": q_vectors,
+            "target_student_ids": torch.tensor([0, 1, 0], dtype=torch.long),
+            "target_exercise_ids": torch.tensor([0, 1, 2], dtype=torch.long),
+            "student_concept_evidence": student_concept_evidence,
+            "exercise_evidence": exercise_evidence,
+            "student_exercise_mask": student_exercise_mask,
+            "response_matrix": response_matrix,
+            "concept_summary": (
+                torch.tensor([[2.0], [2.0], [1.0]], dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+            ),
+            "difficulty": torch.zeros(3, dtype=torch.float32),
+        }
 
-        output = model._build_concept_evidence_prior_residual(
+        zero_output = model._build_history_evidence_fusion_readout(**kwargs)
+        torch.testing.assert_close(zero_output, torch.zeros(3, dtype=torch.float32))
+
+        with torch.no_grad():
+            model.history_evidence_fusion_readout_head[-1].bias.fill_(3.0)
+        output = model._build_history_evidence_fusion_readout(**kwargs)
+        self.assertGreater(float(output[0]), 0.24)
+        self.assertGreater(float(output[1]), 0.24)
+        torch.testing.assert_close(output[2:], torch.zeros(1, dtype=torch.float32))
+        self.assertLessEqual(float(output.abs().max()), 0.25)
+
+class HistoryEvidenceLinearReadoutTest(unittest.TestCase):
+    def test_linear_readout_is_zero_init_bounded_and_signed(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=3,
+            concept_dim=4,
+            history_evidence_linear_readout=True,
+            history_evidence_linear_min_count=2,
+            history_evidence_linear_min_seen_ratio=0.5,
+            history_evidence_linear_max_logit=0.25,
+        )
+        q_vectors = torch.tensor(
+            [[1.0, 1.0, 0.0], [1.0, 1.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=torch.float32,
+        )
+        student_concept_evidence = torch.zeros(2, 3, 6, dtype=torch.float32)
+        student_concept_evidence[0, 0] = torch.tensor([4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0])
+        student_concept_evidence[0, 1] = torch.tensor([4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0])
+        student_concept_evidence[1, 0] = torch.tensor([4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0])
+        student_concept_evidence[1, 1] = torch.tensor([4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0])
+        exercise_evidence = torch.tensor(
+            [
+                [4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0],
+                [4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0],
+                [4.0, 2.0, 2.0, 0.5, 1.6094379, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+        student_exercise_mask = torch.ones(2, 3, dtype=torch.float32)
+        response_matrix = torch.tensor(
+            [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0]],
+            dtype=torch.float32,
+        )
+        kwargs = {
+            "q_vectors": q_vectors,
+            "target_student_ids": torch.tensor([0, 1, 0], dtype=torch.long),
+            "target_exercise_ids": torch.tensor([0, 1, 2], dtype=torch.long),
+            "student_concept_evidence": student_concept_evidence,
+            "exercise_evidence": exercise_evidence,
+            "student_exercise_mask": student_exercise_mask,
+            "response_matrix": response_matrix,
+            "concept_summary": (
+                torch.tensor([[2.0], [2.0], [1.0]], dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+                torch.zeros(3, 4, dtype=torch.float32),
+            ),
+        }
+
+        zero_output = model._build_history_evidence_linear_readout(**kwargs)
+        torch.testing.assert_close(zero_output, torch.zeros(3, dtype=torch.float32))
+
+        with torch.no_grad():
+            model.history_evidence_linear_weights.fill_(1.0)
+        output = model._build_history_evidence_linear_readout(**kwargs)
+        self.assertGreater(float(output[0]), 0.0)
+        self.assertLess(float(output[1]), 0.0)
+        torch.testing.assert_close(output[2:], torch.zeros(1, dtype=torch.float32))
+        self.assertLessEqual(float(output.abs().max()), 0.25)
+
+
+class HistoryEvidenceLogitPriorResidualTest(unittest.TestCase):
+    def test_logit_prior_rejects_invalid_config(self) -> None:
+        with self.assertRaisesRegex(ValueError, "logit_prior_min_count"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                history_evidence_logit_prior_min_count=0,
+            )
+        with self.assertRaisesRegex(ValueError, "logit_prior_max_logit"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                history_evidence_logit_prior_max_logit=0.0,
+            )
+        with self.assertRaisesRegex(ValueError, "prior_weight"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                history_evidence_logit_prior_prior_weight=0.0,
+            )
+        with self.assertRaisesRegex(ValueError, "logit_prior_location"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                history_evidence_logit_prior_location="unknown",
+            )
+        DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=2,
+            concept_dim=4,
+            history_evidence_logit_prior_location="loss_only",
+        )
+
+    def test_logit_prior_is_bounded_signed_and_triggered(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=3,
+            concept_dim=4,
+            history_evidence_logit_prior_residual=True,
+            history_evidence_logit_prior_min_count=2,
+            history_evidence_logit_prior_min_seen_ratio=0.5,
+            history_evidence_logit_prior_max_logit=0.25,
+            history_evidence_logit_prior_weight_student=1.0,
+            history_evidence_logit_prior_weight_exercise=1.0,
+            history_evidence_logit_prior_weight_target_concept=1.0,
+            history_evidence_logit_prior_weight_concept=0.0,
+            history_evidence_logit_prior_weight_mastery=1.0,
+        )
+        q_vectors = torch.tensor(
+            [[1.0, 1.0, 0.0], [1.0, 1.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=torch.float32,
+        )
+        student_concept_evidence = torch.zeros(2, 3, 6, dtype=torch.float32)
+        student_concept_evidence[0, 0] = torch.tensor([4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0])
+        student_concept_evidence[0, 1] = torch.tensor([4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0])
+        student_concept_evidence[1, 0] = torch.tensor([4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0])
+        student_concept_evidence[1, 1] = torch.tensor([4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0])
+        exercise_evidence = torch.tensor(
+            [
+                [4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0],
+                [4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0],
+                [4.0, 2.0, 2.0, 0.5, 1.6094379, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+        student_exercise_mask = torch.ones(2, 3, dtype=torch.float32)
+        response_matrix = torch.tensor(
+            [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0]],
+            dtype=torch.float32,
+        )
+
+        output = model._build_history_evidence_logit_prior_residual(
             q_vectors=q_vectors,
             target_student_ids=torch.tensor([0, 1, 0], dtype=torch.long),
+            target_exercise_ids=torch.tensor([0, 1, 2], dtype=torch.long),
             student_concept_evidence=student_concept_evidence,
+            exercise_evidence=exercise_evidence,
+            student_exercise_mask=student_exercise_mask,
+            response_matrix=response_matrix,
             concept_summary=(
                 torch.tensor([[2.0], [2.0], [1.0]], dtype=torch.float32),
                 torch.zeros(3, 4, dtype=torch.float32),
@@ -353,7 +704,256 @@ class ConceptEvidencePriorResidualTest(unittest.TestCase):
         )
 
         self.assertGreater(float(output[0]), 0.0)
-        torch.testing.assert_close(output[1:], torch.zeros(2, dtype=torch.float32))
+        self.assertLess(float(output[1]), 0.0)
+        torch.testing.assert_close(output[2:], torch.zeros(1, dtype=torch.float32))
+        self.assertLessEqual(float(output.abs().max()), 0.25)
+
+
+class HistoryEvidenceOutputCalibrationTest(unittest.TestCase):
+    def test_output_calibration_head_starts_at_zero(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=3,
+            num_concepts=2,
+            concept_dim=4,
+            history_evidence_output_calibration=True,
+        )
+
+        self.assertIsNotNone(model.history_evidence_output_calibration_head)
+        final_layer = model.history_evidence_output_calibration_head[-1]
+        torch.testing.assert_close(final_layer.weight, torch.zeros_like(final_layer.weight))
+        torch.testing.assert_close(final_layer.bias, torch.zeros_like(final_layer.bias))
+
+
+class ExerciseEvidencePriorResidualTest(unittest.TestCase):
+    def test_prior_rejects_invalid_config(self) -> None:
+        with self.assertRaisesRegex(ValueError, "min_count"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                exercise_evidence_prior_min_count=0,
+            )
+        with self.assertRaisesRegex(ValueError, "max_logit"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                exercise_evidence_prior_max_logit=0.0,
+            )
+        with self.assertRaisesRegex(ValueError, "strength"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                exercise_evidence_prior_strength=0.0,
+            )
+        with self.assertRaisesRegex(ValueError, "confidence_cap"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                exercise_evidence_prior_confidence_cap=0.0,
+            )
+
+    def test_prior_uses_smoothed_exercise_ease_with_count_trigger(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=4,
+            num_concepts=2,
+            concept_dim=4,
+            exercise_evidence_prior_residual=True,
+            exercise_evidence_prior_min_count=3,
+            exercise_evidence_prior_max_logit=0.25,
+            exercise_evidence_prior_strength=2.0,
+            exercise_evidence_prior_confidence_cap=20.0,
+        )
+        exercise_evidence = torch.tensor(
+            [
+                [4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0],
+                [4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0],
+                [2.0, 2.0, 0.0, 1.0, 1.0986123, 1.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        output = model._build_exercise_evidence_prior_residual(
+            target_exercise_ids=torch.tensor([0, 1, 2, 3], dtype=torch.long),
+            exercise_evidence=exercise_evidence,
+            q_vectors=torch.zeros(4, 2, dtype=torch.float32),
+        )
+
+        self.assertGreater(float(output[0]), 0.0)
+        self.assertLess(float(output[1]), 0.0)
+        torch.testing.assert_close(output[2:], torch.zeros(2, dtype=torch.float32))
+        self.assertLessEqual(float(output.abs().max()), 0.25)
+
+
+class StudentEvidenceAbilityPriorResidualTest(unittest.TestCase):
+    def test_student_ability_prior_rejects_invalid_config(self) -> None:
+        with self.assertRaisesRegex(ValueError, "min_attempts"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                student_evidence_ability_prior_min_attempts=0,
+            )
+        with self.assertRaisesRegex(ValueError, "max_logit"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                student_evidence_ability_prior_max_logit=0.0,
+            )
+
+    def test_student_ability_prior_uses_global_history_with_count_trigger(self) -> None:
+        model = DecoupledCDM(
+            num_students=3,
+            num_exercises=4,
+            num_concepts=2,
+            concept_dim=4,
+            student_evidence_ability_prior_residual=True,
+            student_evidence_ability_prior_min_attempts=3,
+            student_evidence_ability_prior_max_logit=0.25,
+            student_evidence_ability_prior_strength=2.0,
+            student_evidence_ability_prior_confidence_cap=20.0,
+        )
+        student_exercise_mask = torch.tensor(
+            [
+                [1.0, 1.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0, 1.0],
+                [1.0, 1.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+        response_matrix = torch.tensor(
+            [
+                [1.0, 1.0, 1.0, 1.0],
+                [0.0, 0.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        output = model._build_student_evidence_ability_prior_residual(
+            target_student_ids=torch.tensor([0, 1, 2], dtype=torch.long),
+            student_exercise_mask=student_exercise_mask,
+            response_matrix=response_matrix,
+            q_vectors=torch.zeros(3, 2, dtype=torch.float32),
+        )
+
+        self.assertGreater(float(output[0]), 0.0)
+        self.assertLess(float(output[1]), 0.0)
+        torch.testing.assert_close(output[2:], torch.zeros(1, dtype=torch.float32))
+        self.assertLessEqual(float(output.abs().max()), 0.25)
+
+
+class ExerciseEvidenceDifficultyAdapterTest(unittest.TestCase):
+    def test_adapter_rejects_invalid_config(self) -> None:
+        with self.assertRaisesRegex(ValueError, "adapter_min_count"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                exercise_evidence_difficulty_adapter_min_count=0,
+            )
+        with self.assertRaisesRegex(ValueError, "adapter_max_logit"):
+            DecoupledCDM(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=2,
+                concept_dim=4,
+                exercise_evidence_difficulty_adapter_max_logit=0.0,
+            )
+
+    def test_adapter_is_zero_init_and_learns_global_ease_slope(self) -> None:
+        model = DecoupledCDM(
+            num_students=2,
+            num_exercises=4,
+            num_concepts=2,
+            concept_dim=4,
+            exercise_evidence_difficulty_adapter=True,
+            exercise_evidence_difficulty_adapter_min_count=3,
+            exercise_evidence_difficulty_adapter_max_logit=0.25,
+            exercise_evidence_difficulty_adapter_strength=2.0,
+            exercise_evidence_difficulty_adapter_confidence_cap=20.0,
+        )
+        exercise_evidence = torch.tensor(
+            [
+                [4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0],
+                [4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0],
+                [2.0, 2.0, 0.0, 1.0, 1.0986123, 1.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+        target_ids = torch.tensor([0, 1, 2, 3], dtype=torch.long)
+        q_vectors = torch.zeros(4, 2, dtype=torch.float32)
+
+        zero_output = model._build_exercise_evidence_difficulty_adapter(
+            target_exercise_ids=target_ids,
+            exercise_evidence=exercise_evidence,
+            q_vectors=q_vectors,
+        )
+        torch.testing.assert_close(zero_output, torch.zeros(4, dtype=torch.float32))
+
+        with torch.no_grad():
+            model.exercise_evidence_difficulty_adapter_scale.fill_(1.0)
+        learned_output = model._build_exercise_evidence_difficulty_adapter(
+            target_exercise_ids=target_ids,
+            exercise_evidence=exercise_evidence,
+            q_vectors=q_vectors,
+        )
+        self.assertGreater(float(learned_output[0]), 0.0)
+        self.assertLess(float(learned_output[1]), 0.0)
+        torch.testing.assert_close(learned_output[2:], torch.zeros(2, dtype=torch.float32))
+        self.assertLessEqual(float(learned_output.abs().max()), 0.25)
+
+
+class ExerciseEvidenceDifficultyInitTest(unittest.TestCase):
+    def test_initializes_difficulty_with_inverse_exercise_ease(self) -> None:
+        model = DecoupledCDM(num_students=2, num_exercises=4, num_concepts=2, concept_dim=4)
+        with torch.no_grad():
+            model.exercise_difficulty.weight.zero_()
+        exercise_evidence = torch.tensor(
+            [
+                [4.0, 4.0, 0.0, 1.0, 1.6094379, 1.0],
+                [4.0, 0.0, 4.0, 0.0, 1.6094379, 1.0],
+                [2.0, 2.0, 0.0, 1.0, 1.0986123, 1.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        initialized_count = model.initialize_exercise_difficulty_from_evidence(
+            exercise_evidence=exercise_evidence,
+            min_count=3,
+            max_abs_logit=0.25,
+            strength=2.0,
+            confidence_cap=20.0,
+        )
+
+        weights = model.exercise_difficulty.weight[:, 0].detach()
+        self.assertEqual(initialized_count, 2)
+        self.assertLess(float(weights[0]), 0.0)
+        self.assertGreater(float(weights[1]), 0.0)
+        torch.testing.assert_close(weights[2:], torch.zeros(2, dtype=torch.float32))
+        self.assertLessEqual(float(weights.abs().max()), 0.25)
+
+    def test_difficulty_init_rejects_invalid_evidence_shape(self) -> None:
+        model = DecoupledCDM(num_students=2, num_exercises=4, num_concepts=2, concept_dim=4)
+        with self.assertRaisesRegex(ValueError, "one row per exercise"):
+            model.initialize_exercise_difficulty_from_evidence(
+                exercise_evidence=torch.zeros(3, 6, dtype=torch.float32),
+            )
 
 
 if __name__ == "__main__":

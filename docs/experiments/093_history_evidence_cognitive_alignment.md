@@ -74,6 +74,7 @@ The first over-threshold configuration, `target-concept doubled` with alignment 
 
 A lower-strength fixed configuration is stable across all four seeds:
 
+- trial runner: `scripts/run_assist09_history_alignment_trial.sh`
 - output pattern: `results/pure_cdm_hybrid_signal/seed{seed}_history_alignment_tc2w005_300ep.json`
 - target evidence weights:
   - student: `0.22`
