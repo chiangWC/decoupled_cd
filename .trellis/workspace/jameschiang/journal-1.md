@@ -105,3 +105,46 @@ Committed experiment 82 and 83 ledger docs, synced the doc-only ledger commit ba
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Pure CDM history alignment trial
+
+**Date**: 2026-05-18
+**Task**: Pure CDM history alignment trial
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Merged the loss-only history-evidence cognitive alignment trial path into exp/trellis-trial, fixed exercise evidence bundle support, validated the cogonly CF-risk ablation, set the active pure-CDM trial runner to cogonly, and cleaned the experiment ledger/handoff so experiments 93, 94, and 95 have separate docs and concise routing.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7e91b0b` | (see git log) |
+| `ea1e23e` | (see git log) |
+| `a198cb4` | (see git log) |
+| `7bccb4d` | (see git log) |
+| `5e96486` | (see git log) |
+| `ebe6cef` | (see git log) |
+| `69a9bde` | (see git log) |
+| `3301515` | (see git log) |
+| `b97cacc` | (see git log) |
+| `29c23a6` | (see git log) |
+| `223ecf0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
