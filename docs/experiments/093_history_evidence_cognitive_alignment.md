@@ -94,6 +94,46 @@ A lower-strength fixed configuration is stable across all four seeds:
 
 This lower-strength configuration is the trial candidate. It does not hit the corrected high-water stop line on seed2027 alone, but it clears `+0.004` on four-seed matched mean and removes the seed2026 collapse.
 
+## CF-Risk Component Ablation
+
+To test whether the stable signal is mostly a CF-style student/exercise shortcut, two additional four-seed ablations were run at the same alignment weight `0.05`.
+
+`cogonly` removes the strongest CF-flavored terms:
+
+- output pattern: `results/pure_cdm_hybrid_signal/seed{seed}_history_alignment_cogonly_w005_300ep.json`
+- student: `0.0`
+- exercise: `0.0`
+- target concept: `0.44`
+- global concept: `0.22`
+- mastery: `0.22`
+
+| seed | baseline auc | cogonly auc | auc delta | acc delta | rmse delta | brier delta | ece delta |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2024 | 0.767478 | 0.777843 | +0.010365 | +0.001009 | -0.003563 | -0.003020 | -0.001201 |
+| 2025 | 0.771661 | 0.776440 | +0.004779 | +0.003083 | -0.002497 | -0.002114 | -0.005367 |
+| 2026 | 0.771263 | 0.774669 | +0.003407 | +0.002360 | -0.002254 | -0.001909 | -0.003431 |
+| 2027 | 0.772682 | 0.776163 | +0.003481 | +0.005081 | -0.002448 | -0.002071 | -0.006565 |
+| mean | 0.770771 | 0.776279 | +0.005508 | +0.002883 | -0.002690 | -0.002279 | -0.004141 |
+
+`cfonly` keeps only the CF-flavored student/exercise terms:
+
+- output pattern: `results/pure_cdm_hybrid_signal/seed{seed}_history_alignment_cfonly_w005_300ep.json`
+- student: `0.22`
+- exercise: `0.22`
+- target concept: `0.0`
+- global concept: `0.0`
+- mastery: `0.0`
+
+| seed | baseline auc | cfonly auc | auc delta | acc delta | rmse delta | brier delta | ece delta |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2024 | 0.767478 | 0.775300 | +0.007822 | -0.001808 | -0.001443 | -0.001226 | +0.006390 |
+| 2025 | 0.771661 | 0.774789 | +0.003128 | +0.003273 | -0.001521 | -0.001289 | +0.001953 |
+| 2026 | 0.771263 | 0.772312 | +0.001049 | +0.001998 | -0.000465 | -0.000395 | +0.004550 |
+| 2027 | 0.772682 | 0.772440 | -0.000241 | +0.001656 | -0.000007 | -0.000006 | +0.002710 |
+| mean | 0.770771 | 0.773710 | +0.002939 | +0.001280 | -0.000859 | -0.000729 | +0.003901 |
+
+The ablation rejects the strongest shortcut concern: the student/exercise-only target is weaker and worsens ECE, while the concept/mastery-only target is stronger than the previously recorded full trial config and improves all secondary metrics on mean. The trial runner now uses the cleaner `cogonly` configuration.
+
 ## Sweep Notes
 
 Equal five-term target on seed2027:
@@ -152,4 +192,4 @@ This is the first pure CDM training-objective family with both:
 
 It should enter trial as the lower-strength `alignment=0.05` candidate, not as the hotter `0.08810` point. The hot point is useful for proving headroom, but seed2026 shows it is too brittle for default use.
 
-Do not promote directly to the default run script yet. Next step: add a named trial runner or trial branch config for the stable `0.05` setting, then optionally test a smoother bounded/correlation alignment loss to recover some seed2027 headroom without reintroducing the seed2026 collapse.
+The cleaner trial version should use `cogonly`: target-concept/global-concept/mastery evidence only, with student and exercise direct history terms disabled. Do not promote directly to the default run script yet. Next step: test a smoother bounded/correlation alignment loss to recover some seed2027 headroom without reintroducing the seed2026 collapse.

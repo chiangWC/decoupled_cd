@@ -13,8 +13,8 @@ OUTPUT="${OUTPUT:-${OUTPUT_DEFAULT}}" \
     --history-evidence-logit-prior-min-seen-ratio 0.0 \
     --history-evidence-logit-prior-max-logit 4.0 \
     --history-evidence-logit-prior-component-cap 4.0 \
-    --history-evidence-logit-prior-weight-student 0.22 \
-    --history-evidence-logit-prior-weight-exercise 0.22 \
+    --history-evidence-logit-prior-weight-student 0.0 \
+    --history-evidence-logit-prior-weight-exercise 0.0 \
     --history-evidence-logit-prior-weight-target-concept 0.44 \
     --history-evidence-logit-prior-weight-concept 0.22 \
     --history-evidence-logit-prior-weight-mastery 0.22 \

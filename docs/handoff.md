@@ -144,11 +144,12 @@
   - hot config: target-concept weight `0.44`、其他 evidence terms `0.22`、alignment `0.08810`
     - seed2027 `test_auc 0.776868`，相对 `0.772682` 为 `+0.004187`
     - 但 seed2026 会崩溃到 `test_auc 0.504198`，所以不要把 hot config 合入 trial
-  - trial config: target-concept weight `0.44`、其他 evidence terms `0.22`、alignment `0.05`
+  - trial config after CF-risk ablation: student/exercise direct terms `0.0`、target-concept `0.44`、global-concept/mastery `0.22`、alignment `0.05`
     - runner: `scripts/run_assist09_history_alignment_trial.sh`
-    - seeds 2024/2025/2026/2027 matched mean: `AUC +0.004828`、`ACC +0.002840`、`RMSE -0.002307`、`Brier -0.001955`、`ECE -0.001312`
-    - 四个 seed AUC 全部正向，最弱 seed2026 仍 `+0.002439`
-  - 判断: lower-strength `0.05` 可以作为 trial candidate；仍不要直接改默认 run script，下一步应固化 trial runner/config，并可继续探索 smoother alignment loss。详细结果见 [093_history_evidence_cognitive_alignment.md](./experiments/093_history_evidence_cognitive_alignment.md)。
+    - seeds 2024/2025/2026/2027 matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
+    - 四个 seed AUC 全部正向，最弱 seed2026 仍 `+0.003407`
+    - CF-risk 对照: 只保留 student/exercise 的 `cfonly` 均值只有 `AUC +0.002939`，且 `ECE +0.003901`
+  - 判断: lower-strength `0.05 cogonly` 可以作为 trial candidate；仍不要直接改默认 run script，下一步可继续探索 smoother alignment loss。详细结果见 [093_history_evidence_cognitive_alignment.md](./experiments/093_history_evidence_cognitive_alignment.md)。
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
