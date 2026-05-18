@@ -138,13 +138,16 @@
   - seed2027 high-water checkpoint 上结果: `test_auc 0.776813`，相对 `0.772682` 为 `+0.004132`
   - 副作用: `ACC -0.000285`、`RMSE +0.004140`、`Brier +0.003531`、`ECE +0.029074`
   - 判断: 满足 corrected high-water AUC 停止线，但只是 interpretable deterministic readout-prior diagnostic；不要合入默认 run script，也不要把它称为纯 cognitive CDM。详细结果见 [092_history_evidence_output_logit_prior.md](./experiments/092_history_evidence_output_logit_prior.md)。
-- 实验 93 已给出纯 CDM 训练目标的过线信号:
+- 实验 93/94 已给出纯 CDM 训练目标的 trial candidate:
   - branch: `exp/evidence-prior-calibrated-readout`
   - 机制: `history_evidence_logit_prior_location=loss_only` 暴露固定 train-history evidence prior 给训练器，用标准化 MSE alignment 约束 cognitive logits；推理时不加 output-logit prior，也没有 valid-trained combiner
-  - best: target-concept weight `0.44`、其他 evidence terms `0.22`、alignment `0.08810`
-  - seed2027 结果: `test_auc 0.776868`，相对 `0.772682` 为 `+0.004187`，超过停止线 `0.776682`
-  - 次要指标同向: `ACC +0.004643`、`RMSE -0.003158`、`Brier -0.002670`、`ECE -0.009771`
-  - 判断: 这是当前最干净的纯 CDM 方向信号；但有效 alignment 窗口很窄，`0.08815` 回到线下、`0.0882+` 早期崩溃。下一步先做多 seed 稳定性验证或改 smoother alignment loss，不要直接改默认 run script。详细结果见 [093_history_evidence_cognitive_alignment.md](./experiments/093_history_evidence_cognitive_alignment.md)。
+  - hot config: target-concept weight `0.44`、其他 evidence terms `0.22`、alignment `0.08810`
+    - seed2027 `test_auc 0.776868`，相对 `0.772682` 为 `+0.004187`
+    - 但 seed2026 会崩溃到 `test_auc 0.504198`，所以不要把 hot config 合入 trial
+  - trial config: target-concept weight `0.44`、其他 evidence terms `0.22`、alignment `0.05`
+    - seeds 2024/2025/2026/2027 matched mean: `AUC +0.004828`、`ACC +0.002840`、`RMSE -0.002307`、`Brier -0.001955`、`ECE -0.001312`
+    - 四个 seed AUC 全部正向，最弱 seed2026 仍 `+0.002439`
+  - 判断: lower-strength `0.05` 可以作为 trial candidate；仍不要直接改默认 run script，下一步应固化 trial runner/config，并可继续探索 smoother alignment loss。详细结果见 [093_history_evidence_cognitive_alignment.md](./experiments/093_history_evidence_cognitive_alignment.md)。
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`

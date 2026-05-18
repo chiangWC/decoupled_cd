@@ -2,7 +2,7 @@
 
 ## Status
 
-`pure_cdm_signal_confirmed`, not promoted.
+`trial_candidate_confirmed`, not promoted to default.
 
 ## Question
 
@@ -33,7 +33,7 @@ Current exp81 high-water reference:
 
 Stopping threshold: `0.7766816125195809`.
 
-## Primary Result
+## Primary Seed2027 Result
 
 Best seed2027 pure-CDM alignment probe:
 
@@ -60,6 +60,38 @@ Unlike experiment 92's output-logit prior, this result improves the secondary me
 - `RMSE -0.0031582315766473455`
 - `Brier -0.002670414863527038`
 - `ECE -0.009771306113420334`
+
+## Trial Validation
+
+The first over-threshold configuration, `target-concept doubled` with alignment `0.08810`, does **not** pass multi-seed admission because seed2026 collapses:
+
+| seed | baseline auc | candidate auc | auc delta | acc delta | rmse delta | brier delta | ece delta |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2024 | 0.767478 | 0.777905 | +0.010427 | +0.004015 | -0.004757 | -0.004027 | -0.002236 |
+| 2025 | 0.771661 | 0.777100 | +0.005439 | +0.004168 | -0.003354 | -0.002837 | -0.007843 |
+| 2026 | 0.771263 | 0.504198 | -0.267064 | -0.209994 | +0.090136 | +0.084680 | +0.114341 |
+| 2027 | 0.772682 | 0.776868 | +0.004187 | +0.004643 | -0.003158 | -0.002670 | -0.009771 |
+
+A lower-strength fixed configuration is stable across all four seeds:
+
+- output pattern: `results/pure_cdm_hybrid_signal/seed{seed}_history_alignment_tc2w005_300ep.json`
+- target evidence weights:
+  - student: `0.22`
+  - exercise: `0.22`
+  - target concept: `0.44`
+  - global concept: `0.22`
+  - mastery: `0.22`
+- alignment weight: `0.05`
+
+| seed | baseline auc | candidate auc | auc delta | acc delta | rmse delta | brier delta | ece delta |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2024 | 0.767478 | 0.777399 | +0.009921 | +0.002265 | -0.004001 | -0.003389 | -0.001980 |
+| 2025 | 0.771661 | 0.776005 | +0.004344 | +0.002778 | -0.002116 | -0.001792 | -0.001835 |
+| 2026 | 0.771263 | 0.773702 | +0.002439 | +0.002379 | -0.001364 | -0.001156 | +0.001247 |
+| 2027 | 0.772682 | 0.775291 | +0.002609 | +0.003939 | -0.001748 | -0.001480 | -0.002681 |
+| mean | 0.770771 | 0.775599 | +0.004828 | +0.002840 | -0.002307 | -0.001955 | -0.001312 |
+
+This lower-strength configuration is the trial candidate. It does not hit the corrected high-water stop line on seed2027 alone, but it clears `+0.004` on four-seed matched mean and removes the seed2026 collapse.
 
 ## Sweep Notes
 
@@ -112,12 +144,11 @@ Seed2024 check for equal target `alignment=0.01`:
 
 ## Interpretation
 
-This is the first corrected high-water over-threshold signal in the pure CDM direction: the history evidence is used only as a train-time cognitive alignment objective, and final test predictions do not receive an output-logit sidecar.
+This is the first pure CDM training-objective family with both:
 
-It should not be promoted directly yet:
+- a corrected high-water single-seed signal (`alignment=0.08810`, seed2027 AUC `+0.004187`)
+- a four-seed matched trial candidate (`alignment=0.05`, mean AUC `+0.004828`)
 
-- The useful alignment window is narrow; equal target collapses around `0.0882`, and target-concept doubled needs `0.08810` specifically to clear the threshold.
-- Only seed2027 has the over-threshold configuration so far.
-- The result is still a training-objective change, not evidence that the default run script should change.
+It should enter trial as the lower-strength `alignment=0.05` candidate, not as the hotter `0.08810` point. The hot point is useful for proving headroom, but seed2026 shows it is too brittle for default use.
 
-Next step: validate the `target-concept doubled, alignment=0.08810` configuration on additional seeds, and test a smoother bounded/correlation loss to widen the stability window before any default-mainline discussion.
+Do not promote directly to the default run script yet. Next step: add a named trial runner or trial branch config for the stable `0.05` setting, then optionally test a smoother bounded/correlation alignment loss to recover some seed2027 headroom without reintroducing the seed2026 collapse.
