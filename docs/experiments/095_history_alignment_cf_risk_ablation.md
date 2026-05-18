@@ -34,7 +34,8 @@ Parent detail:
 
 - experiment 93: single-seed high-water `loss_only` cognitive alignment signal
 - experiment 94: first four-seed lower-strength trial validation with full target weights
-- detail doc: [093_history_evidence_cognitive_alignment.md](./093_history_evidence_cognitive_alignment.md)
+- experiment 93 detail: [093_history_evidence_cognitive_alignment.md](./093_history_evidence_cognitive_alignment.md)
+- experiment 94 detail: [094_history_alignment_trial_validation.md](./094_history_alignment_trial_validation.md)
 
 Matched baselines:
 

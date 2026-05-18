@@ -85,7 +85,7 @@
     - 四 seed matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
     - 对照: full 配置均值 `AUC +0.004828`；`cfonly` 配置均值只有 `AUC +0.002939` 且 `ECE +0.003901`
     - 限制: hot config `alignment=0.08810` 虽然 seed2027 单点过线，但 seed2026 崩溃；trial 只能用 lower-strength `0.05`，下一步可测试更平滑 loss 以扩大稳定窗口
-    - 详细指标见 `docs/experiments/095_history_alignment_cf_risk_ablation.md`；父实验 93/94 的原始 alignment family 和 full trial validation 见 `docs/experiments/093_history_evidence_cognitive_alignment.md`
+    - 详细指标见 `docs/experiments/095_history_alignment_cf_risk_ablation.md`；父实验 93 的原始 alignment family 见 `docs/experiments/093_history_evidence_cognitive_alignment.md`，实验 94 的 full trial validation 见 `docs/experiments/094_history_alignment_trial_validation.md`
   - 实验 92
     - branch: `exp/evidence-prior-calibrated-readout`
     - 判断: 这是解释 experiment 91/93 信号来源的重要 readout-prior 诊断；固定 `equal0.22` train-history evidence output-logit prior 在 seed2027 high-water checkpoint 上 `test_auc 0.776813`，超过修正停止线 `0.776682`

@@ -61,40 +61,11 @@ Unlike experiment 92's output-logit prior, this result improves the secondary me
 - `Brier -0.002670414863527038`
 - `ECE -0.009771306113420334`
 
-## Trial Validation
+## Follow-Ups
 
-The first over-threshold configuration, `target-concept doubled` with alignment `0.08810`, does **not** pass multi-seed admission because seed2026 collapses:
+Experiment 94 tests multi-seed stability and rejects the hot `0.08810` point as too brittle; see [094_history_alignment_trial_validation.md](./094_history_alignment_trial_validation.md).
 
-| seed | baseline auc | candidate auc | auc delta | acc delta | rmse delta | brier delta | ece delta |
-|---:|---:|---:|---:|---:|---:|---:|---:|
-| 2024 | 0.767478 | 0.777905 | +0.010427 | +0.004015 | -0.004757 | -0.004027 | -0.002236 |
-| 2025 | 0.771661 | 0.777100 | +0.005439 | +0.004168 | -0.003354 | -0.002837 | -0.007843 |
-| 2026 | 0.771263 | 0.504198 | -0.267064 | -0.209994 | +0.090136 | +0.084680 | +0.114341 |
-| 2027 | 0.772682 | 0.776868 | +0.004187 | +0.004643 | -0.003158 | -0.002670 | -0.009771 |
-
-A lower-strength fixed configuration is stable across all four seeds:
-
-- trial runner: `scripts/run_assist09_history_alignment_trial.sh`
-- output pattern: `results/pure_cdm_hybrid_signal/seed{seed}_history_alignment_tc2w005_300ep.json`
-- target evidence weights:
-  - student: `0.22`
-  - exercise: `0.22`
-  - target concept: `0.44`
-  - global concept: `0.22`
-  - mastery: `0.22`
-- alignment weight: `0.05`
-
-| seed | baseline auc | candidate auc | auc delta | acc delta | rmse delta | brier delta | ece delta |
-|---:|---:|---:|---:|---:|---:|---:|---:|
-| 2024 | 0.767478 | 0.777399 | +0.009921 | +0.002265 | -0.004001 | -0.003389 | -0.001980 |
-| 2025 | 0.771661 | 0.776005 | +0.004344 | +0.002778 | -0.002116 | -0.001792 | -0.001835 |
-| 2026 | 0.771263 | 0.773702 | +0.002439 | +0.002379 | -0.001364 | -0.001156 | +0.001247 |
-| 2027 | 0.772682 | 0.775291 | +0.002609 | +0.003939 | -0.001748 | -0.001480 | -0.002681 |
-| mean | 0.770771 | 0.775599 | +0.004828 | +0.002840 | -0.002307 | -0.001955 | -0.001312 |
-
-This lower-strength configuration was the first stable trial candidate. It does not hit the corrected high-water stop line on seed2027 alone, but it clears `+0.004` on four-seed matched mean and removes the seed2026 collapse.
-
-Follow-up: experiment 95 isolates CF-risk components and refines the named trial runner to `cogonly`; see [095_history_alignment_cf_risk_ablation.md](./095_history_alignment_cf_risk_ablation.md).
+Experiment 95 isolates CF-risk components and refines the named trial runner to `cogonly`; see [095_history_alignment_cf_risk_ablation.md](./095_history_alignment_cf_risk_ablation.md).
 
 ## Sweep Notes
 
@@ -147,11 +118,6 @@ Seed2024 check for equal target `alignment=0.01`:
 
 ## Interpretation
 
-This is the first pure CDM training-objective family with both:
+This is the first pure CDM training-objective family with a corrected high-water single-seed signal: `alignment=0.08810` reaches seed2027 AUC `+0.004187` versus the current exp81 high-water reference.
 
-- a corrected high-water single-seed signal (`alignment=0.08810`, seed2027 AUC `+0.004187`)
-- a four-seed matched first trial candidate (`alignment=0.05`, mean AUC `+0.004828`)
-
-This experiment should not enter trial as the hotter `0.08810` point. The hot point is useful for proving headroom, but seed2026 shows it is too brittle for default use.
-
-Experiment 95 supersedes the full lower-strength configuration with the cleaner `cogonly` runner: target-concept/global-concept/mastery evidence only, with student and exercise direct history terms disabled. Do not promote directly to the default baseline script yet.
+This experiment alone is not enough to promote a trial runner. Experiment 94 tests matched multi-seed stability, and experiment 95 supersedes the full lower-strength configuration with the cleaner `cogonly` runner.
