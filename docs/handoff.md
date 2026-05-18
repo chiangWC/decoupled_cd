@@ -146,6 +146,12 @@
   - branch: `exp/smooth-cognitive-alignment`
   - 判断: `standardized_smooth_l1` 与 `correlation` 在 seed2027 都只到 `test_auc ~= 0.7747`，低于实验 95 seed2027 `0.776163` 和 corrected stop threshold；不扩 seed，不继续同 target/loss-shape 小扫
   - 详情: [096](./experiments/096_smooth_cognitive_alignment_loss.md)
+- 实验 97 已继续本轮 autonomous growth exploration:
+  - branch: `exp/smooth-cognitive-alignment`
+  - pure-CDM reliability weighting / target-only 结果: 最佳 seed2027 `test_auc 0.776264`，只比实验 95 seed2027 高 `+0.000101`，仍低于 corrected threshold `0.776682`；hot alignment `0.0881` 未被 confidence weighting 救回，target-only 更弱
+  - hybrid recheck: 当前分支复现实验 91 hist-gradient hybrid stacker，seed2024 `test_auc 0.787288`，相对 high-water `+0.014606`，`ACC/RMSE/Brier/ECE` 同向强正
+  - 判断: 停止同 target 的 pure-CDM micro-sweep；当前有效增长信号是明确 hybrid stacker，下一步做 controlled multi-seed hybrid validation 或另开任务把同类 train-history feature family 整合进 readout/objective
+  - 详情: [097](./experiments/097_autonomous_growth_signal_exploration.md)
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`

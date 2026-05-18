@@ -60,6 +60,7 @@
   - 实验 94: 对实验 93 做 matched multi-seed validation；hot `alignment=0.08810` 在 seed2026 崩溃到 `AUC 0.504198`，因此拒绝 hot config。lower-strength full target `alignment=0.05` 在 seeds 2024/2025/2026/2027 全部 AUC 正向，matched mean `AUC +0.004828`，且 `ACC/RMSE/Brier/ECE` 均值同向改善，成为第一版稳定 trial candidate，但仍含 student/exercise direct history terms
   - 实验 95: CF-risk ablation 进一步证明，去掉 student/exercise 直接项的 `cogonly` 配置更强，matched mean `AUC +0.005508`、`ECE -0.004141`；只保留 student/exercise 的 `cfonly` 配置仅 `AUC +0.002939` 且 `ECE +0.003901`。当前 trial runner 已改为 `cogonly`
   - 实验 96: 在实验 95 `cogonly` 目标上把 standardized MSE alignment 换成 `standardized_smooth_l1` 或 `correlation` loss；seed2027 都只到 `test_auc ~= 0.7747`，低于实验 95 seed2027 `0.776163` 和 corrected stop threshold `0.776682`，因此拒绝，不扩 seed，不继续同 target/loss-shape 小扫
+  - 实验 97: 在实验 95 `cogonly` 目标上继续测试 reliability-weighted alignment 与 target-only target construction；最佳 pure-CDM 点 `confidence_power=0.5, floor=0.2` 只到 seed2027 `test_auc 0.776264`，比实验 95 seed2027 高 `+0.000101` 但仍低于 corrected threshold。当前分支同时复现实验 91 hybrid hist-gradient stacker，seed2024 `test_auc 0.787288`、相对 high-water `+0.014606`，作为当前明确 hybrid growth signal；pure-CDM micro-sweep 暂停
 
 - 当前正向支线候选:
   - 实验 95
@@ -70,7 +71,7 @@
     - 四 seed matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
     - 对照: full 配置均值 `AUC +0.004828`；`cfonly` 配置均值只有 `AUC +0.002939` 且 `ECE +0.003901`
     - 限制: hot config `alignment=0.08810` 虽然 seed2027 单点过线，但 seed2026 崩溃；trial 只能用 lower-strength `0.05`，下一步可测试更平滑 loss 以扩大稳定窗口
-    - follow-up: 实验 96 已测试单纯替换 smooth/correlation loss，seed2027 不如当前 MSE runner；后续不要继续同 target/loss-shape 小扫，应改 evidence target、可靠性加权或 representation-level 消费方式
+    - follow-up: 实验 96 已测试单纯替换 smooth/correlation loss，实验 97 已测试 reliability weighting 与 target-only target construction；这些 seed2027 probe 都没有越过 corrected threshold。后续不要继续同 target/loss-shape/简单置信度权重微扫，应改更大的 representation-level 消费方式或转向明确 hybrid 验证
     - 详细指标见 `docs/experiments/095_history_alignment_cf_risk_ablation.md`；父实验 93 的原始 alignment family 见 `docs/experiments/093_history_evidence_cognitive_alignment.md`，实验 94 的 full trial validation 见 `docs/experiments/094_history_alignment_trial_validation.md`
   - 实验 92
     - branch: `exp/evidence-prior-calibrated-readout`
@@ -79,9 +80,9 @@
     - 详细指标见 `docs/experiments/092_history_evidence_output_logit_prior.md`
   - 实验 91
     - branch: `exp/evidence-prior-calibrated-readout`
-    - 判断: 这是当前最强 `0.78+` 级增长信号，已经满足修正后的 high-water `+0.004` 停止条件；但它是 valid-trained hybrid stacker，不是 `scripts/run_assist09_baseline.sh` 默认模型结构
+    - 判断: 这是当前最强 `0.78+` 级增长信号，已经满足修正后的 high-water `+0.004` 停止条件；实验 97 已在 `exp/smooth-cognitive-alignment` 分支复现同一 hist-gradient hybrid result（seed2024 `test_auc 0.787288`）。但它是 valid-trained hybrid stacker，不是 `scripts/run_assist09_baseline.sh` 默认模型结构
     - 补充: 下一步优先做多 seed hybrid stacker 验证，并决定保留为 optional hybrid evaluator，还是把同一组 train-history 特征转成可训练 readout/objective 机制
-    - 详细指标见 `docs/experiments/091_corrected_high_water_hybrid_stacker.md`
+    - 详细指标见 `docs/experiments/091_corrected_high_water_hybrid_stacker.md` 与 `docs/experiments/097_autonomous_growth_signal_exploration.md`
   - 实验 37
     - branch: `exp/training-modes`
     - 判断: 它仍是当前更强的 calibration-oriented 训练协议候选，但在 `AUC/ACC` 上仍弱于当前主线，不作为默认 `master` 训练口径
