@@ -48,7 +48,7 @@
   - `0.778` 可视为接近可接受
   - 本轮修正后的停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`；不能只和最低的 seed2024 比
   - 实验 92 已用固定等权 train-history evidence output-logit prior 达到 seed2027 `test_auc 0.776813`，超过该阈值；但它是 readout-prior diagnostic，误差/校准回撤明显，不能直接当作默认纯 cognitive CDM 主线
-  - 若继续提升，应优先围绕实验 95 的训练目标形态做 smoother/bounded/correlation alignment，或转向 representation-level 大结构；不要回到 student/exercise history shortcut 或 output-logit prior
+  - 若继续提升，实验 96 已拒绝在实验 95 同一 `cogonly` target 上直接替换 smoother/bounded/correlation alignment loss；优先改 evidence target、可靠性加权或转向 representation-level 大结构，不要回到 student/exercise history shortcut 或 output-logit prior
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
 当前正向训练策略支线:
@@ -142,6 +142,10 @@
   - 当前 runner: `scripts/run_assist09_history_alignment_trial.sh`
   - 判断: 以实验 95 的 `0.05 cogonly` 作为后续纯 CDM trial 起点；不要把 student/exercise direct history terms 加回去，也不要改成 output-logit prior
   - 详情: [093](./experiments/093_history_evidence_cognitive_alignment.md)、[094](./experiments/094_history_alignment_trial_validation.md)、[095](./experiments/095_history_alignment_cf_risk_ablation.md)
+- 实验 96 已测试实验 95 target 的 smooth/correlation loss 替换:
+  - branch: `exp/smooth-cognitive-alignment`
+  - 判断: `standardized_smooth_l1` 与 `correlation` 在 seed2027 都只到 `test_auc ~= 0.7747`，低于实验 95 seed2027 `0.776163` 和 corrected stop threshold；不扩 seed，不继续同 target/loss-shape 小扫
+  - 详情: [096](./experiments/096_smooth_cognitive_alignment_loss.md)
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
@@ -217,7 +221,7 @@
 - 若继续 `q-local` / readout expert 这条 representation-level 线，不要直接把 `q-local` 叠回当前带 `expert` 的 trial，也不要继续扫 coverage gate、bounded expert、post-expert replay、target-evidence state/qrepr 前移或 contrastive common-mode removal；先看 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)、[084_exp81_expert_output_modulation.md](./experiments/084_exp81_expert_output_modulation.md)、[085_exp81_state_and_attention_qrepr_adapters.md](./experiments/085_exp81_state_and_attention_qrepr_adapters.md)、[086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)，只有出现 materially different 的 expert architecture / training objective 假设时再重开。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续本轮已过线的 `0.78+` hybrid 信号，优先留在 `exp/evidence-prior-calibrated-readout`，先按 [091_corrected_high_water_hybrid_stacker.md](./experiments/091_corrected_high_water_hybrid_stacker.md) 做多 seed stacker 验证；不要把它误记为已 promote 的纯 CDM 主线。
-- 若继续当前纯 CDM trial candidate，优先从 `exp/trellis-trial` 的 `scripts/run_assist09_history_alignment_trial.sh` 出发；该 runner 已是实验 95 的 `cogonly loss_only` 版本，不要再把 student/exercise direct history terms 加回默认 trial。
+- 若继续当前纯 CDM trial candidate，优先从 `exp/trellis-trial` 的 `scripts/run_assist09_history_alignment_trial.sh` 出发；该 runner 已是实验 95 的 `cogonly loss_only` 版本，不要再把 student/exercise direct history terms 加回默认 trial，也不要继续只替换同一 target 的 smooth/correlation loss。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
 - 若继续实验 76 / deterministic evidence prior，默认按“历史候选待重构”处理：不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；实验 88/89 已证明 confidence/mastery、agreement、train-only、direction-only 等 deterministic mask/scope 只能稳定到低幅或单 seed AUC tradeoff，后续必须有 representation/objective 层的新机制才值得重开。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先按实验号查 `docs/experiment_index.jsonl` 的 `status/reason_tags/verdict`，再按需打开对应 detail，确认是否真的出现了新的 slice 假设或机制假设后再决定是否重开。

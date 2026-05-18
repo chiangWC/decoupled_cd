@@ -33,7 +33,7 @@
 - active pure-CDM trial candidate: 实验 95，经 `scripts/run_assist09_history_alignment_trial.sh` 跑；`loss_only cogonly`，student/exercise direct history weights `0.0`，四 seed mean `AUC +0.005508`，seed2024 `test_auc = 0.777843`。
 - 当前结果报告默认主看 `AUC/ACC`；`RMSE/Brier/ECE/分桶校准` 为次要指标。
 - 当前冲刺目标仍是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`。
-- 后续若继续纯 CDM 路线，默认从实验 95 出发，优先测试 smoother / bounded / correlation alignment loss 或 representation-level 大结构；不要回到 student/exercise direct history shortcut 或 output-logit prior。
+- 后续若继续纯 CDM 路线，默认从实验 95 出发，但实验 96 已拒绝同 target 的 smoother / bounded / correlation loss 直接替换；优先改 evidence target、可靠性加权或 representation-level 大结构，不要回到 student/exercise direct history shortcut 或 output-logit prior。
 
 - 当前已吸收的最新结构更新:
   - 实验 70: student-conditioned UKC `none_seen` readout sidecar 已进入 `master` 默认主线；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
@@ -59,6 +59,7 @@
   - 实验 93: 将同一 train-history evidence 改为 `loss_only` 训练目标，约束 cognitive logits 与固定 evidence prior 的标准化排序对齐；hot config `target_concept=0.44, alignment=0.08810` 在 seed2027 达到 `test_auc 0.776868`，相对 high-water `+0.004187`，且 `ACC/RMSE/Brier/ECE` 同向改善。这证明 train-history evidence 可以作为纯 CDM training objective 的认知层信号，但单 seed 不足以 promote
   - 实验 94: 对实验 93 做 matched multi-seed validation；hot `alignment=0.08810` 在 seed2026 崩溃到 `AUC 0.504198`，因此拒绝 hot config。lower-strength full target `alignment=0.05` 在 seeds 2024/2025/2026/2027 全部 AUC 正向，matched mean `AUC +0.004828`，且 `ACC/RMSE/Brier/ECE` 均值同向改善，成为第一版稳定 trial candidate，但仍含 student/exercise direct history terms
   - 实验 95: CF-risk ablation 进一步证明，去掉 student/exercise 直接项的 `cogonly` 配置更强，matched mean `AUC +0.005508`、`ECE -0.004141`；只保留 student/exercise 的 `cfonly` 配置仅 `AUC +0.002939` 且 `ECE +0.003901`。当前 trial runner 已改为 `cogonly`
+  - 实验 96: 在实验 95 `cogonly` 目标上把 standardized MSE alignment 换成 `standardized_smooth_l1` 或 `correlation` loss；seed2027 都只到 `test_auc ~= 0.7747`，低于实验 95 seed2027 `0.776163` 和 corrected stop threshold `0.776682`，因此拒绝，不扩 seed，不继续同 target/loss-shape 小扫
 
 - 当前正向支线候选:
   - 实验 95
@@ -69,6 +70,7 @@
     - 四 seed matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
     - 对照: full 配置均值 `AUC +0.004828`；`cfonly` 配置均值只有 `AUC +0.002939` 且 `ECE +0.003901`
     - 限制: hot config `alignment=0.08810` 虽然 seed2027 单点过线，但 seed2026 崩溃；trial 只能用 lower-strength `0.05`，下一步可测试更平滑 loss 以扩大稳定窗口
+    - follow-up: 实验 96 已测试单纯替换 smooth/correlation loss，seed2027 不如当前 MSE runner；后续不要继续同 target/loss-shape 小扫，应改 evidence target、可靠性加权或 representation-level 消费方式
     - 详细指标见 `docs/experiments/095_history_alignment_cf_risk_ablation.md`；父实验 93 的原始 alignment family 见 `docs/experiments/093_history_evidence_cognitive_alignment.md`，实验 94 的 full trial validation 见 `docs/experiments/094_history_alignment_trial_validation.md`
   - 实验 92
     - branch: `exp/evidence-prior-calibrated-readout`
@@ -131,6 +133,7 @@
   - 实验 89: evidence-prior agreement / train-only / direction-only 三类补救均未优于实验 88；尤其 agreement margin1.0 只是用误差和校准换 seed2024 AUC，seed2027 还略差，因此后续不要继续 deterministic prior mask/scope 小改
   - 实验 90: raw prior 的 matched-seed admission signal 不是修正 high-water breakthrough；不要再把 seed2024 低参考当作停止条件
   - 实验 92: deterministic output-logit readout prior 是非 hybrid 的过线诊断，但误差和校准回撤明显；后续若要继续纯 CDM，应把这组 train-history evidence 移入校准目标或可靠性门控 readout，而不是直接推广 output-logit prior
+  - 实验 96: 在实验 95 cogonly target 上替换 smooth L1 / correlation alignment loss 后，seed2027 均只到约 `0.7747`，不如当前 experiment 95 MSE runner；不要继续同一 target 的 loss-shape 微扫
   - 详细指标见对应实验条目
 
 ## 已验证有效
