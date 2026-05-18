@@ -156,7 +156,7 @@
     - seeds 2024/2025/2026/2027 matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
     - 四个 seed AUC 全部正向，最弱 seed2026 仍 `+0.003407`
     - CF-risk 对照: 只保留 student/exercise 的 `cfonly` 均值只有 `AUC +0.002939`，且 `ECE +0.003901`
-  - 判断: lower-strength `0.05 cogonly` 可以作为 trial candidate；仍不要直接改默认 run script，下一步可继续探索 smoother alignment loss。详细结果见 [093_history_evidence_cognitive_alignment.md](./experiments/093_history_evidence_cognitive_alignment.md)。
+  - 判断: lower-strength `0.05 cogonly` 可以作为 trial candidate；仍不要直接改默认 run script，下一步可继续探索 smoother alignment loss。详细结果见 [095_history_alignment_cf_risk_ablation.md](./experiments/095_history_alignment_cf_risk_ablation.md)；父实验 93/94 见 [093_history_evidence_cognitive_alignment.md](./experiments/093_history_evidence_cognitive_alignment.md)。
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
