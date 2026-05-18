@@ -30,9 +30,10 @@
 - 默认运行约束见 `.trellis/spec/backend/experiment-protocol.md`；实验台账只记录路线判断，不重复维护完整开关清单。
 - `master` accepted reference: 实验 70，three-seed mean `test_auc = 0.765517`。
 - `exp/trellis-trial` baseline reference: 实验 81，经 `scripts/run_assist09_baseline.sh` 跑；seed2024 `test_auc = 0.767478`。
-- active pure-CDM trial candidate: 实验 95，经 `scripts/run_assist09_history_alignment_trial.sh` 跑；`loss_only cogonly`，student/exercise direct history weights `0.0`，四 seed mean `AUC +0.005508`，seed2024 `test_auc = 0.777843`。
+- active pure-CDM single-checkpoint trial candidate: 实验 95，经 `scripts/run_assist09_history_alignment_trial.sh` 跑；`loss_only cogonly`，student/exercise direct history weights `0.0`，四 seed mean `AUC +0.005508`，seed2024 `test_auc = 0.777843`。
+- active pure-CDM checkpoint-average evaluator candidate: 实验 102，经 `scripts/evaluate_checkpoint_average.py` 跑；固定 probability average of experiment 95 + experiment 100 checkpoints，四 seed AUC `0.779011/0.778059/0.778969/0.779448`，mean `0.778872`，没有 valid-trained combiner 或 hybrid tabular side-channel。
 - 当前结果报告默认主看 `AUC/ACC`；`RMSE/Brier/ECE/分桶校准` 为次要指标。
-- 当前 practical sprint target 已按用户口径调整为 `test_auc >= 0.778`；`0.780` 仍是 desirable headroom。实验 99 已用三 seed hybrid stacker 均值 `test_auc = 0.786910` 清晰超过该目标；停止口径仍必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`。
+- 当前 practical sprint target 已按用户口径调整为 `test_auc >= 0.778`；`0.780` 仍是 desirable headroom。实验 102 已用四 seed pure checkpoint probability average 均值 `test_auc = 0.778872` 过线；实验 99 hybrid stacker 三 seed mean `0.786910` 仍是最高绝对值但不是默认 CDM 路线。停止口径仍必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`。
 - 后续若继续纯 CDM 路线，默认从实验 95 出发，但实验 96 已拒绝同 target 的 smoother / bounded / correlation loss 直接替换；优先改 evidence target、可靠性加权或 representation-level 大结构，不要回到 student/exercise direct history shortcut 或 output-logit prior。
 
 - 当前已吸收的最新结构更新:
@@ -63,8 +64,26 @@
   - 实验 97: 在实验 95 `cogonly` 目标上继续测试 reliability-weighted alignment 与 target-only target construction；最佳 pure-CDM 点 `confidence_power=0.5, floor=0.2` 只到 seed2027 `test_auc 0.776264`，比实验 95 seed2027 高 `+0.000101` 但仍低于 corrected threshold。当前分支同时复现实验 91 hybrid hist-gradient stacker，seed2024 `test_auc 0.787288`、相对 high-water `+0.014606`，作为当前明确 hybrid growth signal；pure-CDM micro-sweep 暂停
   - 实验 98: 将纯 CDM runner 相关实现迁移到 `exp/pure-cdm-runner-integration`，补齐 cog-only trainable fusion、pairwise rank alignment 与 reliability-weighted alignment runner。新增路线没有超过实验 95：best fusion seed2027 `0.775913`，rank alignment 最好 `0.772090`，reliability best seed2027 `0.776264` 仍低于 `0.776682`，且四 seed 扩展在 seed2026 崩溃到 `0.504202`；保留实验 95 runner
   - 实验 99: 在 `exp/auc-078-exploration` 上完成 experiment 91/97 hist-gradient hybrid stacker 的 controlled three-seed validation；seeds 2024/2025/2026 分别为 `0.787288/0.788060/0.785382`，三 seed mean `0.786910`，全部超过用户修正目标 `0.778`。这是当前最强增长信号，但仍是 valid-trained hybrid evaluator，不是默认 CDM 或 pure-CDM runner promotion
+  - 实验 100: 按用户要求回到 pure CDM runner/default promotion 路线，在 `exp/pure-cdm-default-promotion` 上新增 loss-only history evidence output-alignment objective 和 opt-in runner。`concept_dim=80 + output_alignment=0.004` 给出 pure-CDM seed2027 `test_auc 0.778122`，seed2026 `0.778100`，但四 seed mean 只有 `0.777030`，相对实验 95 mean 约 `+0.000751`，且 seeds 2024/2025 回撤；不修改 default runner，保留为局部增长信号和复现实验路径
+  - 实验 101: 继续围绕实验 100 做 pure-CDM default-promotion follow-up。output-alignment confidence weighting 未超过 unweighted seed2027 `0.778122`；cognitive alignment 降到 `0.035/0.040/0.045` 或升到 `0.060` 都未修复 seed2024/2025；Adam `weight_decay=1e-5/3e-5/1e-4` 在 seeds 2024/2025 明显压垮 AUC；dim76 seed2024 近随机；`lr=7e-4/1.5e-3 + early_stop=20 + scheduler_patience=5`、cog-only linear readout、exercise difficulty init 也仍低于实验 95。因此这些支线均判负，不做 default promotion
+  - 实验 102: 新增 `scripts/evaluate_checkpoint_average.py`，验证 experiment 95 cog-only checkpoint 与 experiment 100 dim80+output_alignment=0.004 checkpoint 的 prediction-only probability average。四 seed AUC `0.779011/0.778059/0.778969/0.779448`，mean `0.778872`，相对实验 95 mean `+0.002593`、相对实验 100 mean `+0.001841`，修复 seed2024/2025 tail 且保留 seed2026/2027 headroom。该路线没有 valid-trained combiner 或 hybrid features，是当前最强 pure-CDM runner/evaluator 候选；但它是两 checkpoint inference runner，不直接修改 `scripts/run_assist09_baseline.sh`
 
 - 当前正向支线候选:
+  - 实验 102
+    - branch: `exp/pure-cdm-default-promotion`
+    - 判断: 当前最强 pure-CDM runner/evaluator 候选；固定 probability average of experiment 95 cog-only checkpoint + experiment 100 dim80 output-alignment checkpoint，四 seed 全过 `0.778`
+    - runner/evaluator: `scripts/evaluate_checkpoint_average.py`
+    - 关键指标: seed2024 `0.779011`、seed2025 `0.778059`、seed2026 `0.778969`、seed2027 `0.779448`，mean `0.778872`
+    - 限制: 这是两 checkpoint inference runner，不是单 checkpoint default-training promotion；不使用 valid-trained combiner，也不使用 train-history tabular side-channel。暂不改 `scripts/run_assist09_baseline.sh`
+    - follow-up: 若用户接受 checkpoint-average runner 路线，下一步应决定是否补正式 runner wrapper / seed2027-only reproduction docs / accepted default-evaluator semantics；若用户坚持单模型默认训练，则仍需新结构机制
+    - 详细指标见 `docs/experiments/102_pure_cdm_checkpoint_average_runner.md`
+  - 实验 100
+    - branch: `exp/pure-cdm-default-promotion`
+    - 判断: 当前最接近 `0.778` 的纯 CDM runner/default-promotion probe，但不满足默认晋升稳定性。dim80 加弱 output-alignment 在 seed2026/2027 暴露 headroom，最佳 seed2027 `AUC 0.778122`；四 seed mean `0.777030` 仅小幅高于实验 95，且 2024/2025 regression 明确
+    - runner: `scripts/run_assist09_history_output_alignment_trial.sh`
+    - 限制: 不改 `scripts/run_assist09_baseline.sh`，也不替换实验 95 trial runner；实验 101 已判负 confidence weighting、weight decay、training-protocol、capacity interpolation、linear readout、exercise difficulty init 等 follow-up，后续只有在新结构机制能消除 2024/2025 tail 时才值得复访
+    - 详细指标见 `docs/experiments/100_pure_cdm_default_promotion.md`
+    - follow-up 判负见 `docs/experiments/101_pure_cdm_default_promotion_followups.md`
   - 实验 99
     - branch: `exp/auc-078-exploration`
     - 判断: 当前最强 `0.778+` controlled growth signal；hist-gradient hybrid stacker over four checkpoint predictions plus train-history tabular features 在 seeds 2024/2025/2026 全部过线，三 seed mean `AUC 0.786910`，`ACC/RMSE/Brier/ECE` 也强正
@@ -145,6 +164,8 @@
   - 实验 92: deterministic output-logit readout prior 是非 hybrid 的过线诊断，但误差和校准回撤明显；后续若要继续纯 CDM，应把这组 train-history evidence 移入校准目标或可靠性门控 readout，而不是直接推广 output-logit prior
   - 实验 96: 在实验 95 cogonly target 上替换 smooth L1 / correlation alignment loss 后，seed2027 均只到约 `0.7747`，不如当前 experiment 95 MSE runner；不要继续同一 target 的 loss-shape 微扫
   - 实验 98: 纯 CDM runner 集成后的新增增强路线已判清：cog-only fusion 与 rank alignment 均低于实验 95，reliability weighting 虽 seed2027 有 `+0.000101` 微正但 seed2026 崩溃到 `0.504202`；不要推广这些 runner 为新的纯 CDM trial candidate
+  - 实验 100: 纯 CDM output-alignment/default-promotion probe 已给出局部 `0.778+` 单 seed 信号，但四 seed 不稳；不要把 dim80 或 output alignment 直接设为默认 runner，不继续附近 weight 小扫
+  - 实验 101: 实验 100 后续的 confidence weighting、cognitive-alignment 近邻权重、Adam weight decay、dim76 插值、lr/patience 协议、cog-only linear readout、exercise difficulty init 都未修复弱 seed；不要继续这些 follow-up，除非先提出能解释 2024/2025 tail 的结构性机制
   - 详细指标见对应实验条目
 
 ## 已验证有效

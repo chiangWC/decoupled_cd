@@ -43,12 +43,14 @@
   - `master` accepted reference: 实验 70，three-seed mean `test_auc = 0.765517`
   - `exp/trellis-trial` baseline reference: 实验 81，`scripts/run_assist09_baseline.sh`，seed2024 `test_auc = 0.767478`
   - active pure-CDM trial candidate: 实验 95，`scripts/run_assist09_history_alignment_trial.sh`，`loss_only cogonly`，四 seed mean `AUC +0.005508`，seed2024 `test_auc = 0.777843`
+  - latest pure-CDM default-promotion probe: 实验 100，`exp/pure-cdm-default-promotion`，dim80 + weak output alignment 可在 seed2027 到 `test_auc = 0.778122`，但四 seed mean 仅 `0.777030` 且 2024/2025 退化；不改默认 runner
   - active hybrid growth signal: 实验 99，`exp/auc-078-exploration`，hist-gradient hybrid stacker 三 seed mean `test_auc = 0.786910`，seeds 2024/2025/2026 全部超过 `0.778`
 - 当前冲刺目标:
   - 当前 practical target 已按用户口径调整为 `test_auc >= 0.778`
   - `0.780` 仍是 desirable headroom
   - 本轮修正后的停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`；不能只和最低的 seed2024 比
   - 实验 99 已用 hybrid stacker 三 seed `0.787288/0.788060/0.785382` 清晰过目标；但它是 valid-trained hybrid evaluator，不是 pure-CDM/default-runner promotion
+  - 实验 100 已按 pure CDM/default-runner 口径补测：最佳单点 `dim80 + output_alignment=0.004` seed2027 `0.778122`，但最佳四 seed mean `0.777030` 且 seeds 2024/2025 回撤；结论是不做 default promotion，只保留 opt-in runner/probe
   - 实验 92 已用固定等权 train-history evidence output-logit prior 达到 seed2027 `test_auc 0.776813`，超过该阈值；但它是 readout-prior diagnostic，误差/校准回撤明显，不能直接当作默认纯 cognitive CDM 主线
   - 若继续提升，实验 96 已拒绝在实验 95 同一 `cogonly` target 上直接替换 smoother/bounded/correlation alignment loss；优先改 evidence target、可靠性加权或转向 representation-level 大结构，不要回到 student/exercise history shortcut 或 output-logit prior
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
@@ -160,6 +162,25 @@
   - stress: seed2026 成员里 `raw_prior_max05` 崩溃到 `0.502923`，stacker 仍达到 `0.785382`
   - 判断: 当前最强 `0.778+` 增长信号；仍是 valid-trained hybrid evaluator，不是默认 CDM runner。后续可补 seed2027，或另开模型侧整合任务
   - 详情: [099](./experiments/099_hybrid_stacker_multiseed_078.md)
+- 实验 100 已完成 pure CDM runner/default promotion 复探:
+  - branch: `exp/pure-cdm-default-promotion`
+  - mechanism: 在实验 95 `loss_only cogonly` 训练目标上增加 opt-in output-alignment objective；runner 为 `scripts/run_assist09_history_output_alignment_trial.sh`
+  - best single seed: `concept_dim=80, output_alignment=0.004` seed2027 `test_auc 0.778122`
+  - best four-seed mean: 同配置 `mean_auc 0.777030`，相对实验 95 mean 约 `+0.000751`，但 seeds 2024/2025 退化
+  - 判断: 有纯 CDM 局部 headroom，但不能 default promotion；保留实验 95 runner，不改 `scripts/run_assist09_baseline.sh`
+  - 详情: [100](./experiments/100_pure_cdm_default_promotion.md)
+- 实验 101 已完成实验 100 的 follow-up 判负:
+  - branch: `exp/pure-cdm-default-promotion`
+  - rejected: output-alignment confidence weighting、lower/higher cognitive alignment weights、Adam weight decay、dim76 capacity interpolation、`lr=7e-4/1.5e-3 + long patience`、cog-only linear readout、exercise difficulty init
+  - key negatives: weight decay 最轻 `1e-5` 在 seed2024/2025 也只有 `0.767025/0.764448`；dim76 seed2024 近随机 `0.503790`；训练协议和 linear readout 仍低于实验 95 seed2024；exercise difficulty init seed2024 只有 `0.762815`
+  - 判断: 不继续 dim80 局部参数/协议微扫；下一步若仍做 pure CDM default promotion，需要能解释并修复 2024/2025 tail 的结构性机制
+  - 详情: [101](./experiments/101_pure_cdm_default_promotion_followups.md)
+- 实验 102 已找到 pure checkpoint-average runner 信号:
+  - branch: `exp/pure-cdm-default-promotion`
+  - mechanism: `scripts/evaluate_checkpoint_average.py` 对实验 95 cog-only checkpoint 与实验 100 dim80+output_alignment=0.004 checkpoint 做固定 probability average
+  - results: seeds 2024/2025/2026/2027 `test_auc 0.779011/0.778059/0.778969/0.779448`，mean `0.778872`
+  - 判断: 修复实验 100 的 2024/2025 tail，同时保留 2026/2027 headroom；没有 valid-trained combiner 或 hybrid tabular side-channel，是当前最强 pure-CDM runner/evaluator 候选，但仍是两 checkpoint inference runner，不是单 checkpoint baseline/default training promotion
+  - 详情: [102](./experiments/102_pure_cdm_checkpoint_average_runner.md)
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
@@ -234,6 +255,7 @@
 - 若继续当前最强 evidence readout 候选，优先留在 `exp/exp70-evidence-readout-scope`；默认下一步是补 `B49 seed=2024` 交叉复验，而不是重新开始自由扫结构。
 - 若继续 `q-local` / readout expert 这条 representation-level 线，不要直接把 `q-local` 叠回当前带 `expert` 的 trial，也不要继续扫 coverage gate、bounded expert、post-expert replay、target-evidence state/qrepr 前移或 contrastive common-mode removal；先看 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)、[084_exp81_expert_output_modulation.md](./experiments/084_exp81_expert_output_modulation.md)、[085_exp81_state_and_attention_qrepr_adapters.md](./experiments/085_exp81_state_and_attention_qrepr_adapters.md)、[086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)，只有出现 materially different 的 expert architecture / training objective 假设时再重开。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
+- 若继续 pure-CDM `0.778+` runner/evaluator 路线，优先从 `exp/pure-cdm-default-promotion` 的实验 102 继续；它已经用 prediction-only probability average 在四 seed 过线。下一步要先明确是否接受两 checkpoint inference runner 作为 default evaluator 候选；若只接受单模型训练默认，则实验 102 只能作为互补性诊断。
 - 若继续本轮已过线的 `0.778+` hybrid 信号，优先从 `exp/auc-078-exploration` 的实验 99 继续；三 seed stacker validation 已完成，下一步是补 seed2027 或把同类 train-history feature family 转成模型侧 readout/objective。不要把它误记为已 promote 的纯 CDM 主线。
 - 若继续当前纯 CDM trial candidate，优先从 `exp/trellis-trial` 的 `scripts/run_assist09_history_alignment_trial.sh` 出发；该 runner 已是实验 95 的 `cogonly loss_only` 版本，不要再把 student/exercise direct history terms 加回默认 trial，也不要继续只替换同一 target 的 smooth/correlation loss。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
@@ -285,6 +307,8 @@
   - `weight_decay` / `grad clipping` 未带来值得保留的 `AUC/ACC` 增益
   - `cosine + warmup` 可带来极小的 `AUC/ACC` 提升，但量级不足以推动主线切换，且 `ECE` 变差
   - 训练模式支线暂不合入 `master`；如继续推进，优先做保持语义干净的模型改动，而不是继续打磨训练协议
+- 实验 101 又在 pure-CDM dim80 default-promotion 语境下确认 Adam `weight_decay` 与常见 lr/patience rescue 不能修复弱 seed；不要把训练协议小改当作当前主推进方向。
+- 实验 102 表明 experiment 95 与 experiment 100 checkpoint 的排序误差有互补性；如果继续 pure-CDM default promotion，优先围绕固定 prediction average / checkpoint-average evaluator 语义推进，不要回到 dim80 单模型局部扫参。
 - CF residual 支线暂停:
   - 不继续扫 `cf_dim`，不作为纯 CDM 主线推进
   - 后续默认回归实验 34/37 这类干净主线

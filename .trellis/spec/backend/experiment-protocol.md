@@ -153,6 +153,69 @@ Correct:
 Report it as an opt-in hybrid evaluator candidate and require multi-seed validation or a separate model-integration task before promotion.
 ```
 
+## Prediction-Only Checkpoint Average Contract
+
+### 1. Scope / Trigger
+
+- Trigger: `scripts/evaluate_checkpoint_average.py` evaluates fixed prediction averages over two or more trained checkpoint summaries.
+- This is a pure-CDM evaluator only when every member summary is a pure-CDM checkpoint and averaging weights are fixed by the command, not learned from validation labels.
+- It is not a hybrid stacker: it must not add train-history tabular features outside the member checkpoints and must not fit a combiner.
+
+### 2. Signatures
+
+```bash
+python scripts/evaluate_checkpoint_average.py \
+  --summaries <summary.json> <summary.json> [...] \
+  --average prob|logit \
+  --split train|valid|test \
+  --output <result.json>
+```
+
+### 3. Contracts
+
+- `--summaries` must contain at least two training summary JSON files with `best_checkpoint_path`.
+- Member summaries must share the same train/valid/test split paths, Q-matrix, concept graph, and graph mode.
+- `--average prob` averages probabilities directly.
+- `--average logit` averages clipped logits and maps back through sigmoid.
+- Valid/test bundles must continue to reuse train-history propagation inputs; target split rows must not enter history tensors.
+- Experiment 102 establishes the current checkpoint-average candidate: experiment 95 cog-only checkpoint plus experiment 100 dim80 + output-alignment checkpoint, probability average.
+
+### 4. Validation & Error Matrix
+
+- Fewer than two summaries -> `ValueError`.
+- Missing `best_checkpoint_path` -> `ValueError`.
+- Missing `concept_dim` -> `ValueError`.
+- Mismatched split/data signature -> `ValueError`.
+- Unsupported graph mode -> `ValueError`.
+- Missing checkpoint file -> standard checkpoint load failure.
+- Valid/test history containing target rows -> existing `_validate_history_visibility` `ValueError`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: fixed probability average of two pure-CDM checkpoints, evaluated on test, with no validation fitting.
+- Base: single experiment 95 checkpoint evaluated through its training summary.
+- Bad: calling a valid-trained stacker a checkpoint average, or adding train-history tabular features outside the member checkpoint predictions.
+- Bad: reporting a checkpoint-average result as if it were a single `scripts/run_assist09_baseline.sh` training run.
+
+### 6. Tests Required
+
+- Unit tests for probability/logit averaging and summary compatibility validation.
+- Remote `py_compile`, focused `unittest`, and at least one script-level reproduction before reporting evaluator changes.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```text
+Promote experiment 102 by silently changing the single-checkpoint baseline training script.
+```
+
+Correct:
+
+```text
+Report experiment 102 as an opt-in pure-CDM checkpoint-average evaluator and keep the single-checkpoint default-training question separate.
+```
+
 ## History Evidence Cognitive Alignment Contract
 
 ### 1. Scope / Trigger
@@ -165,13 +228,18 @@ Report it as an opt-in hybrid evaluator candidate and require multi-seed validat
 
 ```bash
 python3 scripts/train.py \
+  [--weight-decay <non-negative-float>] \
   --history-evidence-logit-prior-residual \
   --history-evidence-logit-prior-location loss_only \
   --history-evidence-cognitive-alignment-weight <non-negative-float> \
   [--history-evidence-cognitive-alignment-loss standardized_mse|standardized_smooth_l1|correlation] \
   [--history-evidence-cognitive-alignment-confidence-power <non-negative-float>] \
   [--history-evidence-cognitive-alignment-confidence-cap <positive-float>] \
-  [--history-evidence-cognitive-alignment-confidence-floor <float-in-0-1>]
+  [--history-evidence-cognitive-alignment-confidence-floor <float-in-0-1>] \
+  [--history-evidence-output-alignment-weight <non-negative-float>] \
+  [--history-evidence-output-alignment-confidence-power <non-negative-float>] \
+  [--history-evidence-output-alignment-confidence-cap <positive-float>] \
+  [--history-evidence-output-alignment-confidence-floor <float-in-0-1>]
 ```
 
 Runner:
@@ -179,36 +247,55 @@ Runner:
 ```bash
 bash scripts/run_assist09_history_alignment_trial.sh
 bash scripts/run_assist09_history_alignment_reliability_trial.sh
+bash scripts/run_assist09_history_output_alignment_trial.sh
 ```
 
 ### 3. Contracts
 
 - `--history-evidence-cognitive-alignment-weight=0.0` disables the alignment loss.
+- `--weight-decay=0.0` preserves existing Adam optimizer behavior; positive values are opt-in capacity-regularization probes and must be reported in result JSON/CSV summaries.
 - `--history-evidence-cognitive-alignment-confidence-power=0.0` disables reliability weighting and preserves the original unweighted alignment behavior.
+- `--history-evidence-output-alignment-weight=0.0` disables output alignment.
+- Positive output alignment is a train-time loss against the same loss-only history-evidence prior; it must not add an inference-time output-logit residual or validation-trained combiner.
+- `--history-evidence-output-alignment-confidence-power=0.0` disables output-alignment confidence weighting.
+- Output-alignment confidence weighting uses the same target-concept train-history attempt confidence as cognitive-alignment confidence weighting.
 - Confidence weighting uses train-history student-concept attempt counts for the target concepts only; valid/test target labels must not affect weights.
 - `scripts/run_assist09_history_alignment_trial.sh` remains the experiment 95 `cogonly loss_only` reference runner.
 - `scripts/run_assist09_history_alignment_reliability_trial.sh` must remain an opt-in admission runner and must not silently change the reference runner defaults.
+- `scripts/run_assist09_history_output_alignment_trial.sh` must remain an opt-in probe runner and must not silently change the experiment 95 reference runner defaults.
 
 ### 4. Validation & Error Matrix
 
 - Negative `history_evidence_cognitive_alignment_weight` -> `ValueError`.
+- Negative `weight_decay` -> `ValueError`.
 - Unsupported `history_evidence_cognitive_alignment_loss` -> `ValueError`.
 - Positive alignment weight without `history_evidence_logit_prior_residual` -> `ValueError`.
 - Positive alignment weight unless `history_evidence_logit_prior_location=loss_only` -> `ValueError`.
 - Negative confidence power -> `ValueError`.
 - Non-positive confidence cap -> `ValueError`.
 - Confidence floor outside `[0, 1]` -> `ValueError`.
+- Negative output alignment weight -> `ValueError`.
+- Negative output alignment confidence power -> `ValueError`.
+- Non-positive output alignment confidence cap -> `ValueError`.
+- Output alignment confidence floor outside `[0, 1]` -> `ValueError`.
+- Positive output alignment weight without `history_evidence_logit_prior_residual` -> `ValueError`.
+- Positive output alignment weight unless `history_evidence_logit_prior_location=loss_only` -> `ValueError`.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: experiment 95-style `cogonly loss_only` run with confidence weighting enabled only for an explicit probe.
+- Good: experiment 100-style output-alignment run through `scripts/run_assist09_history_output_alignment_trial.sh`, documented as an opt-in pure-CDM probe.
 - Base: `scripts/run_assist09_history_alignment_trial.sh` without reliability flags, preserving the established trial candidate.
 - Bad: reporting a reliability-weighted probe as the default pure-CDM runner before multi-seed validation.
+- Bad: promoting `concept_dim=80` or output alignment into `scripts/run_assist09_baseline.sh` before a multi-seed check removes the 2024/2025 regression documented in experiment 100.
+- Bad: continuing local dim80 default-promotion sweeps over output-alignment confidence weighting, nearby cognitive-alignment weights, Adam weight decay, capacity interpolation, lr/patience rescue, cog-only linear readout, or exercise difficulty initialization without a new structural hypothesis. Experiment 101 already rejected those follow-ups as unable to fix the 2024/2025 tail.
 
 ### 6. Tests Required
 
 - Unit tests for invalid alignment confidence parameters.
 - Unit tests proving reliability weights derive from target-concept train-history attempt confidence.
+- Unit tests for invalid output alignment weight and for output-alignment loss behavior against the deterministic history-evidence prior.
+- Unit tests for output-alignment confidence weighting parameters and weighted-loss plumbing.
 - Focused remote smoke test for any new alignment runner before launching a full 300 epoch experiment.
 
 ### 7. Wrong vs Correct
@@ -223,6 +310,18 @@ Correct:
 
 ```text
 Keep experiment 95 unchanged and run confidence weighting through a separate output path with explicit flags.
+```
+
+Wrong:
+
+```text
+Treat a single-seed 0.778+ output-alignment result as default CDM promotion.
+```
+
+Correct:
+
+```text
+Keep output alignment opt-in until matched multi-seed validation is clean versus experiment 95.
 ```
 
 ---
