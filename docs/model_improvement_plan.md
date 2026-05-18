@@ -74,11 +74,18 @@
   - 实验 90: 重新核对本轮增长信号口径后，raw deterministic prior max0.25 只是在 matched seed2024 上复现 `+0.005783`，相对 high-water seed2027 `0.772682` 仅 `+0.000579`，不满足修正后的 `+0.004` 停止条件
   - 实验 91: valid-trained hybrid stacker 首次真正越过修正 high-water 停止线；4 个 seed2024 checkpoint 预测加 train-history tabular features，经 hist-gradient combiner 得到 `test_auc 0.787288`，相对 high-water `+0.014606`，且 `ACC/RMSE/Brier/ECE` 同向明显改善；这不是默认 CDM 主线组件，需作为明确 hybrid 候选做多 seed 验证或再整合进 readout/objective
   - 实验 92: 把 experiment 91 的 train-history 信号压成固定等权 deterministic output-logit readout prior 后，在 corrected high-water seed2027 checkpoint 上达到 `test_auc 0.776813`，相对 `0.772682` 为 `+0.004132`，满足停止阈值且没有 valid-trained combiner；但 `RMSE/Brier/ECE` 明显回撤，且同一 prior 放进 cognitive logit 或从头训练都会退化，因此只作为可解释 readout-prior 诊断信号，不合入默认纯 cognitive CDM
+  - 实验 93: 将同一 train-history evidence 改为 `loss_only` 训练目标，约束 cognitive logits 与固定 evidence prior 的标准化排序对齐；`target_concept` 加倍、alignment `0.08810` 在 seed2027 达到 `test_auc 0.776868`，相对 high-water `+0.004187`，且 `ACC/RMSE/Brier/ECE` 全部同向改善。这是当前最干净的纯 CDM 过线信号，但有效窗口很窄，需多 seed 稳定性验证后才能讨论默认化
 
 - 当前正向支线候选:
+  - 实验 93
+    - branch: `exp/evidence-prior-calibrated-readout`
+    - 判断: 当前最符合“纯 CDM”方向的过线信号；history evidence 只作为训练期 cognitive alignment loss，推理时不加 output-logit sidecar，也没有 valid-trained combiner
+    - best: `results/pure_cdm_hybrid_signal/seed2027_history_alignment_tc2w008810_300ep.json`，`test_auc 0.776868`，相对 high-water `+0.004187`；`ACC +0.004643`、`RMSE -0.003158`、`Brier -0.002670`、`ECE -0.009771`
+    - 限制: alignment 窗口窄，`0.08815` 已回到线下，`0.0882+` 会早期崩溃；下一步优先多 seed 验证与更平滑 loss 设计
+    - 详细指标见 `docs/experiments/093_history_evidence_cognitive_alignment.md`
   - 实验 92
     - branch: `exp/evidence-prior-calibrated-readout`
-    - 判断: 这是当前最接近用户“纯 CDM”方向的过线信号；固定 `equal0.22` train-history evidence output-logit prior 在 seed2027 high-water checkpoint 上 `test_auc 0.776813`，超过修正停止线 `0.776682`
+    - 判断: 这是解释 experiment 91/93 信号来源的重要 readout-prior 诊断；固定 `equal0.22` train-history evidence output-logit prior 在 seed2027 high-water checkpoint 上 `test_auc 0.776813`，超过修正停止线 `0.776682`
     - 限制: 它作用在最终 output logit，而不是 mastery/cognitive logit；`RMSE/Brier/ECE` 回撤，不能作为默认主线或纯 cognitive CDM 组件推广
     - 详细指标见 `docs/experiments/092_history_evidence_output_logit_prior.md`
   - 实验 91
