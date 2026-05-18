@@ -39,22 +39,14 @@
   - `RMSE -0.004038`
   - `Brier -0.003468`
   - `ECE -0.013232`
-- 当前 `exp/trellis-trial` 伪主线有两个层次，后续不要混淆:
-  - 默认模型口径仍是 `experiment 70 + experiment 81 single-only concept-evidence readout`
-  - seed=2024 指标: `test_auc = 0.767478`, `test_acc = 0.734248`, `test_rmse = 0.425562`, `test_brier = 0.181103`, `test_ece = 0.046972`
-  - 默认 run script `scripts/run_assist09_baseline.sh` 已默认开启 `concept_evidence_readout_residual(min_count=1, max_count=1, min_seen_ratio=1.0, max_logit=0.5)`
-  - 分支内另有 named trial runner `scripts/run_assist09_history_alignment_trial.sh`，对应实验 95 的 `loss_only cogonly` history-evidence cognitive alignment:
-    - 推理期不加 output-logit prior，不使用 valid-trained combiner
-    - student/exercise direct history terms 已置 `0.0`
-    - target-concept `0.44`、global-concept/mastery `0.22`、alignment `0.05`
-    - 四 seed matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
-    - 这是当前最干净的纯 CDM trial candidate，但尚未替换 `scripts/run_assist09_baseline.sh`
+- 当前状态:
+  - `master` accepted reference: 实验 70，three-seed mean `test_auc = 0.765517`
+  - `exp/trellis-trial` baseline reference: 实验 81，`scripts/run_assist09_baseline.sh`，seed2024 `test_auc = 0.767478`
+  - active pure-CDM trial candidate: 实验 95，`scripts/run_assist09_history_alignment_trial.sh`，`loss_only cogonly`，四 seed mean `AUC +0.005508`，seed2024 `test_auc = 0.777843`
 - 当前冲刺目标:
   - `test_auc ~= 0.780`
   - `0.778` 可视为接近可接受
-  - 相对当前默认模型口径 seed=2024 约需 `AUC +0.0105` 到 `+0.0125`
   - 本轮修正后的停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`；不能只和最低的 seed2024 比
-  - 实验 95 的 `cogonly` trial runner 在 seed2024 已达 `test_auc 0.777843`，四 seed mean 也过 `+0.004`，所以它是当前纯 CDM trial 起点，而不是普通 sidecar 继续小扫对象
   - 实验 92 已用固定等权 train-history evidence output-logit prior 达到 seed2027 `test_auc 0.776813`，超过该阈值；但它是 readout-prior diagnostic，误差/校准回撤明显，不能直接当作默认纯 cognitive CDM 主线
   - 若继续提升，应优先围绕实验 95 的训练目标形态做 smoother/bounded/correlation alignment，或转向 representation-level 大结构；不要回到 student/exercise history shortcut 或 output-logit prior
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
@@ -145,18 +137,11 @@
   - seed2027 high-water checkpoint 上结果: `test_auc 0.776813`，相对 `0.772682` 为 `+0.004132`
   - 副作用: `ACC -0.000285`、`RMSE +0.004140`、`Brier +0.003531`、`ECE +0.029074`
   - 判断: 满足 corrected high-water AUC 停止线，但只是 interpretable deterministic readout-prior diagnostic；不要合入默认 run script，也不要把它称为纯 cognitive CDM。详细结果见 [092_history_evidence_output_logit_prior.md](./experiments/092_history_evidence_output_logit_prior.md)。
-- 实验 93/94 已给出纯 CDM 训练目标的 trial candidate:
-  - branch: `exp/evidence-prior-calibrated-readout`
-  - 机制: `history_evidence_logit_prior_location=loss_only` 暴露固定 train-history evidence prior 给训练器，用标准化 MSE alignment 约束 cognitive logits；推理时不加 output-logit prior，也没有 valid-trained combiner
-  - hot config: target-concept weight `0.44`、其他 evidence terms `0.22`、alignment `0.08810`
-    - seed2027 `test_auc 0.776868`，相对 `0.772682` 为 `+0.004187`
-    - 但 seed2026 会崩溃到 `test_auc 0.504198`，所以不要把 hot config 合入 trial
-  - trial config after CF-risk ablation: student/exercise direct terms `0.0`、target-concept `0.44`、global-concept/mastery `0.22`、alignment `0.05`
-    - runner: `scripts/run_assist09_history_alignment_trial.sh`
-    - seeds 2024/2025/2026/2027 matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
-    - 四个 seed AUC 全部正向，最弱 seed2026 仍 `+0.003407`
-    - CF-risk 对照: 只保留 student/exercise 的 `cfonly` 均值只有 `AUC +0.002939`，且 `ECE +0.003901`
-  - 判断: lower-strength `0.05 cogonly` 可以作为 trial candidate；仍不要直接改默认 run script，下一步可继续探索 smoother alignment loss。详细结果见 [095_history_alignment_cf_risk_ablation.md](./experiments/095_history_alignment_cf_risk_ablation.md)；父实验 93 见 [093_history_evidence_cognitive_alignment.md](./experiments/093_history_evidence_cognitive_alignment.md)，实验 94 见 [094_history_alignment_trial_validation.md](./experiments/094_history_alignment_trial_validation.md)。
+- 实验 93-95 给出当前纯 CDM trial candidate:
+  - 93: `loss_only` cognitive alignment 单 seed 过 high-water；94: hot config 多 seed 崩，lower-strength full target 成立；95: CF-risk ablation 后改为 `cogonly`
+  - 当前 runner: `scripts/run_assist09_history_alignment_trial.sh`
+  - 判断: 以实验 95 的 `0.05 cogonly` 作为后续纯 CDM trial 起点；不要把 student/exercise direct history terms 加回去，也不要改成 output-logit prior
+  - 详情: [093](./experiments/093_history_evidence_cognitive_alignment.md)、[094](./experiments/094_history_alignment_trial_validation.md)、[095](./experiments/095_history_alignment_cf_risk_ablation.md)
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`

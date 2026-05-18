@@ -27,39 +27,13 @@
 
 ## 当前快照
 
-- 当前 Trellis 伪主线执行约束见 `.trellis/spec/backend/experiment-protocol.md`；正式 `master` accepted state 仍按下方实验 70 参考理解。
-- 从这份台账的实验视角看，当前 `exp/trellis-trial` 需要分成两个层次，后续不要混淆:
-  - 默认模型口径仍是实验 70 结构底座再叠加实验 81 的 single-only concept-evidence readout
-  - 分支内另有 named trial runner `scripts/run_assist09_history_alignment_trial.sh`，对应实验 95 的 `loss_only cogonly` history-evidence cognitive alignment；它是当前最干净的纯 CDM trial candidate，但尚未替换 `scripts/run_assist09_baseline.sh`
-- 默认模型口径组成:
-  - 以实验 34 为底座
-  - 吸收实验 49 的 history-carrier pairwise interaction residual
-  - 再吸收实验 51 的 interpretable readout expert residual
-  - 再吸收实验 70 的 student-conditioned UKC `none_seen` readout sidecar
-  - 再吸收实验 81 的 `concept_evidence_readout_residual(min_count=1, max_count=1)`
-- 这里不再重复维护 Trellis spec 中的数据、图、超参数和 adapter 开关清单；需要确认默认运行口径时，优先查看 `.trellis/spec/backend/experiment-protocol.md`
-- `master` 正式主线仍以实验 70 三 seed 作为 accepted reference:
-  - `test_auc = 0.765517`
-  - `test_acc = 0.729104`
-  - `test_rmse = 0.427350`
-  - `test_brier = 0.182628`
-  - `test_ece = 0.049044`
-- 当前 `exp/trellis-trial` 默认口径已 promote 到实验 81:
-  - `seed=2024 test_auc = 0.767478`
-  - `seed=2024 test_acc = 0.734248`
-  - `seed=2024 test_rmse = 0.425562`
-  - `seed=2024 test_brier = 0.181103`
-  - `seed=2024 test_ece = 0.046972`
-- 当前 `exp/trellis-trial` named trial runner 已 refine 到实验 95:
-  - runner: `scripts/run_assist09_history_alignment_trial.sh`
-  - config: `history_evidence_logit_prior_location=loss_only`，student/exercise direct history weights `0.0`，target-concept `0.44`，global-concept/mastery `0.22`，alignment `0.05`
-  - 四 seed matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
-  - seed2024 `test_auc = 0.777843`，已经接近 `0.778` 可接受线；但它仍是 named trial runner，不是默认 baseline script
-- 当前结果报告默认主看 `AUC/ACC`
-- `RMSE/Brier/ECE/分桶校准` 默认作为次要指标
-- 当前冲刺目标仍是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；相对默认模型口径 seed=2024 约需 `AUC +0.0105` 到 `+0.0125`，但实验 95 named trial runner 已把 seed2024 推到 `0.777843`
-- 用户已修正本轮停止口径: seed2024 是当前 exp81 伪主线最低项，不能只和它比；当前 high-water 是 seed2027 `AUC 0.772682`，`+0.004` 停止阈值是 `0.776682`
-- 后续若继续纯 CDM 路线，默认从实验 95 的 `cogonly loss_only` trial runner 出发，优先测试 smoother / bounded / correlation alignment loss 或 representation-level 大结构；不要回到 student/exercise direct history shortcut 或 output-logit prior
+- 默认运行约束见 `.trellis/spec/backend/experiment-protocol.md`；实验台账只记录路线判断，不重复维护完整开关清单。
+- `master` accepted reference: 实验 70，three-seed mean `test_auc = 0.765517`。
+- `exp/trellis-trial` baseline reference: 实验 81，经 `scripts/run_assist09_baseline.sh` 跑；seed2024 `test_auc = 0.767478`。
+- active pure-CDM trial candidate: 实验 95，经 `scripts/run_assist09_history_alignment_trial.sh` 跑；`loss_only cogonly`，student/exercise direct history weights `0.0`，四 seed mean `AUC +0.005508`，seed2024 `test_auc = 0.777843`。
+- 当前结果报告默认主看 `AUC/ACC`；`RMSE/Brier/ECE/分桶校准` 为次要指标。
+- 当前冲刺目标仍是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`。
+- 后续若继续纯 CDM 路线，默认从实验 95 出发，优先测试 smoother / bounded / correlation alignment loss 或 representation-level 大结构；不要回到 student/exercise direct history shortcut 或 output-logit prior。
 
 - 当前已吸收的最新结构更新:
   - 实验 70: student-conditioned UKC `none_seen` readout sidecar 已进入 `master` 默认主线；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
