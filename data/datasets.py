@@ -28,6 +28,7 @@ class StepDataBundle:
     interaction_exercise_ids: torch.Tensor
     interaction_labels: torch.Tensor
     student_concept_evidence_tensor: torch.Tensor | None = None
+    exercise_evidence_tensor: torch.Tensor | None = None
     split_name: str = "train"
     allow_target_in_history: bool = True
     prerequisite_graph: torch.Tensor | None = None

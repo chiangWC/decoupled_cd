@@ -8,7 +8,13 @@ from .mappings import (
     build_student_id_map,
     build_unified_id_mappings,
 )
-from .pipeline import build_response_matrix, build_student_concept_evidence_tensor, prepare_data_bundle, prepare_step_data_bundle
+from .pipeline import (
+    build_exercise_evidence_tensor,
+    build_response_matrix,
+    build_student_concept_evidence_tensor,
+    prepare_data_bundle,
+    prepare_step_data_bundle,
+)
 from .pipeline import prepare_experiment_split_bundles
 from .q_matrix import build_concept_graph_from_q, build_q_matrix_tensor, normalize_concept_sequence
 from .readers import read_interactions, read_q_matrix
@@ -20,6 +26,7 @@ __all__ = [
     "build_concept_graph_from_q",
     "build_transition_matrices",
     "build_exercise_id_map",
+    "build_exercise_evidence_tensor",
     "build_q_matrix_tensor",
     "build_response_matrix",
     "build_student_concept_evidence_tensor",

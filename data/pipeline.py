@@ -47,12 +47,17 @@ def build_history_tensors(
         student_id_map=student_id_map,
         concept_id_map=concept_id_map,
     )
+    exercise_evidence_tensor = build_exercise_evidence_tensor(
+        interactions=history_interactions,
+        exercise_id_map=exercise_id_map,
+    )
     return {
         "student_exercise_mask": student_exercise_mask,
         "student_tkc_mask": student_tkc_mask,
         "student_ukc_mask": student_ukc_mask,
         "response_matrix_tensor": response_matrix_tensor,
         "student_concept_evidence_tensor": student_concept_evidence_tensor,
+        "exercise_evidence_tensor": exercise_evidence_tensor,
     }
 
 
@@ -73,6 +78,29 @@ def build_student_concept_evidence_tensor(
                 continue
             attempt_counts[student_index, concept_index] += 1.0
             correct_counts[student_index, concept_index] += float(row.label)
+
+    incorrect_counts = (attempt_counts - correct_counts).clamp_min(0.0)
+    accuracy = correct_counts / attempt_counts.clamp_min(1.0)
+    log_attempts = torch.log1p(attempt_counts)
+    seen = (attempt_counts > 0.0).to(dtype=torch.float32)
+    return torch.stack(
+        [attempt_counts, correct_counts, incorrect_counts, accuracy, log_attempts, seen],
+        dim=-1,
+    )
+
+
+def build_exercise_evidence_tensor(
+    *,
+    interactions: pd.DataFrame,
+    exercise_id_map: Dict[str, int],
+) -> torch.Tensor:
+    attempt_counts = torch.zeros(len(exercise_id_map), dtype=torch.float32)
+    correct_counts = torch.zeros_like(attempt_counts)
+
+    for row in interactions.itertuples(index=False):
+        exercise_index = exercise_id_map[str(row.exer_id)]
+        attempt_counts[exercise_index] += 1.0
+        correct_counts[exercise_index] += float(row.label)
 
     incorrect_counts = (attempt_counts - correct_counts).clamp_min(0.0)
     accuracy = correct_counts / attempt_counts.clamp_min(1.0)
@@ -164,6 +192,7 @@ def prepare_step_data_bundle(
         interaction_exercise_ids=interaction_exercise_ids,
         interaction_labels=interaction_labels,
         student_concept_evidence_tensor=history_tensors["student_concept_evidence_tensor"],
+        exercise_evidence_tensor=history_tensors["exercise_evidence_tensor"],
         prerequisite_graph=prerequisite_graph,
         similarity_graph=similarity_graph,
     )
@@ -249,6 +278,7 @@ def prepare_experiment_split_bundles(
         "student_tkc_mask": history_tensors["student_tkc_mask"],
         "student_ukc_mask": history_tensors["student_ukc_mask"],
         "student_concept_evidence_tensor": history_tensors["student_concept_evidence_tensor"],
+        "exercise_evidence_tensor": history_tensors["exercise_evidence_tensor"],
     }
 
     def _bundle(
@@ -278,6 +308,7 @@ def prepare_experiment_split_bundles(
             interaction_exercise_ids=exercise_ids,
             interaction_labels=labels,
             student_concept_evidence_tensor=history_tensors["student_concept_evidence_tensor"],
+            exercise_evidence_tensor=history_tensors["exercise_evidence_tensor"],
             prerequisite_graph=prerequisite_graph,
             similarity_graph=similarity_graph,
         )
