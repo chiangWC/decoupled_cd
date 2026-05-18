@@ -27,6 +27,7 @@ class EpochTrainStats:
 
 
 def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, torch.Tensor | None]:
+    exercise_evidence_tensor = getattr(bundle, "exercise_evidence_tensor", None)
     return {
         "q_matrix": bundle.q_matrix_tensor.to(device),
         "concept_graph": bundle.concept_graph.to(device),
@@ -41,7 +42,7 @@ def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, t
             else None
         ),
         "exercise_evidence": (
-            bundle.exercise_evidence_tensor.to(device) if bundle.exercise_evidence_tensor is not None else None
+            exercise_evidence_tensor.to(device) if exercise_evidence_tensor is not None else None
         ),
         "interaction_student_ids": bundle.interaction_student_ids.to(device),
         "interaction_exercise_ids": bundle.interaction_exercise_ids.to(device),
