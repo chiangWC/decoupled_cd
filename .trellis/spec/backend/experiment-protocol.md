@@ -153,6 +153,78 @@ Correct:
 Report it as an opt-in hybrid evaluator candidate and require multi-seed validation or a separate model-integration task before promotion.
 ```
 
+## History Evidence Cognitive Alignment Contract
+
+### 1. Scope / Trigger
+
+- Trigger: `scripts/train.py` supports opt-in train-time cognitive alignment against the deterministic history-evidence prior.
+- This is a pure-CDM training objective only when `history_evidence_logit_prior_location=loss_only`; it must not add an inference-time output-logit prior.
+- Reliability weighting is an optional experiment knob for this objective, not a default mainline behavior.
+
+### 2. Signatures
+
+```bash
+python3 scripts/train.py \
+  --history-evidence-logit-prior-residual \
+  --history-evidence-logit-prior-location loss_only \
+  --history-evidence-cognitive-alignment-weight <non-negative-float> \
+  [--history-evidence-cognitive-alignment-loss standardized_mse|standardized_smooth_l1|correlation] \
+  [--history-evidence-cognitive-alignment-confidence-power <non-negative-float>] \
+  [--history-evidence-cognitive-alignment-confidence-cap <positive-float>] \
+  [--history-evidence-cognitive-alignment-confidence-floor <float-in-0-1>]
+```
+
+Runner:
+
+```bash
+bash scripts/run_assist09_history_alignment_trial.sh
+bash scripts/run_assist09_history_alignment_reliability_trial.sh
+```
+
+### 3. Contracts
+
+- `--history-evidence-cognitive-alignment-weight=0.0` disables the alignment loss.
+- `--history-evidence-cognitive-alignment-confidence-power=0.0` disables reliability weighting and preserves the original unweighted alignment behavior.
+- Confidence weighting uses train-history student-concept attempt counts for the target concepts only; valid/test target labels must not affect weights.
+- `scripts/run_assist09_history_alignment_trial.sh` remains the experiment 95 `cogonly loss_only` reference runner.
+- `scripts/run_assist09_history_alignment_reliability_trial.sh` must remain an opt-in admission runner and must not silently change the reference runner defaults.
+
+### 4. Validation & Error Matrix
+
+- Negative `history_evidence_cognitive_alignment_weight` -> `ValueError`.
+- Unsupported `history_evidence_cognitive_alignment_loss` -> `ValueError`.
+- Positive alignment weight without `history_evidence_logit_prior_residual` -> `ValueError`.
+- Positive alignment weight unless `history_evidence_logit_prior_location=loss_only` -> `ValueError`.
+- Negative confidence power -> `ValueError`.
+- Non-positive confidence cap -> `ValueError`.
+- Confidence floor outside `[0, 1]` -> `ValueError`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: experiment 95-style `cogonly loss_only` run with confidence weighting enabled only for an explicit probe.
+- Base: `scripts/run_assist09_history_alignment_trial.sh` without reliability flags, preserving the established trial candidate.
+- Bad: reporting a reliability-weighted probe as the default pure-CDM runner before multi-seed validation.
+
+### 6. Tests Required
+
+- Unit tests for invalid alignment confidence parameters.
+- Unit tests proving reliability weights derive from target-concept train-history attempt confidence.
+- Focused remote smoke test for any new alignment runner before launching a full 300 epoch experiment.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```text
+Change the default history alignment runner to include confidence weighting, then compare it as if it were experiment 95.
+```
+
+Correct:
+
+```text
+Keep experiment 95 unchanged and run confidence weighting through a separate output path with explicit flags.
+```
+
 ---
 
 ## Experiment Design Rules
