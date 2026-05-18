@@ -32,7 +32,7 @@
 - `exp/trellis-trial` baseline reference: 实验 81，经 `scripts/run_assist09_baseline.sh` 跑；seed2024 `test_auc = 0.767478`。
 - active pure-CDM trial candidate: 实验 95，经 `scripts/run_assist09_history_alignment_trial.sh` 跑；`loss_only cogonly`，student/exercise direct history weights `0.0`，四 seed mean `AUC +0.005508`，seed2024 `test_auc = 0.777843`。
 - 当前结果报告默认主看 `AUC/ACC`；`RMSE/Brier/ECE/分桶校准` 为次要指标。
-- 当前冲刺目标仍是 `test_auc ~= 0.780`，`0.778` 可视为接近可接受；停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`。
+- 当前 practical sprint target 已按用户口径调整为 `test_auc >= 0.778`；`0.780` 仍是 desirable headroom。实验 99 已用三 seed hybrid stacker 均值 `test_auc = 0.786910` 清晰超过该目标；停止口径仍必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`。
 - 后续若继续纯 CDM 路线，默认从实验 95 出发，但实验 96 已拒绝同 target 的 smoother / bounded / correlation loss 直接替换；优先改 evidence target、可靠性加权或 representation-level 大结构，不要回到 student/exercise direct history shortcut 或 output-logit prior。
 
 - 当前已吸收的最新结构更新:
@@ -62,8 +62,16 @@
   - 实验 96: 在实验 95 `cogonly` 目标上把 standardized MSE alignment 换成 `standardized_smooth_l1` 或 `correlation` loss；seed2027 都只到 `test_auc ~= 0.7747`，低于实验 95 seed2027 `0.776163` 和 corrected stop threshold `0.776682`，因此拒绝，不扩 seed，不继续同 target/loss-shape 小扫
   - 实验 97: 在实验 95 `cogonly` 目标上继续测试 reliability-weighted alignment 与 target-only target construction；最佳 pure-CDM 点 `confidence_power=0.5, floor=0.2` 只到 seed2027 `test_auc 0.776264`，比实验 95 seed2027 高 `+0.000101` 但仍低于 corrected threshold。当前分支同时复现实验 91 hybrid hist-gradient stacker，seed2024 `test_auc 0.787288`、相对 high-water `+0.014606`，作为当前明确 hybrid growth signal；pure-CDM micro-sweep 暂停
   - 实验 98: 将纯 CDM runner 相关实现迁移到 `exp/pure-cdm-runner-integration`，补齐 cog-only trainable fusion、pairwise rank alignment 与 reliability-weighted alignment runner。新增路线没有超过实验 95：best fusion seed2027 `0.775913`，rank alignment 最好 `0.772090`，reliability best seed2027 `0.776264` 仍低于 `0.776682`，且四 seed 扩展在 seed2026 崩溃到 `0.504202`；保留实验 95 runner
+  - 实验 99: 在 `exp/auc-078-exploration` 上完成 experiment 91/97 hist-gradient hybrid stacker 的 controlled three-seed validation；seeds 2024/2025/2026 分别为 `0.787288/0.788060/0.785382`，三 seed mean `0.786910`，全部超过用户修正目标 `0.778`。这是当前最强增长信号，但仍是 valid-trained hybrid evaluator，不是默认 CDM 或 pure-CDM runner promotion
 
 - 当前正向支线候选:
+  - 实验 99
+    - branch: `exp/auc-078-exploration`
+    - 判断: 当前最强 `0.778+` controlled growth signal；hist-gradient hybrid stacker over four checkpoint predictions plus train-history tabular features 在 seeds 2024/2025/2026 全部过线，三 seed mean `AUC 0.786910`，`ACC/RMSE/Brier/ECE` 也强正
+    - 关键指标: seed2024 `0.787288`、seed2025 `0.788060`、seed2026 `0.785382`；seed2026 即使一个成员 `raw_prior_max05` 崩溃到 `0.502923`，stacker 仍过 `0.778`
+    - 限制: valid-trained combiner + train-history tabular side-channel，明确属于 hybrid evaluator；不能报告为 `scripts/run_assist09_baseline.sh` 默认模型，也不能当作纯 CDM promotion
+    - follow-up: 可补 seed2027，或另开集成任务把同一 train-history feature family 转成模型侧 readout/objective；不要继续实验 95 同 target 的 pure-CDM micro-sweep，除非有新的机制假设
+    - 详细指标见 `docs/experiments/099_hybrid_stacker_multiseed_078.md`
   - 实验 95
     - branch: `exp/trellis-trial`
     - 判断: 当前最符合“纯 CDM”方向的 trial candidate；history evidence 只作为训练期 cognitive alignment loss，推理时不加 output-logit sidecar，也没有 valid-trained combiner。CF-risk ablation 后，trial runner 采用更干净的 `cogonly` 版本，而不是含 student/exercise 直接项的 full 版本
@@ -81,8 +89,8 @@
     - 详细指标见 `docs/experiments/092_history_evidence_output_logit_prior.md`
   - 实验 91
     - branch: `exp/evidence-prior-calibrated-readout`
-    - 判断: 这是当前最强 `0.78+` 级增长信号，已经满足修正后的 high-water `+0.004` 停止条件；实验 97 已在 `exp/smooth-cognitive-alignment` 分支复现同一 hist-gradient hybrid result（seed2024 `test_auc 0.787288`）。但它是 valid-trained hybrid stacker，不是 `scripts/run_assist09_baseline.sh` 默认模型结构
-    - 补充: 下一步优先做多 seed hybrid stacker 验证，并决定保留为 optional hybrid evaluator，还是把同一组 train-history 特征转成可训练 readout/objective 机制
+    - 判断: 这是 experiment 99 的 parent signal；实验 97 已在 `exp/smooth-cognitive-alignment` 分支复现同一 hist-gradient hybrid result（seed2024 `test_auc 0.787288`），实验 99 已完成 seeds 2024/2025/2026 三 seed validation。但它是 valid-trained hybrid stacker，不是 `scripts/run_assist09_baseline.sh` 默认模型结构
+    - 补充: 后续若继续这条线，应以 experiment 99 为当前 evidence，决定保留为 optional hybrid evaluator，还是把同一组 train-history 特征转成可训练 readout/objective 机制
     - 详细指标见 `docs/experiments/091_corrected_high_water_hybrid_stacker.md` 与 `docs/experiments/097_autonomous_growth_signal_exploration.md`
   - 实验 37
     - branch: `exp/training-modes`
@@ -329,7 +337,7 @@
 
 通用协作、运行与分支规则沿用 `.trellis/spec/backend/experiment-protocol.md`；这里仅补充历史台账导出的默认优先级:
 
-1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。默认目标仍是冲 `test_auc ~= 0.780`；`0.778` 可视为接近可接受。
+1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。当前 practical sprint target 是 `test_auc >= 0.778`，实验 99 的 hybrid stacker 三 seed mean `0.786910` 已清晰过线；`0.780` 仍可作为 desirable headroom。
 2. 实验 76 / 78 已因 official multi-seed 暴露 `seed2026` 失败模式而从伪主线默认口径回退；实验 81 已作为 exp70-based follow-up promote 到当前 `exp/trellis-trial`，实验 82 证明 experiment 80 的 exact-3 interaction rebase 到当前底座后不再成立，实验 83 又说明 `q-local` 的问题主要在当前 `expert` 吸收方式而不是 `q-local` 本身。实验 84-86 进一步说明 bounded / post-expert / state-qrepr 前移 / contrastive common-mode removal 都不是稳定 trial 候选。下一步默认不再继续这条 readout/qrepr/expert-output 小组合，而是围绕实验 81 补 `B49 seed=2024` 交叉复验，或在这个新底座上继续更大的结构假设。
 3. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益。实验 76 说明单知识点 student-concept train-history mastery prior 在单 seed 上有大 ranking 信号，但这条线当前只能作为历史候选或待重构假设，不能直接视作当前主线组件。普通小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
 4. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
