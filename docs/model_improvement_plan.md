@@ -61,6 +61,7 @@
   - 实验 95: CF-risk ablation 进一步证明，去掉 student/exercise 直接项的 `cogonly` 配置更强，matched mean `AUC +0.005508`、`ECE -0.004141`；只保留 student/exercise 的 `cfonly` 配置仅 `AUC +0.002939` 且 `ECE +0.003901`。当前 trial runner 已改为 `cogonly`
   - 实验 96: 在实验 95 `cogonly` 目标上把 standardized MSE alignment 换成 `standardized_smooth_l1` 或 `correlation` loss；seed2027 都只到 `test_auc ~= 0.7747`，低于实验 95 seed2027 `0.776163` 和 corrected stop threshold `0.776682`，因此拒绝，不扩 seed，不继续同 target/loss-shape 小扫
   - 实验 97: 在实验 95 `cogonly` 目标上继续测试 reliability-weighted alignment 与 target-only target construction；最佳 pure-CDM 点 `confidence_power=0.5, floor=0.2` 只到 seed2027 `test_auc 0.776264`，比实验 95 seed2027 高 `+0.000101` 但仍低于 corrected threshold。当前分支同时复现实验 91 hybrid hist-gradient stacker，seed2024 `test_auc 0.787288`、相对 high-water `+0.014606`，作为当前明确 hybrid growth signal；pure-CDM micro-sweep 暂停
+  - 实验 98: 将纯 CDM runner 相关实现迁移到 `exp/pure-cdm-runner-integration`，补齐 cog-only trainable fusion、pairwise rank alignment 与 reliability-weighted alignment runner。新增路线没有超过实验 95：best fusion seed2027 `0.775913`，rank alignment 最好 `0.772090`，reliability best seed2027 `0.776264` 仍低于 `0.776682`，且四 seed 扩展在 seed2026 崩溃到 `0.504202`；保留实验 95 runner
 
 - 当前正向支线候选:
   - 实验 95
@@ -71,7 +72,7 @@
     - 四 seed matched mean: `AUC +0.005508`、`ACC +0.002883`、`RMSE -0.002690`、`Brier -0.002279`、`ECE -0.004141`
     - 对照: full 配置均值 `AUC +0.004828`；`cfonly` 配置均值只有 `AUC +0.002939` 且 `ECE +0.003901`
     - 限制: hot config `alignment=0.08810` 虽然 seed2027 单点过线，但 seed2026 崩溃；trial 只能用 lower-strength `0.05`，下一步可测试更平滑 loss 以扩大稳定窗口
-    - follow-up: 实验 96 已测试单纯替换 smooth/correlation loss，实验 97 已测试 reliability weighting 与 target-only target construction；这些 seed2027 probe 都没有越过 corrected threshold。后续不要继续同 target/loss-shape/简单置信度权重微扫，应改更大的 representation-level 消费方式或转向明确 hybrid 验证
+    - follow-up: 实验 96 已测试单纯替换 smooth/correlation loss，实验 97/98 已测试 reliability weighting、target-only target construction、cog-only trainable fusion 与 rank alignment；这些 probe 都没有越过 corrected threshold，且 reliability 四 seed 扩展触发 seed2026 崩溃。后续不要继续同 target/loss-shape/简单置信度权重/小型 readout 微扫，应改更大的 representation-level 消费方式或转向明确 hybrid 验证
     - 详细指标见 `docs/experiments/095_history_alignment_cf_risk_ablation.md`；父实验 93 的原始 alignment family 见 `docs/experiments/093_history_evidence_cognitive_alignment.md`，实验 94 的 full trial validation 见 `docs/experiments/094_history_alignment_trial_validation.md`
   - 实验 92
     - branch: `exp/evidence-prior-calibrated-readout`
@@ -135,6 +136,7 @@
   - 实验 90: raw prior 的 matched-seed admission signal 不是修正 high-water breakthrough；不要再把 seed2024 低参考当作停止条件
   - 实验 92: deterministic output-logit readout prior 是非 hybrid 的过线诊断，但误差和校准回撤明显；后续若要继续纯 CDM，应把这组 train-history evidence 移入校准目标或可靠性门控 readout，而不是直接推广 output-logit prior
   - 实验 96: 在实验 95 cogonly target 上替换 smooth L1 / correlation alignment loss 后，seed2027 均只到约 `0.7747`，不如当前 experiment 95 MSE runner；不要继续同一 target 的 loss-shape 微扫
+  - 实验 98: 纯 CDM runner 集成后的新增增强路线已判清：cog-only fusion 与 rank alignment 均低于实验 95，reliability weighting 虽 seed2027 有 `+0.000101` 微正但 seed2026 崩溃到 `0.504202`；不要推广这些 runner 为新的纯 CDM trial candidate
   - 详细指标见对应实验条目
 
 ## 已验证有效
