@@ -30,8 +30,8 @@
 - 默认运行约束见 `.trellis/spec/backend/experiment-protocol.md`；实验台账只记录路线判断，不重复维护完整开关清单。
 - `master` accepted reference: 实验 70，three-seed mean `test_auc = 0.765517`。
 - `exp/trellis-trial` baseline reference: 实验 81，经 `scripts/run_assist09_baseline.sh` 跑；seed2024 `test_auc = 0.767478`。
-- active pure-CDM single-checkpoint trial candidate: 实验 95，经 `scripts/run_assist09_history_alignment_trial.sh` 跑；`loss_only cogonly`，student/exercise direct history weights `0.0`，四 seed mean `AUC +0.005508`，seed2024 `test_auc = 0.777843`。
-- active pure-CDM checkpoint-average evaluator candidate: 实验 102，经 `scripts/evaluate_checkpoint_average.py` 跑；固定 probability average of experiment 95 + experiment 100 checkpoints，四 seed AUC `0.779011/0.778059/0.778969/0.779448`，mean `0.778872`，没有 valid-trained combiner 或 hybrid tabular side-channel。
+- active pure-CDM single-checkpoint trial candidate: 实验 103，经 `scripts/run_assist09_history_alignment_trial.sh` 跑；在实验 95 `loss_only cogonly` 上加入 late-window cognitive alignment anneal `0.05 -> 0.0881, epoch 170 -> 230`，四 seed AUC `0.778242/0.776913/0.775059/0.776280`，mean `0.776623`，相对实验 95 mean `+0.000345`；仍低于 `0.778` practical target，不算完成 default promotion。
+- active pure-CDM checkpoint-average evaluator candidate: 实验 102，经 `scripts/evaluate_checkpoint_average.py` 跑；固定 probability average of experiment 95 + experiment 100 checkpoints，四 seed AUC `0.779011/0.778059/0.778969/0.779448`，mean `0.778872`，没有 valid-trained combiner 或 hybrid tabular side-channel。用户已明确不接受它作为当前 single-run/default-training 复现答案，只保留为上界诊断和 evaluator 候选。
 - 当前结果报告默认主看 `AUC/ACC`；`RMSE/Brier/ECE/分桶校准` 为次要指标。
 - 当前 practical sprint target 已按用户口径调整为 `test_auc >= 0.778`；`0.780` 仍是 desirable headroom。实验 102 已用四 seed pure checkpoint probability average 均值 `test_auc = 0.778872` 过线；实验 99 hybrid stacker 三 seed mean `0.786910` 仍是最高绝对值但不是默认 CDM 路线。停止口径仍必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`。
 - 后续若继续纯 CDM 路线，默认从实验 95 出发，但实验 96 已拒绝同 target 的 smoother / bounded / correlation loss 直接替换；优先改 evidence target、可靠性加权或 representation-level 大结构，不要回到 student/exercise direct history shortcut 或 output-logit prior。
@@ -67,11 +67,20 @@
   - 实验 100: 按用户要求回到 pure CDM runner/default promotion 路线，在 `exp/pure-cdm-default-promotion` 上新增 loss-only history evidence output-alignment objective 和 opt-in runner。`concept_dim=80 + output_alignment=0.004` 给出 pure-CDM seed2027 `test_auc 0.778122`，seed2026 `0.778100`，但四 seed mean 只有 `0.777030`，相对实验 95 mean 约 `+0.000751`，且 seeds 2024/2025 回撤；不修改 default runner，保留为局部增长信号和复现实验路径
   - 实验 101: 继续围绕实验 100 做 pure-CDM default-promotion follow-up。output-alignment confidence weighting 未超过 unweighted seed2027 `0.778122`；cognitive alignment 降到 `0.035/0.040/0.045` 或升到 `0.060` 都未修复 seed2024/2025；Adam `weight_decay=1e-5/3e-5/1e-4` 在 seeds 2024/2025 明显压垮 AUC；dim76 seed2024 近随机；`lr=7e-4/1.5e-3 + early_stop=20 + scheduler_patience=5`、cog-only linear readout、exercise difficulty init 也仍低于实验 95。因此这些支线均判负，不做 default promotion
   - 实验 102: 新增 `scripts/evaluate_checkpoint_average.py`，验证 experiment 95 cog-only checkpoint 与 experiment 100 dim80+output_alignment=0.004 checkpoint 的 prediction-only probability average。四 seed AUC `0.779011/0.778059/0.778969/0.779448`，mean `0.778872`，相对实验 95 mean `+0.002593`、相对实验 100 mean `+0.001841`，修复 seed2024/2025 tail 且保留 seed2026/2027 headroom。该路线没有 valid-trained combiner 或 hybrid features，是当前最强 pure-CDM runner/evaluator 候选；但它是两 checkpoint inference runner，不直接修改 `scripts/run_assist09_baseline.sh`
+  - 实验 103: 用户拒绝把实验 102 fixed checkpoint average 当作 default-training answer 后，继续单 checkpoint pure CDM runner 探索。`late170to230` cognitive alignment anneal `0.05 -> 0.0881` 在 seeds 2024/2025/2026/2027 达到 AUC `0.778242/0.776913/0.775059/0.776280`，mean `0.776623`，相对实验 95 mean `+0.000345` 且四 seed 全正；但仍低于 `0.778` target 和实验 102 fixed-average mean，不作为已完成 default promotion。capacity dim72/80、rank alignment、target/global 配比偏移、multi-head readout、direct cognitive prior、concept calibrated readout、SWA 均未形成更好 single-checkpoint 默认候选
 
 - 当前正向支线候选:
+  - 实验 103
+    - branch: `exp/pure-cdm-default-promotion`
+    - 判断: 当前最强 single-checkpoint pure CDM runner/default-training 候选；不依赖 fixed checkpoint average、valid-trained combiner 或 hybrid tabular side-channel
+    - runner: `scripts/run_assist09_history_alignment_trial.sh`
+    - config: `--history-evidence-cognitive-alignment-final-weight 0.0881 --history-evidence-cognitive-alignment-anneal-start-epoch 170 --history-evidence-cognitive-alignment-anneal-end-epoch 230`
+    - 关键指标: seed2024 `0.778242`、seed2025 `0.776913`、seed2026 `0.775059`、seed2027 `0.776280`，mean `0.776623`
+    - 限制: 虽然四 seed 全正，但均值只比实验 95 高 `+0.000345`，低于 `0.778` practical target；不能声称复现实验 102 的 fixed-average 结果
+    - 详细指标见 `docs/experiments/103_pure_cdm_late_alignment_promotion.md`
   - 实验 102
     - branch: `exp/pure-cdm-default-promotion`
-    - 判断: 当前最强 pure-CDM runner/evaluator 候选；固定 probability average of experiment 95 cog-only checkpoint + experiment 100 dim80 output-alignment checkpoint，四 seed 全过 `0.778`
+    - 判断: 当前最强 pure-CDM runner/evaluator 候选；固定 probability average of experiment 95 cog-only checkpoint + experiment 100 dim80 output-alignment checkpoint，四 seed 全过 `0.778`。但用户当前要求继续 single-run/default CDM promotion，不接受它作为默认训练复现答案
     - runner/evaluator: `scripts/evaluate_checkpoint_average.py`
     - 关键指标: seed2024 `0.779011`、seed2025 `0.778059`、seed2026 `0.778969`、seed2027 `0.779448`，mean `0.778872`
     - 限制: 这是两 checkpoint inference runner，不是单 checkpoint default-training promotion；不使用 valid-trained combiner，也不使用 train-history tabular side-channel。暂不改 `scripts/run_assist09_baseline.sh`
@@ -166,6 +175,7 @@
   - 实验 98: 纯 CDM runner 集成后的新增增强路线已判清：cog-only fusion 与 rank alignment 均低于实验 95，reliability weighting 虽 seed2027 有 `+0.000101` 微正但 seed2026 崩溃到 `0.504202`；不要推广这些 runner 为新的纯 CDM trial candidate
   - 实验 100: 纯 CDM output-alignment/default-promotion probe 已给出局部 `0.778+` 单 seed 信号，但四 seed 不稳；不要把 dim80 或 output alignment 直接设为默认 runner，不继续附近 weight 小扫
   - 实验 101: 实验 100 后续的 confidence weighting、cognitive-alignment 近邻权重、Adam weight decay、dim76 插值、lr/patience 协议、cog-only linear readout、exercise difficulty init 都未修复弱 seed；不要继续这些 follow-up，除非先提出能解释 2024/2025 tail 的结构性机制
+  - 实验 103: late-window anneal 是当前 single-checkpoint 最好点，但边界也判清：`165->225` 与 `170->220` 更稳但均值低，`175->235` 与 `170->240` 伤校准或 seed2027；rank alignment 只改善二级指标并压 AUC；target-heavy/global-heavy prior mix 不稳定，global-heavy 触发 seed2026 随机崩溃；dim72/80 capacity 线仍伤 seed2024。因此后续不要继续同类窗口/配比小扫，除非提出新的 representation-level 机制
   - 详细指标见对应实验条目
 
 ## 已验证有效

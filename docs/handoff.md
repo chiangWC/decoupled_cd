@@ -42,7 +42,7 @@
 - 当前状态:
   - `master` accepted reference: 实验 70，three-seed mean `test_auc = 0.765517`
   - `exp/trellis-trial` baseline reference: 实验 81，`scripts/run_assist09_baseline.sh`，seed2024 `test_auc = 0.767478`
-  - active pure-CDM trial candidate: 实验 95，`scripts/run_assist09_history_alignment_trial.sh`，`loss_only cogonly`，四 seed mean `AUC +0.005508`，seed2024 `test_auc = 0.777843`
+  - active pure-CDM single-checkpoint trial candidate: 实验 103，`scripts/run_assist09_history_alignment_trial.sh`，实验 95 `loss_only cogonly` + late-window anneal `0.05 -> 0.0881, epoch 170 -> 230`，四 seed AUC `0.778242/0.776913/0.775059/0.776280`，mean `0.776623`
   - latest pure-CDM default-promotion probe: 实验 100，`exp/pure-cdm-default-promotion`，dim80 + weak output alignment 可在 seed2027 到 `test_auc = 0.778122`，但四 seed mean 仅 `0.777030` 且 2024/2025 退化；不改默认 runner
   - active hybrid growth signal: 实验 99，`exp/auc-078-exploration`，hist-gradient hybrid stacker 三 seed mean `test_auc = 0.786910`，seeds 2024/2025/2026 全部超过 `0.778`
 - 当前冲刺目标:
@@ -51,6 +51,8 @@
   - 本轮修正后的停止口径必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`；不能只和最低的 seed2024 比
   - 实验 99 已用 hybrid stacker 三 seed `0.787288/0.788060/0.785382` 清晰过目标；但它是 valid-trained hybrid evaluator，不是 pure-CDM/default-runner promotion
   - 实验 100 已按 pure CDM/default-runner 口径补测：最佳单点 `dim80 + output_alignment=0.004` seed2027 `0.778122`，但最佳四 seed mean `0.777030` 且 seeds 2024/2025 回撤；结论是不做 default promotion，只保留 opt-in runner/probe
+  - 实验 102 fixed checkpoint average 四 seed mean `0.778872`，但用户当前不接受它作为 single-run/default-training 复现答案；只保留为 pure-CDM evaluator 上界诊断
+  - 实验 103 是当前最强 single-checkpoint pure CDM 训练候选，四 seed 全正但 mean `0.776623`，仍低于 `0.778` practical target；不能声称已完成 default promotion
   - 实验 92 已用固定等权 train-history evidence output-logit prior 达到 seed2027 `test_auc 0.776813`，超过该阈值；但它是 readout-prior diagnostic，误差/校准回撤明显，不能直接当作默认纯 cognitive CDM 主线
   - 若继续提升，实验 96 已拒绝在实验 95 同一 `cogonly` target 上直接替换 smoother/bounded/correlation alignment loss；优先改 evidence target、可靠性加权或转向 representation-level 大结构，不要回到 student/exercise history shortcut 或 output-logit prior
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
@@ -181,6 +183,12 @@
   - results: seeds 2024/2025/2026/2027 `test_auc 0.779011/0.778059/0.778969/0.779448`，mean `0.778872`
   - 判断: 修复实验 100 的 2024/2025 tail，同时保留 2026/2027 headroom；没有 valid-trained combiner 或 hybrid tabular side-channel，是当前最强 pure-CDM runner/evaluator 候选，但仍是两 checkpoint inference runner，不是单 checkpoint baseline/default training promotion
   - 详情: [102](./experiments/102_pure_cdm_checkpoint_average_runner.md)
+- 实验 103 已继续 single-checkpoint pure CDM default-training 探索:
+  - branch: `exp/pure-cdm-default-promotion`
+  - best config: 实验 95 cog-only runner + `--history-evidence-cognitive-alignment-final-weight 0.0881 --history-evidence-cognitive-alignment-anneal-start-epoch 170 --history-evidence-cognitive-alignment-anneal-end-epoch 230`
+  - 四 seed AUC: `0.778242/0.776913/0.775059/0.776280`，mean `0.776623`，相对实验 95 mean `+0.000345`
+  - 判断: 当前最强 single-checkpoint pure CDM runner 候选，但仍低于 `0.778` practical target；capacity dim72/80、rank alignment、target/global 配比偏移、multi-head readout、direct cognitive prior、concept calibrated readout、SWA 都未形成更好默认候选
+  - 详情: [103](./experiments/103_pure_cdm_late_alignment_promotion.md)
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
@@ -255,7 +263,7 @@
 - 若继续当前最强 evidence readout 候选，优先留在 `exp/exp70-evidence-readout-scope`；默认下一步是补 `B49 seed=2024` 交叉复验，而不是重新开始自由扫结构。
 - 若继续 `q-local` / readout expert 这条 representation-level 线，不要直接把 `q-local` 叠回当前带 `expert` 的 trial，也不要继续扫 coverage gate、bounded expert、post-expert replay、target-evidence state/qrepr 前移或 contrastive common-mode removal；先看 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)、[084_exp81_expert_output_modulation.md](./experiments/084_exp81_expert_output_modulation.md)、[085_exp81_state_and_attention_qrepr_adapters.md](./experiments/085_exp81_state_and_attention_qrepr_adapters.md)、[086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)，只有出现 materially different 的 expert architecture / training objective 假设时再重开。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
-- 若继续 pure-CDM `0.778+` runner/evaluator 路线，优先从 `exp/pure-cdm-default-promotion` 的实验 102 继续；它已经用 prediction-only probability average 在四 seed 过线。下一步要先明确是否接受两 checkpoint inference runner 作为 default evaluator 候选；若只接受单模型训练默认，则实验 102 只能作为互补性诊断。
+- 若继续 pure-CDM `0.778+` runner/evaluator 路线，优先从 `exp/pure-cdm-default-promotion` 继续。若允许 evaluator semantics，实验 102 fixed probability average 已在四 seed 过线；若只接受 single-run/default-training，当前基线应切到实验 103 的 late170to230 单 checkpoint runner，并把实验 102 仅当互补性上界诊断。
 - 若继续本轮已过线的 `0.778+` hybrid 信号，优先从 `exp/auc-078-exploration` 的实验 99 继续；三 seed stacker validation 已完成，下一步是补 seed2027 或把同类 train-history feature family 转成模型侧 readout/objective。不要把它误记为已 promote 的纯 CDM 主线。
 - 若继续当前纯 CDM trial candidate，优先从 `exp/trellis-trial` 的 `scripts/run_assist09_history_alignment_trial.sh` 出发；该 runner 已是实验 95 的 `cogonly loss_only` 版本，不要再把 student/exercise direct history terms 加回默认 trial，也不要继续只替换同一 target 的 smooth/correlation loss。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
