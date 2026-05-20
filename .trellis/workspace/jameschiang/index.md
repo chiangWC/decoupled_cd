@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-05-18
+- **Total Sessions**: 5
+- **Last Active**: 2026-05-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~150 | Active |
+| `journal-1.md` | ~185 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-05-20 | Pure CDM dual ensemble promotion | `4400e6c`, `305c1dd`, `fb1542b` | `exp/trellis-trial` |
 | 4 | 2026-05-18 | Pure CDM history alignment trial | `7e91b0b`, `ea1e23e`, `a198cb4`, `7bccb4d`, `5e96486`, `ebe6cef`, `69a9bde`, `3301515`, `b97cacc`, `29c23a6`, `223ecf0` | `exp/trellis-trial` |
 | 3 | 2026-05-17 | Sync experiment ledger back to trial | `059276c` | `exp/trellis-trial` |
 | 2 | 2026-05-16 | Promote Exp70 Single-Only Evidence Readout | `765bc68`, `cf56641` | `exp/trellis-trial` |

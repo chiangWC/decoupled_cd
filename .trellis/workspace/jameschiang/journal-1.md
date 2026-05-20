@@ -148,3 +148,38 @@ Merged the loss-only history-evidence cognitive alignment trial path into exp/tr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Pure CDM dual ensemble promotion
+
+**Date**: 2026-05-20
+**Task**: Pure CDM dual ensemble promotion
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Recorded experiment 104, merged the single-checkpoint dual CDM ensemble with branch BCE into exp/trellis-trial, verified focused tests remotely, and updated handoff/model improvement ledger to make experiment 104 the active pure-CDM default-training candidate.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4400e6c` | (see git log) |
+| `305c1dd` | (see git log) |
+| `fb1542b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
