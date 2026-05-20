@@ -30,11 +30,11 @@
 - 默认运行约束见 `.trellis/spec/backend/experiment-protocol.md`；实验台账只记录路线判断，不重复维护完整开关清单。
 - `master` accepted reference: 实验 70，three-seed mean `test_auc = 0.765517`。
 - `exp/trellis-trial` baseline reference: 实验 81，经 `scripts/run_assist09_baseline.sh` 跑；seed2024 `test_auc = 0.767478`。
-- active pure-CDM single-checkpoint trial candidate: 实验 103，经 `scripts/run_assist09_history_alignment_trial.sh` 跑；在实验 95 `loss_only cogonly` 上加入 late-window cognitive alignment anneal `0.05 -> 0.0881, epoch 170 -> 230`，四 seed AUC `0.778242/0.776913/0.775059/0.776280`，mean `0.776623`，相对实验 95 mean `+0.000345`；仍低于 `0.778` practical target，不算完成 default promotion。
-- active pure-CDM checkpoint-average evaluator candidate: 实验 102，经 `scripts/evaluate_checkpoint_average.py` 跑；固定 probability average of experiment 95 + experiment 100 checkpoints，四 seed AUC `0.779011/0.778059/0.778969/0.779448`，mean `0.778872`，没有 valid-trained combiner 或 hybrid tabular side-channel。用户已明确不接受它作为当前 single-run/default-training 复现答案，只保留为上界诊断和 evaluator 候选。
+- active pure-CDM single-checkpoint trial candidate: 实验 104，已合入 `exp/trellis-trial` 提交 `305c1dd`；在实验 103 late-window + train-only concept prior 底座上使用 `DecoupledCDMEnsemble` 双塔 `64x80` 与 `dual_cdm_branch_bce_weight=0.10`。四 seed AUC `0.778773/0.778250/0.778508/0.777948`，mean `0.778370`，stdev `0.000306`，相对实验 95 mean `+0.002091`；这是当前最佳 single-run/single-checkpoint pure-CDM default-training 候选。
+- active pure-CDM checkpoint-average evaluator candidate: 实验 102，经 `scripts/evaluate_checkpoint_average.py` 跑；固定 probability average of experiment 95 + experiment 100 checkpoints，四 seed AUC `0.779011/0.778059/0.778969/0.779448`，mean `0.778872`，没有 valid-trained combiner 或 hybrid tabular side-channel。用户已明确不接受它作为当前 single-run/default-training 复现答案；在实验 104 过线后，它只保留为上界诊断和 evaluator 候选。
 - 当前结果报告默认主看 `AUC/ACC`；`RMSE/Brier/ECE/分桶校准` 为次要指标。
-- 当前 practical sprint target 已按用户口径调整为 `test_auc >= 0.778`；`0.780` 仍是 desirable headroom。实验 102 已用四 seed pure checkpoint probability average 均值 `test_auc = 0.778872` 过线；实验 99 hybrid stacker 三 seed mean `0.786910` 仍是最高绝对值但不是默认 CDM 路线。停止口径仍必须和当前 exp81 high-water seed2027 `AUC 0.772682` 比，`+0.004` 阈值是 `0.776682`。
-- 后续若继续纯 CDM 路线，默认从实验 95 出发，但实验 96 已拒绝同 target 的 smoother / bounded / correlation loss 直接替换；优先改 evidence target、可靠性加权或 representation-level 大结构，不要回到 student/exercise direct history shortcut 或 output-logit prior。
+- 当前 practical sprint target 已按用户口径调整为 `test_auc >= 0.778`；`0.780` 仍是 desirable headroom。实验 104 已用 single-run/single-checkpoint pure-CDM mean `0.778370` 过线；实验 102 fixed checkpoint average mean `0.778872` 仍是 pure-CDM evaluator 上界；实验 99 hybrid stacker 三 seed mean `0.786910` 仍是最高绝对值但不是默认 CDM 路线。
+- 后续若继续 pure-CDM 论文路线，默认从实验 104 出发，优先补 ablation 与可解释性证据：`branch_bce_weight`、`64x64/64x80/80x80`、branch 单独 AUC、融合 AUC、以及 `cognitive/guess/slip` 组件语义稳定性。不要再回到实验 100/103 的局部参数小扫，也不要把 student/exercise direct history shortcut 或 output-logit prior 加回默认 trial。
 
 - 当前已吸收的最新结构更新:
   - 实验 70: student-conditioned UKC `none_seen` readout sidecar 已进入 `master` 默认主线；三 seed 相对实验 51 主线均值 `AUC +0.001628`，且 `ACC/RMSE/Brier/ECE` 均值也小幅正向
@@ -68,15 +68,20 @@
   - 实验 101: 继续围绕实验 100 做 pure-CDM default-promotion follow-up。output-alignment confidence weighting 未超过 unweighted seed2027 `0.778122`；cognitive alignment 降到 `0.035/0.040/0.045` 或升到 `0.060` 都未修复 seed2024/2025；Adam `weight_decay=1e-5/3e-5/1e-4` 在 seeds 2024/2025 明显压垮 AUC；dim76 seed2024 近随机；`lr=7e-4/1.5e-3 + early_stop=20 + scheduler_patience=5`、cog-only linear readout、exercise difficulty init 也仍低于实验 95。因此这些支线均判负，不做 default promotion
   - 实验 102: 新增 `scripts/evaluate_checkpoint_average.py`，验证 experiment 95 cog-only checkpoint 与 experiment 100 dim80+output_alignment=0.004 checkpoint 的 prediction-only probability average。四 seed AUC `0.779011/0.778059/0.778969/0.779448`，mean `0.778872`，相对实验 95 mean `+0.002593`、相对实验 100 mean `+0.001841`，修复 seed2024/2025 tail 且保留 seed2026/2027 headroom。该路线没有 valid-trained combiner 或 hybrid features，是当前最强 pure-CDM runner/evaluator 候选；但它是两 checkpoint inference runner，不直接修改 `scripts/run_assist09_baseline.sh`
   - 实验 103: 用户拒绝把实验 102 fixed checkpoint average 当作 default-training answer 后，继续单 checkpoint pure CDM runner 探索。`late170to230` cognitive alignment anneal `0.05 -> 0.0881` 在 seeds 2024/2025/2026/2027 达到 AUC `0.778242/0.776913/0.775059/0.776280`，mean `0.776623`，相对实验 95 mean `+0.000345` 且四 seed 全正；但仍低于 `0.778` target 和实验 102 fixed-average mean，不作为已完成 default promotion。capacity dim72/80、rank alignment、target/global 配比偏移、multi-head readout、direct cognitive prior、concept calibrated readout、SWA 均未形成更好 single-checkpoint 默认候选
+  - 实验 104: 在 `exp/pure-cdm-default-promotion` 上新增单 checkpoint 双塔 `DecoupledCDMEnsemble` 并合入 `exp/trellis-trial`。主塔 `concept_dim=64`、副塔 `concept_dim=80`，模型内概率平均；`dual_cdm_branch_bce_weight=0.10` 直接监督两个 tower 的 branch 输出。四 seed AUC `0.778773/0.778250/0.778508/0.777948`，mean `0.778370`、stdev `0.000306`，相对实验 95 mean `+0.002091`，也高于 pre-dual single-checkpoint base mean `0.776736`。这是当前最强 single-run/single-checkpoint pure-CDM default-training 候选
 
 - 当前正向支线候选:
-  - 实验 103
-    - branch: `exp/pure-cdm-default-promotion`
+  - 实验 104
+    - branch/source: 已合入 `exp/trellis-trial`，trial commit `305c1dd`；探索来源为 `exp/pure-cdm-default-promotion`
     - 判断: 当前最强 single-checkpoint pure CDM runner/default-training 候选；不依赖 fixed checkpoint average、valid-trained combiner 或 hybrid tabular side-channel
     - runner: `scripts/run_assist09_history_alignment_trial.sh`
-    - config: `--history-evidence-cognitive-alignment-final-weight 0.0881 --history-evidence-cognitive-alignment-anneal-start-epoch 170 --history-evidence-cognitive-alignment-anneal-end-epoch 230`
-    - 关键指标: seed2024 `0.778242`、seed2025 `0.776913`、seed2026 `0.775059`、seed2027 `0.776280`，mean `0.776623`
-    - 限制: 虽然四 seed 全正，但均值只比实验 95 高 `+0.000345`，低于 `0.778` practical target；不能声称复现实验 102 的 fixed-average 结果
+    - config: 实验 103 late-window + train-only concept prior 底座，追加 `--dual-cdm-ensemble --dual-cdm-secondary-concept-dim 80 --dual-cdm-branch-bce-weight 0.10`
+    - 关键指标: seed2024 `0.778773`、seed2025 `0.778250`、seed2026 `0.778508`、seed2027 `0.777948`，mean `0.778370`
+    - 限制: 解释性低于单塔 CDM，因为最终输出是两个 CDM tower 的结构化平均；但每个 tower 仍保留 `cognitive/guess/slip` 分解，且 branch BCE 让 branch-level 输出本身可监督。论文前必须补 `weight/capacity/branch` ablation
+    - 详细指标见 `docs/experiments/104_single_checkpoint_dual_cdm_ensemble.md`
+  - 实验 103
+    - branch: `exp/pure-cdm-default-promotion`
+    - 判断: 实验 104 前的 single-checkpoint baseline；late-window anneal 四 seed mean `0.776623`，四 seed 全正但低于 `0.778`，现在作为 104 的底座和 ablation 对照
     - 详细指标见 `docs/experiments/103_pure_cdm_late_alignment_promotion.md`
   - 实验 102
     - branch: `exp/pure-cdm-default-promotion`
@@ -368,7 +373,7 @@
 
 通用协作、运行与分支规则沿用 `.trellis/spec/backend/experiment-protocol.md`；这里仅补充历史台账导出的默认优先级:
 
-1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。当前 practical sprint target 是 `test_auc >= 0.778`，实验 99 的 hybrid stacker 三 seed mean `0.786910` 已清晰过线；`0.780` 仍可作为 desirable headroom。
+1. 当前 Trellis-managed worktree 以后从 `exp/trellis-trial` 伪主线或其后代出发；`master` 只作为模型主线语义和 accepted state 参考。当前 practical sprint target 是 `test_auc >= 0.778`，实验 104 的 single-checkpoint pure-CDM mean `0.778370` 已过线；实验 99 的 hybrid stacker 三 seed mean `0.786910` 仍是最高绝对值但不是默认 CDM 路线；`0.780` 仍可作为 desirable headroom。
 2. 实验 76 / 78 已因 official multi-seed 暴露 `seed2026` 失败模式而从伪主线默认口径回退；实验 81 已作为 exp70-based follow-up promote 到当前 `exp/trellis-trial`，实验 82 证明 experiment 80 的 exact-3 interaction rebase 到当前底座后不再成立，实验 83 又说明 `q-local` 的问题主要在当前 `expert` 吸收方式而不是 `q-local` 本身。实验 84-86 进一步说明 bounded / post-expert / state-qrepr 前移 / contrastive common-mode removal 都不是稳定 trial 候选。下一步默认不再继续这条 readout/qrepr/expert-output 小组合，而是围绕实验 81 补 `B49 seed=2024` 交叉复验，或在这个新底座上继续更大的结构假设。
 3. 当前处于单因素边际收益放缓的平台期；实验 70 已把 `none_seen` 学生条件化信号转成 overall 正收益。实验 76 说明单知识点 student-concept train-history mastery prior 在单 seed 上有大 ranking 信号，但这条线当前只能作为历史候选或待重构假设，不能直接视作当前主线组件。普通小改默认只作为新假设准入或大结构假设的辅助验证，不再视为完整推进节奏。
 4. 允许少量测试“已各自成立”的正交组合，但默认只测最强的 `1-2` 组候选，不做组合爆炸；实验 70 + 实验 61 的直接组合已在实验 71 单 seed 验证为不 clean，不默认扩 seed。
