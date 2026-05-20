@@ -19,6 +19,10 @@ class DecoupledForwardOutput:
     guess_probs: torch.Tensor
     slip_probs: torch.Tensor
     difficulty: torch.Tensor
+    primary_probs: torch.Tensor | None = None
+    secondary_probs: torch.Tensor | None = None
+    primary_cognitive_probs: torch.Tensor | None = None
+    secondary_cognitive_probs: torch.Tensor | None = None
 
 
 class DecoupledCDM(nn.Module):
@@ -41,6 +45,7 @@ class DecoupledCDM(nn.Module):
         alpha: float | None = None,
         beta: float | None = None,
         gs_mode: str = "conditional",
+        cognitive_readout_head_count: int = 1,
         high_concept_logit_adapter: bool = False,
         high_concept_logit_min_count: int = 3,
         pairwise_history_interaction_adapter: bool = False,
@@ -65,6 +70,11 @@ class DecoupledCDM(nn.Module):
         concept_evidence_prior_max_logit: float = 0.5,
         concept_evidence_prior_strength: float = 2.0,
         concept_evidence_prior_confidence_cap: float = 20.0,
+        concept_evidence_prior_min_confidence: float = 0.0,
+        concept_evidence_prior_min_abs_mastery: float = 0.0,
+        concept_evidence_prior_positive_scale: float = 1.0,
+        concept_evidence_prior_negative_scale: float = 1.0,
+        concept_evidence_prior_apply_mode: str = "all",
         student_evidence_ability_prior_residual: bool = False,
         student_evidence_ability_prior_min_attempts: int = 1,
         student_evidence_ability_prior_max_logit: float = 0.25,
@@ -87,6 +97,7 @@ class DecoupledCDM(nn.Module):
         history_evidence_fusion_max_count: int = 0,
         history_evidence_fusion_min_seen_ratio: float = 0.0,
         history_evidence_fusion_max_logit: float = 0.5,
+        history_evidence_fusion_feature_set: str = "full",
         history_evidence_fusion_prior_strength: float = 2.0,
         history_evidence_fusion_concept_confidence_cap: float = 20.0,
         history_evidence_fusion_exercise_confidence_cap: float = 200.0,
@@ -96,6 +107,7 @@ class DecoupledCDM(nn.Module):
         history_evidence_linear_max_count: int = 0,
         history_evidence_linear_min_seen_ratio: float = 0.0,
         history_evidence_linear_max_logit: float = 0.5,
+        history_evidence_linear_feature_set: str = "full",
         history_evidence_linear_prior_strength: float = 2.0,
         history_evidence_linear_concept_confidence_cap: float = 20.0,
         history_evidence_linear_exercise_confidence_cap: float = 200.0,
@@ -123,6 +135,7 @@ class DecoupledCDM(nn.Module):
         history_evidence_output_calibration_concept_confidence_cap: float = 20.0,
         history_evidence_output_calibration_exercise_confidence_cap: float = 200.0,
         history_evidence_output_calibration_student_confidence_cap: float = 200.0,
+        history_evidence_output_calibration_apply_mode: str = "all",
         exercise_evidence_prior_residual: bool = False,
         exercise_evidence_prior_min_count: int = 1,
         exercise_evidence_prior_max_logit: float = 0.25,
@@ -137,6 +150,8 @@ class DecoupledCDM(nn.Module):
         super().__init__()
         if gs_mode not in {"constant", "conditional"}:
             raise ValueError(f"Unsupported gs_mode: {gs_mode}")
+        if cognitive_readout_head_count < 1:
+            raise ValueError("cognitive_readout_head_count must be positive.")
         if high_concept_logit_min_count < 2:
             raise ValueError("high_concept_logit_min_count must be at least 2.")
         if pairwise_history_interaction_min_count < 2:
@@ -177,6 +192,16 @@ class DecoupledCDM(nn.Module):
             raise ValueError("concept_evidence_prior_strength must be positive.")
         if concept_evidence_prior_confidence_cap <= 0.0:
             raise ValueError("concept_evidence_prior_confidence_cap must be positive.")
+        if concept_evidence_prior_min_confidence < 0.0 or concept_evidence_prior_min_confidence > 1.0:
+            raise ValueError("concept_evidence_prior_min_confidence must be in [0, 1].")
+        if concept_evidence_prior_min_abs_mastery < 0.0 or concept_evidence_prior_min_abs_mastery > 1.0:
+            raise ValueError("concept_evidence_prior_min_abs_mastery must be in [0, 1].")
+        if concept_evidence_prior_positive_scale < 0.0:
+            raise ValueError("concept_evidence_prior_positive_scale must be non-negative.")
+        if concept_evidence_prior_negative_scale < 0.0:
+            raise ValueError("concept_evidence_prior_negative_scale must be non-negative.")
+        if concept_evidence_prior_apply_mode not in {"all", "eval_only", "train_only"}:
+            raise ValueError(f"Unsupported concept_evidence_prior_apply_mode: {concept_evidence_prior_apply_mode}")
         if student_evidence_ability_prior_min_attempts < 1:
             raise ValueError("student_evidence_ability_prior_min_attempts must be positive.")
         if student_evidence_ability_prior_max_logit <= 0.0:
@@ -228,6 +253,8 @@ class DecoupledCDM(nn.Module):
             raise ValueError("history_evidence_fusion_min_seen_ratio must be in [0, 1].")
         if history_evidence_fusion_max_logit <= 0.0:
             raise ValueError("history_evidence_fusion_max_logit must be positive.")
+        if history_evidence_fusion_feature_set not in {"full", "cogonly"}:
+            raise ValueError(f"Unsupported history_evidence_fusion_feature_set: {history_evidence_fusion_feature_set}")
         if history_evidence_fusion_prior_strength <= 0.0:
             raise ValueError("history_evidence_fusion_prior_strength must be positive.")
         if history_evidence_fusion_concept_confidence_cap <= 0.0:
@@ -248,6 +275,8 @@ class DecoupledCDM(nn.Module):
             raise ValueError("history_evidence_linear_min_seen_ratio must be in [0, 1].")
         if history_evidence_linear_max_logit <= 0.0:
             raise ValueError("history_evidence_linear_max_logit must be positive.")
+        if history_evidence_linear_feature_set not in {"full", "cogonly"}:
+            raise ValueError(f"Unsupported history_evidence_linear_feature_set: {history_evidence_linear_feature_set}")
         if history_evidence_linear_prior_strength <= 0.0:
             raise ValueError("history_evidence_linear_prior_strength must be positive.")
         if history_evidence_linear_concept_confidence_cap <= 0.0:
@@ -307,6 +336,11 @@ class DecoupledCDM(nn.Module):
             raise ValueError("history_evidence_output_calibration_exercise_confidence_cap must be positive.")
         if history_evidence_output_calibration_student_confidence_cap <= 0.0:
             raise ValueError("history_evidence_output_calibration_student_confidence_cap must be positive.")
+        if history_evidence_output_calibration_apply_mode not in {"all", "eval_only", "train_only"}:
+            raise ValueError(
+                f"Unsupported history_evidence_output_calibration_apply_mode: "
+                f"{history_evidence_output_calibration_apply_mode}"
+            )
         if exercise_evidence_prior_min_count < 1:
             raise ValueError("exercise_evidence_prior_min_count must be positive.")
         if exercise_evidence_prior_max_logit <= 0.0:
@@ -324,6 +358,7 @@ class DecoupledCDM(nn.Module):
         if exercise_evidence_difficulty_adapter_confidence_cap <= 0.0:
             raise ValueError("exercise_evidence_difficulty_adapter_confidence_cap must be positive.")
         self.gs_mode = gs_mode
+        self.cognitive_readout_head_count = int(cognitive_readout_head_count)
         self.high_concept_logit_adapter = high_concept_logit_adapter
         self.high_concept_logit_min_count = high_concept_logit_min_count
         self.pairwise_history_interaction_adapter = pairwise_history_interaction_adapter
@@ -348,6 +383,11 @@ class DecoupledCDM(nn.Module):
         self.concept_evidence_prior_max_logit = float(concept_evidence_prior_max_logit)
         self.concept_evidence_prior_strength = float(concept_evidence_prior_strength)
         self.concept_evidence_prior_confidence_cap = float(concept_evidence_prior_confidence_cap)
+        self.concept_evidence_prior_min_confidence = float(concept_evidence_prior_min_confidence)
+        self.concept_evidence_prior_min_abs_mastery = float(concept_evidence_prior_min_abs_mastery)
+        self.concept_evidence_prior_positive_scale = float(concept_evidence_prior_positive_scale)
+        self.concept_evidence_prior_negative_scale = float(concept_evidence_prior_negative_scale)
+        self.concept_evidence_prior_apply_mode = concept_evidence_prior_apply_mode
         self.student_evidence_ability_prior_residual = student_evidence_ability_prior_residual
         self.student_evidence_ability_prior_min_attempts = int(student_evidence_ability_prior_min_attempts)
         self.student_evidence_ability_prior_max_logit = float(student_evidence_ability_prior_max_logit)
@@ -378,6 +418,7 @@ class DecoupledCDM(nn.Module):
         self.history_evidence_fusion_max_count = int(history_evidence_fusion_max_count)
         self.history_evidence_fusion_min_seen_ratio = float(history_evidence_fusion_min_seen_ratio)
         self.history_evidence_fusion_max_logit = float(history_evidence_fusion_max_logit)
+        self.history_evidence_fusion_feature_set = history_evidence_fusion_feature_set
         self.history_evidence_fusion_prior_strength = float(history_evidence_fusion_prior_strength)
         self.history_evidence_fusion_concept_confidence_cap = float(
             history_evidence_fusion_concept_confidence_cap
@@ -393,6 +434,7 @@ class DecoupledCDM(nn.Module):
         self.history_evidence_linear_max_count = int(history_evidence_linear_max_count)
         self.history_evidence_linear_min_seen_ratio = float(history_evidence_linear_min_seen_ratio)
         self.history_evidence_linear_max_logit = float(history_evidence_linear_max_logit)
+        self.history_evidence_linear_feature_set = history_evidence_linear_feature_set
         self.history_evidence_linear_prior_strength = float(history_evidence_linear_prior_strength)
         self.history_evidence_linear_concept_confidence_cap = float(
             history_evidence_linear_concept_confidence_cap
@@ -440,6 +482,7 @@ class DecoupledCDM(nn.Module):
         self.history_evidence_output_calibration_student_confidence_cap = float(
             history_evidence_output_calibration_student_confidence_cap
         )
+        self.history_evidence_output_calibration_apply_mode = history_evidence_output_calibration_apply_mode
         self.exercise_evidence_prior_residual = exercise_evidence_prior_residual
         self.exercise_evidence_prior_min_count = int(exercise_evidence_prior_min_count)
         self.exercise_evidence_prior_max_logit = float(exercise_evidence_prior_max_logit)
@@ -479,6 +522,16 @@ class DecoupledCDM(nn.Module):
             nn.Linear(concept_dim * 4, concept_dim),
             nn.ReLU(),
             nn.Linear(concept_dim, 1),
+        )
+        self.cognitive_match_extra_mlps = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(concept_dim * 4, concept_dim),
+                    nn.ReLU(),
+                    nn.Linear(concept_dim, 1),
+                )
+                for _ in range(self.cognitive_readout_head_count - 1)
+            ]
         )
         self.guess_logit = nn.Embedding(num_students, 1)
         self.slip_logit = nn.Embedding(num_students, 1)
@@ -662,11 +715,10 @@ class DecoupledCDM(nn.Module):
             dim=-1,
         )
         adapter_inputs = torch.cat([match_inputs.detach(), difficulty.detach().unsqueeze(-1)], dim=-1)
-        cognitive_logits = (
-            self.cognitive_match_mlp(match_inputs).squeeze(-1)
-            - difficulty
-            + self.cognitive_difficulty_adapter(adapter_inputs).squeeze(-1)
-        )
+        cognitive_readout_logits = self._build_cognitive_readout_logits(match_inputs=match_inputs)
+        cognitive_logits = cognitive_readout_logits - difficulty + self.cognitive_difficulty_adapter(
+            adapter_inputs
+        ).squeeze(-1)
         if self.high_concept_logit_adapter:
             concept_counts, mean_pooled, dispersion = concept_summary
             high_concept_inputs = torch.cat(
@@ -772,7 +824,7 @@ class DecoupledCDM(nn.Module):
                 response_matrix=response_matrix,
                 concept_summary=concept_summary,
             )
-        if self.concept_evidence_prior_residual:
+        if self._should_apply_concept_evidence_prior():
             cognitive_logits = cognitive_logits + self._build_concept_evidence_prior_residual(
                 q_vectors=q_vectors,
                 target_student_ids=target_student_ids,
@@ -839,7 +891,7 @@ class DecoupledCDM(nn.Module):
                 concept_summary=concept_summary,
             )
             probs = torch.sigmoid(torch.logit(probs.clamp(min=1e-6, max=1.0 - 1e-6)) + output_prior_logit)
-        if self.history_evidence_output_calibration:
+        if self._should_apply_history_evidence_output_calibration():
             calibration_logit = self._build_history_evidence_output_calibration(
                 q_vectors=q_vectors,
                 target_student_ids=target_student_ids,
@@ -897,6 +949,13 @@ class DecoupledCDM(nn.Module):
         pooled = attn @ concept_embeddings
         fused = self.exercise_q_fusion(torch.cat([pooled, exercise_embeddings], dim=-1))
         return self.q_pool_mlp(fused)
+
+    def _build_cognitive_readout_logits(self, *, match_inputs: torch.Tensor) -> torch.Tensor:
+        logits = [self.cognitive_match_mlp(match_inputs).squeeze(-1)]
+        logits.extend(head(match_inputs).squeeze(-1) for head in self.cognitive_match_extra_mlps)
+        if len(logits) == 1:
+            return logits[0]
+        return torch.stack(logits, dim=0).mean(dim=0)
 
     def _build_pairwise_history_interaction_residual(
         self,
@@ -1189,6 +1248,15 @@ class DecoupledCDM(nn.Module):
         trigger_mask = trigger_mask.to(dtype=residual.dtype)
         return residual * trigger_mask
 
+    def _should_apply_concept_evidence_prior(self) -> bool:
+        if not self.concept_evidence_prior_residual:
+            return False
+        if self.concept_evidence_prior_apply_mode == "eval_only":
+            return not self.training
+        if self.concept_evidence_prior_apply_mode == "train_only":
+            return self.training
+        return True
+
     def _build_concept_evidence_prior_residual(
         self,
         *,
@@ -1221,11 +1289,18 @@ class DecoupledCDM(nn.Module):
             attempt_count.new_tensor(self.concept_evidence_prior_confidence_cap)
         )
         confidence = confidence.clamp(min=0.0, max=1.0)
-        residual = signed_mastery.squeeze(-1) * confidence.squeeze(-1) * seen_ratio.squeeze(-1)
+        signed_mastery_values = signed_mastery.squeeze(-1)
+        confidence_values = confidence.squeeze(-1)
+        residual = signed_mastery_values * confidence_values * seen_ratio.squeeze(-1)
+        residual = residual.clamp(min=0.0) * self.concept_evidence_prior_positive_scale + residual.clamp(
+            max=0.0
+        ) * self.concept_evidence_prior_negative_scale
         residual = residual.clamp(min=-1.0, max=1.0) * self.concept_evidence_prior_max_logit
         trigger_mask = (
             (concept_counts.squeeze(-1) >= float(self.concept_evidence_prior_min_count))
             & (seen_ratio.squeeze(-1) >= self.concept_evidence_prior_min_seen_ratio)
+            & (confidence_values >= self.concept_evidence_prior_min_confidence)
+            & (signed_mastery_values.abs() >= self.concept_evidence_prior_min_abs_mastery)
         )
         if self.concept_evidence_prior_max_count > 0:
             trigger_mask = trigger_mask & (concept_counts.squeeze(-1) <= float(self.concept_evidence_prior_max_count))
@@ -1364,29 +1439,39 @@ class DecoupledCDM(nn.Module):
         confidence_max = concept_confidence.masked_fill(target_seen <= 0.0, 0.0).max(dim=1, keepdim=True).values
         concept_prior = mastery_mean * confidence_mean * seen_ratio
 
-        student_attempts = student_exercise_mask.sum(dim=1).to(dtype=dtype)
-        student_correct = (student_exercise_mask * response_matrix).sum(dim=1).to(dtype=dtype)
-        target_student_attempts = student_attempts[target_student_ids].unsqueeze(-1)
-        target_student_correct = student_correct[target_student_ids].unsqueeze(-1)
-        student_accuracy = (target_student_correct + 0.5 * prior) / (target_student_attempts + prior)
-        student_mastery = ((student_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-        student_confidence = torch.log1p(target_student_attempts) / torch.log1p(
-            target_student_attempts.new_tensor(self.history_evidence_fusion_student_confidence_cap)
-        )
-        student_confidence = student_confidence.clamp(min=0.0, max=1.0)
-        student_prior = student_mastery * student_confidence
+        if self.history_evidence_fusion_feature_set == "full":
+            student_attempts = student_exercise_mask.sum(dim=1).to(dtype=dtype)
+            student_correct = (student_exercise_mask * response_matrix).sum(dim=1).to(dtype=dtype)
+            target_student_attempts = student_attempts[target_student_ids].unsqueeze(-1)
+            target_student_correct = student_correct[target_student_ids].unsqueeze(-1)
+            student_accuracy = (target_student_correct + 0.5 * prior) / (target_student_attempts + prior)
+            student_mastery = ((student_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
+            student_confidence = torch.log1p(target_student_attempts) / torch.log1p(
+                target_student_attempts.new_tensor(self.history_evidence_fusion_student_confidence_cap)
+            )
+            student_confidence = student_confidence.clamp(min=0.0, max=1.0)
+            student_prior = student_mastery * student_confidence
 
-        target_exercise_evidence = exercise_evidence[target_exercise_ids].to(dtype=dtype)
-        exercise_attempts = target_exercise_evidence[:, 0:1]
-        exercise_correct = target_exercise_evidence[:, 1:2]
-        exercise_seen = target_exercise_evidence[:, 5:6]
-        exercise_accuracy = (exercise_correct + 0.5 * prior) / (exercise_attempts + prior)
-        exercise_ease = ((exercise_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-        exercise_confidence = torch.log1p(exercise_attempts) / torch.log1p(
-            exercise_attempts.new_tensor(self.history_evidence_fusion_exercise_confidence_cap)
-        )
-        exercise_confidence = exercise_confidence.clamp(min=0.0, max=1.0)
-        exercise_prior = exercise_ease * exercise_confidence * exercise_seen
+            target_exercise_evidence = exercise_evidence[target_exercise_ids].to(dtype=dtype)
+            exercise_attempts = target_exercise_evidence[:, 0:1]
+            exercise_correct = target_exercise_evidence[:, 1:2]
+            exercise_seen = target_exercise_evidence[:, 5:6]
+            exercise_accuracy = (exercise_correct + 0.5 * prior) / (exercise_attempts + prior)
+            exercise_ease = ((exercise_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
+            exercise_confidence = torch.log1p(exercise_attempts) / torch.log1p(
+                exercise_attempts.new_tensor(self.history_evidence_fusion_exercise_confidence_cap)
+            )
+            exercise_confidence = exercise_confidence.clamp(min=0.0, max=1.0)
+            exercise_prior = exercise_ease * exercise_confidence * exercise_seen
+        else:
+            direct_zero = target_attempts.new_zeros(seen_count.shape)
+            student_mastery = direct_zero
+            student_confidence = direct_zero
+            student_prior = direct_zero
+            exercise_ease = direct_zero
+            exercise_confidence = direct_zero
+            exercise_seen = direct_zero
+            exercise_prior = direct_zero
 
         residual_inputs = torch.cat(
             [
@@ -1484,6 +1569,9 @@ class DecoupledCDM(nn.Module):
             exercise_attempts.new_tensor(self.history_evidence_linear_exercise_confidence_cap)
         )
         exercise_prior = exercise_ease * exercise_confidence.clamp(min=0.0, max=1.0) * exercise_seen
+        if self.history_evidence_linear_feature_set == "cogonly":
+            student_prior = student_prior.new_zeros(student_prior.shape)
+            exercise_prior = exercise_prior.new_zeros(exercise_prior.shape)
 
         priors = torch.cat([concept_prior, student_prior, exercise_prior], dim=-1)
         evidence_logit = (priors.detach() * self.history_evidence_linear_weights).sum(dim=-1)
@@ -1615,6 +1703,15 @@ class DecoupledCDM(nn.Module):
                 concept_count_values <= float(self.history_evidence_output_calibration_max_count)
             )
         return residual * trigger_mask.to(dtype=residual.dtype)
+
+    def _should_apply_history_evidence_output_calibration(self) -> bool:
+        if not self.history_evidence_output_calibration:
+            return False
+        if self.history_evidence_output_calibration_apply_mode == "eval_only":
+            return not self.training
+        if self.history_evidence_output_calibration_apply_mode == "train_only":
+            return self.training
+        return True
 
     def _build_history_evidence_logit_prior_residual(
         self,

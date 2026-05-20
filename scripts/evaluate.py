@@ -121,6 +121,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concept-evidence-prior-max-logit", type=float, default=0.5)
     parser.add_argument("--concept-evidence-prior-strength", type=float, default=2.0)
     parser.add_argument("--concept-evidence-prior-confidence-cap", type=float, default=20.0)
+    parser.add_argument("--concept-evidence-prior-min-confidence", type=float, default=0.0)
+    parser.add_argument("--concept-evidence-prior-min-abs-mastery", type=float, default=0.0)
+    parser.add_argument("--concept-evidence-prior-positive-scale", type=float, default=1.0)
+    parser.add_argument("--concept-evidence-prior-negative-scale", type=float, default=1.0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--output", default="results/eval_summary.json")
@@ -167,6 +171,14 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--concept-evidence-prior-strength must be positive.")
     if args.concept_evidence_prior_confidence_cap <= 0.0:
         raise ValueError("--concept-evidence-prior-confidence-cap must be positive.")
+    if args.concept_evidence_prior_min_confidence < 0.0 or args.concept_evidence_prior_min_confidence > 1.0:
+        raise ValueError("--concept-evidence-prior-min-confidence must be in [0, 1].")
+    if args.concept_evidence_prior_min_abs_mastery < 0.0 or args.concept_evidence_prior_min_abs_mastery > 1.0:
+        raise ValueError("--concept-evidence-prior-min-abs-mastery must be in [0, 1].")
+    if args.concept_evidence_prior_positive_scale < 0.0:
+        raise ValueError("--concept-evidence-prior-positive-scale must be non-negative.")
+    if args.concept_evidence_prior_negative_scale < 0.0:
+        raise ValueError("--concept-evidence-prior-negative-scale must be non-negative.")
     return args
 
 
@@ -275,6 +287,10 @@ def main() -> None:
         concept_evidence_prior_max_logit=args.concept_evidence_prior_max_logit,
         concept_evidence_prior_strength=args.concept_evidence_prior_strength,
         concept_evidence_prior_confidence_cap=args.concept_evidence_prior_confidence_cap,
+        concept_evidence_prior_min_confidence=args.concept_evidence_prior_min_confidence,
+        concept_evidence_prior_min_abs_mastery=args.concept_evidence_prior_min_abs_mastery,
+        concept_evidence_prior_positive_scale=args.concept_evidence_prior_positive_scale,
+        concept_evidence_prior_negative_scale=args.concept_evidence_prior_negative_scale,
     )
 
     payload = {
@@ -314,6 +330,10 @@ def main() -> None:
         "concept_evidence_prior_max_logit": args.concept_evidence_prior_max_logit,
         "concept_evidence_prior_strength": args.concept_evidence_prior_strength,
         "concept_evidence_prior_confidence_cap": args.concept_evidence_prior_confidence_cap,
+        "concept_evidence_prior_min_confidence": args.concept_evidence_prior_min_confidence,
+        "concept_evidence_prior_min_abs_mastery": args.concept_evidence_prior_min_abs_mastery,
+        "concept_evidence_prior_positive_scale": args.concept_evidence_prior_positive_scale,
+        "concept_evidence_prior_negative_scale": args.concept_evidence_prior_negative_scale,
         "train_metrics": evaluate_model(bundle=bundles["train"], model=model, device=device),
         "valid_metrics": evaluate_model(bundle=bundles["valid"], model=model, device=device),
         "test_metrics": evaluate_model(bundle=bundles["test"], model=model, device=device),
