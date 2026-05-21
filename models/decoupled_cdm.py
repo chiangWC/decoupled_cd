@@ -25,6 +25,30 @@ class DecoupledForwardOutput:
     secondary_cognitive_probs: torch.Tensor | None = None
 
 
+@dataclass(frozen=True)
+class _TargetConceptEvidence:
+    evidence: torch.Tensor
+    q_mask: torch.Tensor
+    target_attempts: torch.Tensor
+    target_correct: torch.Tensor
+    target_seen: torch.Tensor
+    seen_count: torch.Tensor
+    seen_denom: torch.Tensor
+    seen_ratio: torch.Tensor
+
+
+@dataclass(frozen=True)
+class _MasteryConfidenceSummary:
+    mastery_mean: torch.Tensor
+    mastery_std: torch.Tensor
+    mastery_min: torch.Tensor
+    mastery_max: torch.Tensor
+    confidence_mean: torch.Tensor
+    confidence_min: torch.Tensor
+    confidence_max: torch.Tensor
+    prior: torch.Tensor
+
+
 class DecoupledCDM(nn.Module):
     """
     Minimal runnable model for Step 1 + Step 2.
@@ -633,32 +657,17 @@ class DecoupledCDM(nn.Module):
             if history_evidence_output_calibration
             else None
         )
-        nn.init.zeros_(self.cognitive_difficulty_adapter[-1].weight)
-        nn.init.zeros_(self.cognitive_difficulty_adapter[-1].bias)
-        nn.init.zeros_(self.high_concept_logit_residual[-1].weight)
-        nn.init.zeros_(self.high_concept_logit_residual[-1].bias)
-        nn.init.zeros_(self.pairwise_history_interaction_scorer[-1].weight)
-        nn.init.zeros_(self.pairwise_history_interaction_scorer[-1].bias)
-        nn.init.zeros_(self.gs_difficulty_residual[-1].weight)
-        nn.init.zeros_(self.gs_difficulty_residual[-1].bias)
+        self._zero_init_last_layer(self.cognitive_difficulty_adapter)
+        self._zero_init_last_layer(self.high_concept_logit_residual)
+        self._zero_init_last_layer(self.pairwise_history_interaction_scorer)
+        self._zero_init_last_layer(self.gs_difficulty_residual)
         for expert in self.interpretable_readout_experts:
-            nn.init.zeros_(expert[-1].weight)
-            nn.init.zeros_(expert[-1].bias)
-        if self.student_conditioned_ukc_readout_residual_head is not None:
-            nn.init.zeros_(self.student_conditioned_ukc_readout_residual_head[-1].weight)
-            nn.init.zeros_(self.student_conditioned_ukc_readout_residual_head[-1].bias)
-        if self.concept_evidence_readout_residual_head is not None:
-            nn.init.zeros_(self.concept_evidence_readout_residual_head[-1].weight)
-            nn.init.zeros_(self.concept_evidence_readout_residual_head[-1].bias)
-        if self.concept_evidence_calibrated_readout_head is not None:
-            nn.init.zeros_(self.concept_evidence_calibrated_readout_head[-1].weight)
-            nn.init.zeros_(self.concept_evidence_calibrated_readout_head[-1].bias)
-        if self.history_evidence_fusion_readout_head is not None:
-            nn.init.zeros_(self.history_evidence_fusion_readout_head[-1].weight)
-            nn.init.zeros_(self.history_evidence_fusion_readout_head[-1].bias)
-        if self.history_evidence_output_calibration_head is not None:
-            nn.init.zeros_(self.history_evidence_output_calibration_head[-1].weight)
-            nn.init.zeros_(self.history_evidence_output_calibration_head[-1].bias)
+            self._zero_init_last_layer(expert)
+        self._zero_init_last_layer(self.student_conditioned_ukc_readout_residual_head)
+        self._zero_init_last_layer(self.concept_evidence_readout_residual_head)
+        self._zero_init_last_layer(self.concept_evidence_calibrated_readout_head)
+        self._zero_init_last_layer(self.history_evidence_fusion_readout_head)
+        self._zero_init_last_layer(self.history_evidence_output_calibration_head)
 
     def forward(
         self,
@@ -920,6 +929,113 @@ class DecoupledCDM(nn.Module):
             guess_probs=guess_probs,
             slip_probs=slip_probs,
             difficulty=difficulty,
+        )
+
+    @staticmethod
+    def _zero_init_last_layer(module: nn.Module | None) -> None:
+        if module is None:
+            return
+        last_layer = module[-1] if isinstance(module, nn.Sequential) else module
+        if not isinstance(last_layer, nn.Linear):
+            raise ValueError("zero-init helper expects a Linear final layer.")
+        nn.init.zeros_(last_layer.weight)
+        if last_layer.bias is not None:
+            nn.init.zeros_(last_layer.bias)
+
+    @staticmethod
+    def _require_tensor(value: torch.Tensor | None, *, name: str, feature: str) -> torch.Tensor:
+        if value is None:
+            raise ValueError(f"{name} is required when {feature} is enabled.")
+        return value
+
+    def _target_concept_evidence(
+        self,
+        *,
+        q_vectors: torch.Tensor,
+        target_student_ids: torch.Tensor,
+        student_concept_evidence: torch.Tensor | None,
+        concept_summary: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        dtype: torch.dtype,
+        feature: str,
+    ) -> _TargetConceptEvidence:
+        evidence = self._require_tensor(
+            student_concept_evidence,
+            name="student_concept_evidence",
+            feature=feature,
+        )[target_student_ids].to(dtype=dtype)
+        concept_counts, _, _ = concept_summary
+        q_mask = (q_vectors > 0).to(dtype=dtype)
+        target_attempts = evidence[..., 0] * q_mask
+        target_correct = evidence[..., 1] * q_mask
+        target_seen = evidence[..., 5] * q_mask
+        seen_count = target_seen.sum(dim=1, keepdim=True)
+        return _TargetConceptEvidence(
+            evidence=evidence,
+            q_mask=q_mask,
+            target_attempts=target_attempts,
+            target_correct=target_correct,
+            target_seen=target_seen,
+            seen_count=seen_count,
+            seen_denom=seen_count.clamp_min(1.0),
+            seen_ratio=seen_count / concept_counts.clamp_min(1.0),
+        )
+
+    @staticmethod
+    def _concept_count_seen_trigger_mask(
+        *,
+        concept_counts: torch.Tensor,
+        seen_ratio: torch.Tensor,
+        min_count: int,
+        max_count: int,
+        min_seen_ratio: float,
+    ) -> torch.Tensor:
+        concept_count_values = concept_counts.squeeze(-1)
+        trigger_mask = (
+            (concept_count_values >= float(min_count))
+            & (seen_ratio.squeeze(-1) >= float(min_seen_ratio))
+        )
+        if max_count > 0:
+            trigger_mask = trigger_mask & (concept_count_values <= float(max_count))
+        return trigger_mask
+
+    @staticmethod
+    def _signed_mastery_and_confidence(
+        *,
+        correct: torch.Tensor,
+        attempts: torch.Tensor,
+        prior_strength: float,
+        confidence_cap: float,
+        clamp_mastery: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        smoothed_accuracy = (correct + 0.5 * float(prior_strength)) / (attempts + float(prior_strength))
+        signed_mastery = (smoothed_accuracy - 0.5) * 2.0
+        if clamp_mastery:
+            signed_mastery = signed_mastery.clamp(min=-1.0, max=1.0)
+        confidence = torch.log1p(attempts) / torch.log1p(attempts.new_tensor(float(confidence_cap)))
+        return signed_mastery, confidence.clamp(min=0.0, max=1.0)
+
+    @staticmethod
+    def _summarize_mastery_confidence(
+        *,
+        mastery: torch.Tensor,
+        confidence: torch.Tensor,
+        seen_mask: torch.Tensor,
+        seen_denom: torch.Tensor,
+        seen_ratio: torch.Tensor,
+    ) -> _MasteryConfidenceSummary:
+        mastery_mean = (mastery * seen_mask).sum(dim=1, keepdim=True) / seen_denom
+        mastery_square_mean = (mastery.square() * seen_mask).sum(dim=1, keepdim=True) / seen_denom
+        mastery_std = (mastery_square_mean - mastery_mean.square()).clamp_min(0.0).sqrt()
+        confidence_mean = (confidence * seen_mask).sum(dim=1, keepdim=True) / seen_denom
+        return _MasteryConfidenceSummary(
+            mastery_mean=mastery_mean,
+            mastery_std=mastery_std,
+            mastery_min=mastery.masked_fill(seen_mask <= 0.0, 1.0).min(dim=1, keepdim=True).values,
+            mastery_max=mastery.masked_fill(seen_mask <= 0.0, -1.0).max(dim=1, keepdim=True).values,
+            confidence_mean=confidence_mean,
+            confidence_min=confidence.masked_fill(seen_mask <= 0.0, 1.0).min(dim=1, keepdim=True).values,
+            confidence_max=confidence.masked_fill(seen_mask <= 0.0, 0.0).max(dim=1, keepdim=True).values,
+            prior=mastery_mean * confidence_mean * seen_ratio,
         )
 
     def _summarize_exercise_concepts(
@@ -1204,30 +1320,28 @@ class DecoupledCDM(nn.Module):
     ) -> torch.Tensor:
         if self.concept_evidence_readout_residual_head is None:
             return difficulty.new_zeros(difficulty.size(0))
-        if student_concept_evidence is None:
-            raise ValueError(
-                "student_concept_evidence is required when concept_evidence_readout_residual is enabled."
-            )
 
         concept_counts, _, _ = concept_summary
-        q_mask = (q_vectors > 0).to(dtype=difficulty.dtype)
-        target_evidence = student_concept_evidence[target_student_ids].to(dtype=difficulty.dtype)
-        target_seen = target_evidence[..., 5] * q_mask
-        seen_count = target_seen.sum(dim=1, keepdim=True)
-        seen_ratio = seen_count / concept_counts.clamp_min(1.0)
-        seen_denom = seen_count.clamp_min(1.0)
+        target = self._target_concept_evidence(
+            q_vectors=q_vectors,
+            target_student_ids=target_student_ids,
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=concept_summary,
+            dtype=difficulty.dtype,
+            feature="concept_evidence_readout_residual",
+        )
 
-        target_accuracy = target_evidence[..., 3]
-        target_log_attempts = target_evidence[..., 4]
-        mean_accuracy = (target_accuracy * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        mean_log_attempts = (target_log_attempts * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        min_accuracy = target_accuracy.masked_fill(target_seen <= 0.0, 1.0).min(dim=1, keepdim=True).values
-        max_accuracy = (target_accuracy * target_seen).max(dim=1, keepdim=True).values
+        target_accuracy = target.evidence[..., 3]
+        target_log_attempts = target.evidence[..., 4]
+        mean_accuracy = (target_accuracy * target.target_seen).sum(dim=1, keepdim=True) / target.seen_denom
+        mean_log_attempts = (target_log_attempts * target.target_seen).sum(dim=1, keepdim=True) / target.seen_denom
+        min_accuracy = target_accuracy.masked_fill(target.target_seen <= 0.0, 1.0).min(dim=1, keepdim=True).values
+        max_accuracy = (target_accuracy * target.target_seen).max(dim=1, keepdim=True).values
 
         residual_inputs = torch.cat(
             [
                 (concept_counts - 1.0).detach(),
-                seen_ratio.detach(),
+                target.seen_ratio.detach(),
                 mean_accuracy.detach(),
                 min_accuracy.detach(),
                 max_accuracy.detach(),
@@ -1238,15 +1352,14 @@ class DecoupledCDM(nn.Module):
         )
         residual = torch.tanh(self.concept_evidence_readout_residual_head(residual_inputs).squeeze(-1))
         residual = residual * self.concept_evidence_readout_max_logit
-        concept_count_values = concept_counts.squeeze(-1)
-        trigger_mask = (
-            (concept_count_values >= float(self.concept_evidence_readout_min_count))
-            & (seen_ratio.squeeze(-1) >= self.concept_evidence_readout_min_seen_ratio)
+        trigger_mask = self._concept_count_seen_trigger_mask(
+            concept_counts=concept_counts,
+            seen_ratio=target.seen_ratio,
+            min_count=self.concept_evidence_readout_min_count,
+            max_count=self.concept_evidence_readout_max_count,
+            min_seen_ratio=self.concept_evidence_readout_min_seen_ratio,
         )
-        if self.concept_evidence_readout_max_count > 0:
-            trigger_mask = trigger_mask & (concept_count_values <= float(self.concept_evidence_readout_max_count))
-        trigger_mask = trigger_mask.to(dtype=residual.dtype)
-        return residual * trigger_mask
+        return residual * trigger_mask.to(dtype=residual.dtype)
 
     def _should_apply_concept_evidence_prior(self) -> bool:
         if not self.concept_evidence_prior_residual:
@@ -1267,45 +1380,47 @@ class DecoupledCDM(nn.Module):
     ) -> torch.Tensor:
         if not self.concept_evidence_prior_residual:
             return q_vectors.new_zeros(q_vectors.size(0))
-        if student_concept_evidence is None:
-            raise ValueError("student_concept_evidence is required when concept_evidence_prior_residual is enabled.")
 
         concept_counts, _, _ = concept_summary
-        q_mask = (q_vectors > 0).to(dtype=q_vectors.dtype)
-        target_evidence = student_concept_evidence[target_student_ids].to(dtype=q_vectors.dtype)
-        target_attempts = target_evidence[..., 0] * q_mask
-        target_correct = target_evidence[..., 1] * q_mask
-        target_seen = target_evidence[..., 5] * q_mask
-
-        attempt_count = target_attempts.sum(dim=1, keepdim=True)
-        correct_count = target_correct.sum(dim=1, keepdim=True)
-        seen_count = target_seen.sum(dim=1, keepdim=True)
-        seen_ratio = seen_count / concept_counts.clamp_min(1.0)
-
-        prior = self.concept_evidence_prior_strength
-        smoothed_accuracy = (correct_count + 0.5 * prior) / (attempt_count + prior)
-        signed_mastery = (smoothed_accuracy - 0.5) * 2.0
-        confidence = torch.log1p(attempt_count) / torch.log1p(
-            attempt_count.new_tensor(self.concept_evidence_prior_confidence_cap)
+        target = self._target_concept_evidence(
+            q_vectors=q_vectors,
+            target_student_ids=target_student_ids,
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=concept_summary,
+            dtype=q_vectors.dtype,
+            feature="concept_evidence_prior_residual",
         )
-        confidence = confidence.clamp(min=0.0, max=1.0)
+
+        attempt_count = target.target_attempts.sum(dim=1, keepdim=True)
+        correct_count = target.target_correct.sum(dim=1, keepdim=True)
+
+        signed_mastery, confidence = self._signed_mastery_and_confidence(
+            correct=correct_count,
+            attempts=attempt_count,
+            prior_strength=self.concept_evidence_prior_strength,
+            confidence_cap=self.concept_evidence_prior_confidence_cap,
+            clamp_mastery=False,
+        )
         signed_mastery_values = signed_mastery.squeeze(-1)
         confidence_values = confidence.squeeze(-1)
-        residual = signed_mastery_values * confidence_values * seen_ratio.squeeze(-1)
+        residual = signed_mastery_values * confidence_values * target.seen_ratio.squeeze(-1)
         residual = residual.clamp(min=0.0) * self.concept_evidence_prior_positive_scale + residual.clamp(
             max=0.0
         ) * self.concept_evidence_prior_negative_scale
         residual = residual.clamp(min=-1.0, max=1.0) * self.concept_evidence_prior_max_logit
+        trigger_mask = self._concept_count_seen_trigger_mask(
+            concept_counts=concept_counts,
+            seen_ratio=target.seen_ratio,
+            min_count=self.concept_evidence_prior_min_count,
+            max_count=self.concept_evidence_prior_max_count,
+            min_seen_ratio=self.concept_evidence_prior_min_seen_ratio,
+        )
         trigger_mask = (
-            (concept_counts.squeeze(-1) >= float(self.concept_evidence_prior_min_count))
-            & (seen_ratio.squeeze(-1) >= self.concept_evidence_prior_min_seen_ratio)
+            trigger_mask
             & (confidence_values >= self.concept_evidence_prior_min_confidence)
             & (signed_mastery_values.abs() >= self.concept_evidence_prior_min_abs_mastery)
         )
-        if self.concept_evidence_prior_max_count > 0:
-            trigger_mask = trigger_mask & (concept_counts.squeeze(-1) <= float(self.concept_evidence_prior_max_count))
-        trigger_mask = trigger_mask.to(dtype=residual.dtype)
-        return residual * trigger_mask
+        return residual * trigger_mask.to(dtype=residual.dtype)
 
     def _build_concept_evidence_calibrated_readout(
         self,
@@ -1318,57 +1433,53 @@ class DecoupledCDM(nn.Module):
     ) -> torch.Tensor:
         if self.concept_evidence_calibrated_readout_head is None:
             return difficulty.new_zeros(difficulty.size(0))
-        if student_concept_evidence is None:
-            raise ValueError(
-                "student_concept_evidence is required when concept_evidence_calibrated_readout is enabled."
-            )
 
         concept_counts, _, _ = concept_summary
-        q_mask = (q_vectors > 0).to(dtype=difficulty.dtype)
-        target_evidence = student_concept_evidence[target_student_ids].to(dtype=difficulty.dtype)
-        target_attempts = target_evidence[..., 0] * q_mask
-        target_correct = target_evidence[..., 1] * q_mask
-        target_seen = target_evidence[..., 5] * q_mask
-        seen_count = target_seen.sum(dim=1, keepdim=True)
-        seen_ratio = seen_count / concept_counts.clamp_min(1.0)
-        seen_denom = seen_count.clamp_min(1.0)
-
-        prior = self.concept_evidence_calibrated_readout_prior_strength
-        smoothed_accuracy = (target_correct + 0.5 * prior) / (target_attempts + prior)
-        signed_mastery = (smoothed_accuracy - 0.5) * 2.0
-        confidence = torch.log1p(target_attempts) / torch.log1p(
-            target_attempts.new_tensor(self.concept_evidence_calibrated_readout_confidence_cap)
+        target = self._target_concept_evidence(
+            q_vectors=q_vectors,
+            target_student_ids=target_student_ids,
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=concept_summary,
+            dtype=difficulty.dtype,
+            feature="concept_evidence_calibrated_readout",
         )
-        confidence = confidence.clamp(min=0.0, max=1.0)
 
-        mastery_mean = (signed_mastery * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        mastery_square_mean = (signed_mastery.square() * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        mastery_std = (mastery_square_mean - mastery_mean.square()).clamp_min(0.0).sqrt()
-        mastery_min = signed_mastery.masked_fill(target_seen <= 0.0, 1.0).min(dim=1, keepdim=True).values
-        mastery_max = signed_mastery.masked_fill(target_seen <= 0.0, -1.0).max(dim=1, keepdim=True).values
-        confidence_mean = (confidence * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        confidence_min = confidence.masked_fill(target_seen <= 0.0, 1.0).min(dim=1, keepdim=True).values
-        confidence_max = confidence.masked_fill(target_seen <= 0.0, 0.0).max(dim=1, keepdim=True).values
-
-        student_attempts = target_evidence[..., 0].sum(dim=1, keepdim=True)
-        student_correct = target_evidence[..., 1].sum(dim=1, keepdim=True)
-        student_smoothed_accuracy = (student_correct + 0.5 * prior) / (student_attempts + prior)
-        student_signed_mastery = (student_smoothed_accuracy - 0.5) * 2.0
-        student_confidence = torch.log1p(student_attempts) / torch.log1p(
-            student_attempts.new_tensor(self.concept_evidence_calibrated_readout_confidence_cap)
+        signed_mastery, confidence = self._signed_mastery_and_confidence(
+            correct=target.target_correct,
+            attempts=target.target_attempts,
+            prior_strength=self.concept_evidence_calibrated_readout_prior_strength,
+            confidence_cap=self.concept_evidence_calibrated_readout_confidence_cap,
+            clamp_mastery=False,
         )
-        student_confidence = student_confidence.clamp(min=0.0, max=1.0)
+
+        concept_evidence_summary = self._summarize_mastery_confidence(
+            mastery=signed_mastery,
+            confidence=confidence,
+            seen_mask=target.target_seen,
+            seen_denom=target.seen_denom,
+            seen_ratio=target.seen_ratio,
+        )
+
+        student_attempts = target.evidence[..., 0].sum(dim=1, keepdim=True)
+        student_correct = target.evidence[..., 1].sum(dim=1, keepdim=True)
+        student_signed_mastery, student_confidence = self._signed_mastery_and_confidence(
+            correct=student_correct,
+            attempts=student_attempts,
+            prior_strength=self.concept_evidence_calibrated_readout_prior_strength,
+            confidence_cap=self.concept_evidence_calibrated_readout_confidence_cap,
+            clamp_mastery=False,
+        )
 
         residual_inputs = torch.cat(
             [
-                mastery_mean.detach(),
-                mastery_min.detach(),
-                mastery_max.detach(),
-                mastery_std.detach(),
-                confidence_mean.detach(),
-                confidence_min.detach(),
-                confidence_max.detach(),
-                seen_ratio.detach(),
+                concept_evidence_summary.mastery_mean.detach(),
+                concept_evidence_summary.mastery_min.detach(),
+                concept_evidence_summary.mastery_max.detach(),
+                concept_evidence_summary.mastery_std.detach(),
+                concept_evidence_summary.confidence_mean.detach(),
+                concept_evidence_summary.confidence_min.detach(),
+                concept_evidence_summary.confidence_max.detach(),
+                target.seen_ratio.detach(),
                 (concept_counts - 1.0).detach(),
                 student_signed_mastery.detach(),
                 student_confidence.detach(),
@@ -1378,15 +1489,13 @@ class DecoupledCDM(nn.Module):
         )
         residual = torch.tanh(self.concept_evidence_calibrated_readout_head(residual_inputs).squeeze(-1))
         residual = residual * self.concept_evidence_calibrated_readout_max_logit
-        concept_count_values = concept_counts.squeeze(-1)
-        trigger_mask = (
-            (concept_count_values >= float(self.concept_evidence_calibrated_readout_min_count))
-            & (seen_ratio.squeeze(-1) >= self.concept_evidence_calibrated_readout_min_seen_ratio)
+        trigger_mask = self._concept_count_seen_trigger_mask(
+            concept_counts=concept_counts,
+            seen_ratio=target.seen_ratio,
+            min_count=self.concept_evidence_calibrated_readout_min_count,
+            max_count=self.concept_evidence_calibrated_readout_max_count,
+            min_seen_ratio=self.concept_evidence_calibrated_readout_min_seen_ratio,
         )
-        if self.concept_evidence_calibrated_readout_max_count > 0:
-            trigger_mask = trigger_mask & (
-                concept_count_values <= float(self.concept_evidence_calibrated_readout_max_count)
-            )
         return residual * trigger_mask.to(dtype=residual.dtype)
 
     def _build_history_evidence_fusion_readout(
@@ -1404,67 +1513,64 @@ class DecoupledCDM(nn.Module):
     ) -> torch.Tensor:
         if self.history_evidence_fusion_readout_head is None:
             return difficulty.new_zeros(difficulty.size(0))
-        if student_concept_evidence is None:
-            raise ValueError(
-                "student_concept_evidence is required when history_evidence_fusion_readout is enabled."
-            )
-        if exercise_evidence is None:
-            raise ValueError("exercise_evidence is required when history_evidence_fusion_readout is enabled.")
+        exercise_evidence = self._require_tensor(
+            exercise_evidence,
+            name="exercise_evidence",
+            feature="history_evidence_fusion_readout",
+        )
 
         dtype = difficulty.dtype
         concept_counts, _, _ = concept_summary
-        q_mask = (q_vectors > 0).to(dtype=dtype)
-        target_concept_evidence = student_concept_evidence[target_student_ids].to(dtype=dtype)
-        target_attempts = target_concept_evidence[..., 0] * q_mask
-        target_correct = target_concept_evidence[..., 1] * q_mask
-        target_seen = target_concept_evidence[..., 5] * q_mask
-        seen_count = target_seen.sum(dim=1, keepdim=True)
-        seen_denom = seen_count.clamp_min(1.0)
-        seen_ratio = seen_count / concept_counts.clamp_min(1.0)
+        target = self._target_concept_evidence(
+            q_vectors=q_vectors,
+            target_student_ids=target_student_ids,
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=concept_summary,
+            dtype=dtype,
+            feature="history_evidence_fusion_readout",
+        )
 
         prior = self.history_evidence_fusion_prior_strength
-        concept_accuracy = (target_correct + 0.5 * prior) / (target_attempts + prior)
-        concept_mastery = ((concept_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-        concept_confidence = torch.log1p(target_attempts) / torch.log1p(
-            target_attempts.new_tensor(self.history_evidence_fusion_concept_confidence_cap)
+        concept_mastery, concept_confidence = self._signed_mastery_and_confidence(
+            correct=target.target_correct,
+            attempts=target.target_attempts,
+            prior_strength=prior,
+            confidence_cap=self.history_evidence_fusion_concept_confidence_cap,
         )
-        concept_confidence = concept_confidence.clamp(min=0.0, max=1.0)
-        mastery_mean = (concept_mastery * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        mastery_square_mean = (concept_mastery.square() * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        mastery_std = (mastery_square_mean - mastery_mean.square()).clamp_min(0.0).sqrt()
-        mastery_min = concept_mastery.masked_fill(target_seen <= 0.0, 1.0).min(dim=1, keepdim=True).values
-        mastery_max = concept_mastery.masked_fill(target_seen <= 0.0, -1.0).max(dim=1, keepdim=True).values
-        confidence_mean = (concept_confidence * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        confidence_min = concept_confidence.masked_fill(target_seen <= 0.0, 1.0).min(dim=1, keepdim=True).values
-        confidence_max = concept_confidence.masked_fill(target_seen <= 0.0, 0.0).max(dim=1, keepdim=True).values
-        concept_prior = mastery_mean * confidence_mean * seen_ratio
+        concept_evidence_summary = self._summarize_mastery_confidence(
+            mastery=concept_mastery,
+            confidence=concept_confidence,
+            seen_mask=target.target_seen,
+            seen_denom=target.seen_denom,
+            seen_ratio=target.seen_ratio,
+        )
 
         if self.history_evidence_fusion_feature_set == "full":
             student_attempts = student_exercise_mask.sum(dim=1).to(dtype=dtype)
             student_correct = (student_exercise_mask * response_matrix).sum(dim=1).to(dtype=dtype)
             target_student_attempts = student_attempts[target_student_ids].unsqueeze(-1)
             target_student_correct = student_correct[target_student_ids].unsqueeze(-1)
-            student_accuracy = (target_student_correct + 0.5 * prior) / (target_student_attempts + prior)
-            student_mastery = ((student_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-            student_confidence = torch.log1p(target_student_attempts) / torch.log1p(
-                target_student_attempts.new_tensor(self.history_evidence_fusion_student_confidence_cap)
+            student_mastery, student_confidence = self._signed_mastery_and_confidence(
+                correct=target_student_correct,
+                attempts=target_student_attempts,
+                prior_strength=prior,
+                confidence_cap=self.history_evidence_fusion_student_confidence_cap,
             )
-            student_confidence = student_confidence.clamp(min=0.0, max=1.0)
             student_prior = student_mastery * student_confidence
 
             target_exercise_evidence = exercise_evidence[target_exercise_ids].to(dtype=dtype)
             exercise_attempts = target_exercise_evidence[:, 0:1]
             exercise_correct = target_exercise_evidence[:, 1:2]
             exercise_seen = target_exercise_evidence[:, 5:6]
-            exercise_accuracy = (exercise_correct + 0.5 * prior) / (exercise_attempts + prior)
-            exercise_ease = ((exercise_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-            exercise_confidence = torch.log1p(exercise_attempts) / torch.log1p(
-                exercise_attempts.new_tensor(self.history_evidence_fusion_exercise_confidence_cap)
+            exercise_ease, exercise_confidence = self._signed_mastery_and_confidence(
+                correct=exercise_correct,
+                attempts=exercise_attempts,
+                prior_strength=prior,
+                confidence_cap=self.history_evidence_fusion_exercise_confidence_cap,
             )
-            exercise_confidence = exercise_confidence.clamp(min=0.0, max=1.0)
             exercise_prior = exercise_ease * exercise_confidence * exercise_seen
         else:
-            direct_zero = target_attempts.new_zeros(seen_count.shape)
+            direct_zero = target.target_attempts.new_zeros(target.seen_count.shape)
             student_mastery = direct_zero
             student_confidence = direct_zero
             student_prior = direct_zero
@@ -1475,16 +1581,16 @@ class DecoupledCDM(nn.Module):
 
         residual_inputs = torch.cat(
             [
-                mastery_mean.detach(),
-                mastery_min.detach(),
-                mastery_max.detach(),
-                mastery_std.detach(),
-                confidence_mean.detach(),
-                confidence_min.detach(),
-                confidence_max.detach(),
-                seen_ratio.detach(),
+                concept_evidence_summary.mastery_mean.detach(),
+                concept_evidence_summary.mastery_min.detach(),
+                concept_evidence_summary.mastery_max.detach(),
+                concept_evidence_summary.mastery_std.detach(),
+                concept_evidence_summary.confidence_mean.detach(),
+                concept_evidence_summary.confidence_min.detach(),
+                concept_evidence_summary.confidence_max.detach(),
+                target.seen_ratio.detach(),
                 (concept_counts - 1.0).detach(),
-                concept_prior.detach(),
+                concept_evidence_summary.prior.detach(),
                 student_mastery.detach(),
                 student_confidence.detach(),
                 student_prior.detach(),
@@ -1498,13 +1604,13 @@ class DecoupledCDM(nn.Module):
         )
         residual = torch.tanh(self.history_evidence_fusion_readout_head(residual_inputs).squeeze(-1))
         residual = residual * self.history_evidence_fusion_max_logit
-        concept_count_values = concept_counts.squeeze(-1)
-        trigger_mask = (
-            (concept_count_values >= float(self.history_evidence_fusion_min_count))
-            & (seen_ratio.squeeze(-1) >= self.history_evidence_fusion_min_seen_ratio)
+        trigger_mask = self._concept_count_seen_trigger_mask(
+            concept_counts=concept_counts,
+            seen_ratio=target.seen_ratio,
+            min_count=self.history_evidence_fusion_min_count,
+            max_count=self.history_evidence_fusion_max_count,
+            min_seen_ratio=self.history_evidence_fusion_min_seen_ratio,
         )
-        if self.history_evidence_fusion_max_count > 0:
-            trigger_mask = trigger_mask & (concept_count_values <= float(self.history_evidence_fusion_max_count))
         return residual * trigger_mask.to(dtype=residual.dtype)
 
     def _build_history_evidence_linear_readout(
@@ -1521,54 +1627,57 @@ class DecoupledCDM(nn.Module):
     ) -> torch.Tensor:
         if self.history_evidence_linear_weights is None or self.history_evidence_linear_bias is None:
             return q_vectors.new_zeros(q_vectors.size(0))
-        if student_concept_evidence is None:
-            raise ValueError(
-                "student_concept_evidence is required when history_evidence_linear_readout is enabled."
-            )
-        if exercise_evidence is None:
-            raise ValueError("exercise_evidence is required when history_evidence_linear_readout is enabled.")
+        exercise_evidence = self._require_tensor(
+            exercise_evidence,
+            name="exercise_evidence",
+            feature="history_evidence_linear_readout",
+        )
 
         dtype = q_vectors.dtype
         concept_counts, _, _ = concept_summary
-        q_mask = (q_vectors > 0).to(dtype=dtype)
-        target_concept_evidence = student_concept_evidence[target_student_ids].to(dtype=dtype)
-        target_attempts = target_concept_evidence[..., 0] * q_mask
-        target_correct = target_concept_evidence[..., 1] * q_mask
-        target_seen = target_concept_evidence[..., 5] * q_mask
-        attempt_count = target_attempts.sum(dim=1, keepdim=True)
-        correct_count = target_correct.sum(dim=1, keepdim=True)
-        seen_count = target_seen.sum(dim=1, keepdim=True)
-        seen_ratio = seen_count / concept_counts.clamp_min(1.0)
+        target = self._target_concept_evidence(
+            q_vectors=q_vectors,
+            target_student_ids=target_student_ids,
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=concept_summary,
+            dtype=dtype,
+            feature="history_evidence_linear_readout",
+        )
+        attempt_count = target.target_attempts.sum(dim=1, keepdim=True)
+        correct_count = target.target_correct.sum(dim=1, keepdim=True)
 
         prior = self.history_evidence_linear_prior_strength
-        concept_accuracy = (correct_count + 0.5 * prior) / (attempt_count + prior)
-        concept_mastery = ((concept_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-        concept_confidence = torch.log1p(attempt_count) / torch.log1p(
-            attempt_count.new_tensor(self.history_evidence_linear_concept_confidence_cap)
+        concept_mastery, concept_confidence = self._signed_mastery_and_confidence(
+            correct=correct_count,
+            attempts=attempt_count,
+            prior_strength=prior,
+            confidence_cap=self.history_evidence_linear_concept_confidence_cap,
         )
-        concept_prior = concept_mastery * concept_confidence.clamp(min=0.0, max=1.0) * seen_ratio
+        concept_prior = concept_mastery * concept_confidence * target.seen_ratio
 
         student_attempts = student_exercise_mask.sum(dim=1).to(dtype=dtype)
         student_correct = (student_exercise_mask * response_matrix).sum(dim=1).to(dtype=dtype)
         target_student_attempts = student_attempts[target_student_ids].unsqueeze(-1)
         target_student_correct = student_correct[target_student_ids].unsqueeze(-1)
-        student_accuracy = (target_student_correct + 0.5 * prior) / (target_student_attempts + prior)
-        student_mastery = ((student_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-        student_confidence = torch.log1p(target_student_attempts) / torch.log1p(
-            target_student_attempts.new_tensor(self.history_evidence_linear_student_confidence_cap)
+        student_mastery, student_confidence = self._signed_mastery_and_confidence(
+            correct=target_student_correct,
+            attempts=target_student_attempts,
+            prior_strength=prior,
+            confidence_cap=self.history_evidence_linear_student_confidence_cap,
         )
-        student_prior = student_mastery * student_confidence.clamp(min=0.0, max=1.0)
+        student_prior = student_mastery * student_confidence
 
         target_exercise_evidence = exercise_evidence[target_exercise_ids].to(dtype=dtype)
         exercise_attempts = target_exercise_evidence[:, 0:1]
         exercise_correct = target_exercise_evidence[:, 1:2]
         exercise_seen = target_exercise_evidence[:, 5:6]
-        exercise_accuracy = (exercise_correct + 0.5 * prior) / (exercise_attempts + prior)
-        exercise_ease = ((exercise_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-        exercise_confidence = torch.log1p(exercise_attempts) / torch.log1p(
-            exercise_attempts.new_tensor(self.history_evidence_linear_exercise_confidence_cap)
+        exercise_ease, exercise_confidence = self._signed_mastery_and_confidence(
+            correct=exercise_correct,
+            attempts=exercise_attempts,
+            prior_strength=prior,
+            confidence_cap=self.history_evidence_linear_exercise_confidence_cap,
         )
-        exercise_prior = exercise_ease * exercise_confidence.clamp(min=0.0, max=1.0) * exercise_seen
+        exercise_prior = exercise_ease * exercise_confidence * exercise_seen
         if self.history_evidence_linear_feature_set == "cogonly":
             student_prior = student_prior.new_zeros(student_prior.shape)
             exercise_prior = exercise_prior.new_zeros(exercise_prior.shape)
@@ -1577,13 +1686,13 @@ class DecoupledCDM(nn.Module):
         evidence_logit = (priors.detach() * self.history_evidence_linear_weights).sum(dim=-1)
         evidence_logit = evidence_logit + self.history_evidence_linear_bias
         residual = torch.tanh(evidence_logit) * self.history_evidence_linear_max_logit
-        concept_count_values = concept_counts.squeeze(-1)
-        trigger_mask = (
-            (concept_count_values >= float(self.history_evidence_linear_min_count))
-            & (seen_ratio.squeeze(-1) >= self.history_evidence_linear_min_seen_ratio)
+        trigger_mask = self._concept_count_seen_trigger_mask(
+            concept_counts=concept_counts,
+            seen_ratio=target.seen_ratio,
+            min_count=self.history_evidence_linear_min_count,
+            max_count=self.history_evidence_linear_max_count,
+            min_seen_ratio=self.history_evidence_linear_min_seen_ratio,
         )
-        if self.history_evidence_linear_max_count > 0:
-            trigger_mask = trigger_mask & (concept_count_values <= float(self.history_evidence_linear_max_count))
         return residual * trigger_mask.to(dtype=residual.dtype)
 
     def _build_history_evidence_output_calibration(
@@ -1605,77 +1714,74 @@ class DecoupledCDM(nn.Module):
     ) -> torch.Tensor:
         if self.history_evidence_output_calibration_head is None:
             return probs.new_zeros(probs.size(0))
-        if student_concept_evidence is None:
-            raise ValueError(
-                "student_concept_evidence is required when history_evidence_output_calibration is enabled."
-            )
-        if exercise_evidence is None:
-            raise ValueError("exercise_evidence is required when history_evidence_output_calibration is enabled.")
+        exercise_evidence = self._require_tensor(
+            exercise_evidence,
+            name="exercise_evidence",
+            feature="history_evidence_output_calibration",
+        )
 
         dtype = probs.dtype
         concept_counts, _, _ = concept_summary
-        q_mask = (q_vectors > 0).to(dtype=dtype)
-        target_concept_evidence = student_concept_evidence[target_student_ids].to(dtype=dtype)
-        target_attempts = target_concept_evidence[..., 0] * q_mask
-        target_correct = target_concept_evidence[..., 1] * q_mask
-        target_seen = target_concept_evidence[..., 5] * q_mask
-        seen_count = target_seen.sum(dim=1, keepdim=True)
-        seen_denom = seen_count.clamp_min(1.0)
-        seen_ratio = seen_count / concept_counts.clamp_min(1.0)
+        target = self._target_concept_evidence(
+            q_vectors=q_vectors,
+            target_student_ids=target_student_ids,
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=concept_summary,
+            dtype=dtype,
+            feature="history_evidence_output_calibration",
+        )
 
         prior = self.history_evidence_output_calibration_prior_strength
-        concept_accuracy = (target_correct + 0.5 * prior) / (target_attempts + prior)
-        concept_mastery = ((concept_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-        concept_confidence = torch.log1p(target_attempts) / torch.log1p(
-            target_attempts.new_tensor(self.history_evidence_output_calibration_concept_confidence_cap)
+        concept_mastery, concept_confidence = self._signed_mastery_and_confidence(
+            correct=target.target_correct,
+            attempts=target.target_attempts,
+            prior_strength=prior,
+            confidence_cap=self.history_evidence_output_calibration_concept_confidence_cap,
         )
-        concept_confidence = concept_confidence.clamp(min=0.0, max=1.0)
-        mastery_mean = (concept_mastery * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        mastery_square_mean = (concept_mastery.square() * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        mastery_std = (mastery_square_mean - mastery_mean.square()).clamp_min(0.0).sqrt()
-        mastery_min = concept_mastery.masked_fill(target_seen <= 0.0, 1.0).min(dim=1, keepdim=True).values
-        mastery_max = concept_mastery.masked_fill(target_seen <= 0.0, -1.0).max(dim=1, keepdim=True).values
-        confidence_mean = (concept_confidence * target_seen).sum(dim=1, keepdim=True) / seen_denom
-        confidence_min = concept_confidence.masked_fill(target_seen <= 0.0, 1.0).min(dim=1, keepdim=True).values
-        confidence_max = concept_confidence.masked_fill(target_seen <= 0.0, 0.0).max(dim=1, keepdim=True).values
-        concept_prior = mastery_mean * confidence_mean * seen_ratio
+        concept_evidence_summary = self._summarize_mastery_confidence(
+            mastery=concept_mastery,
+            confidence=concept_confidence,
+            seen_mask=target.target_seen,
+            seen_denom=target.seen_denom,
+            seen_ratio=target.seen_ratio,
+        )
 
         student_attempts = student_exercise_mask.sum(dim=1).to(dtype=dtype)
         student_correct = (student_exercise_mask * response_matrix).sum(dim=1).to(dtype=dtype)
         target_student_attempts = student_attempts[target_student_ids].unsqueeze(-1)
         target_student_correct = student_correct[target_student_ids].unsqueeze(-1)
-        student_accuracy = (target_student_correct + 0.5 * prior) / (target_student_attempts + prior)
-        student_mastery = ((student_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-        student_confidence = torch.log1p(target_student_attempts) / torch.log1p(
-            target_student_attempts.new_tensor(self.history_evidence_output_calibration_student_confidence_cap)
+        student_mastery, student_confidence = self._signed_mastery_and_confidence(
+            correct=target_student_correct,
+            attempts=target_student_attempts,
+            prior_strength=prior,
+            confidence_cap=self.history_evidence_output_calibration_student_confidence_cap,
         )
-        student_confidence = student_confidence.clamp(min=0.0, max=1.0)
         student_prior = student_mastery * student_confidence
 
         target_exercise_evidence = exercise_evidence[target_exercise_ids].to(dtype=dtype)
         exercise_attempts = target_exercise_evidence[:, 0:1]
         exercise_correct = target_exercise_evidence[:, 1:2]
         exercise_seen = target_exercise_evidence[:, 5:6]
-        exercise_accuracy = (exercise_correct + 0.5 * prior) / (exercise_attempts + prior)
-        exercise_ease = ((exercise_accuracy - 0.5) * 2.0).clamp(min=-1.0, max=1.0)
-        exercise_confidence = torch.log1p(exercise_attempts) / torch.log1p(
-            exercise_attempts.new_tensor(self.history_evidence_output_calibration_exercise_confidence_cap)
+        exercise_ease, exercise_confidence = self._signed_mastery_and_confidence(
+            correct=exercise_correct,
+            attempts=exercise_attempts,
+            prior_strength=prior,
+            confidence_cap=self.history_evidence_output_calibration_exercise_confidence_cap,
         )
-        exercise_confidence = exercise_confidence.clamp(min=0.0, max=1.0)
         exercise_prior = exercise_ease * exercise_confidence * exercise_seen
 
         residual_inputs = torch.cat(
             [
-                mastery_mean.detach(),
-                mastery_min.detach(),
-                mastery_max.detach(),
-                mastery_std.detach(),
-                confidence_mean.detach(),
-                confidence_min.detach(),
-                confidence_max.detach(),
-                seen_ratio.detach(),
+                concept_evidence_summary.mastery_mean.detach(),
+                concept_evidence_summary.mastery_min.detach(),
+                concept_evidence_summary.mastery_max.detach(),
+                concept_evidence_summary.mastery_std.detach(),
+                concept_evidence_summary.confidence_mean.detach(),
+                concept_evidence_summary.confidence_min.detach(),
+                concept_evidence_summary.confidence_max.detach(),
+                target.seen_ratio.detach(),
                 (concept_counts - 1.0).detach(),
-                concept_prior.detach(),
+                concept_evidence_summary.prior.detach(),
                 student_mastery.detach(),
                 student_confidence.detach(),
                 student_prior.detach(),
@@ -1693,15 +1799,13 @@ class DecoupledCDM(nn.Module):
         )
         residual = torch.tanh(self.history_evidence_output_calibration_head(residual_inputs).squeeze(-1))
         residual = residual * self.history_evidence_output_calibration_max_logit
-        concept_count_values = concept_counts.squeeze(-1)
-        trigger_mask = (
-            (concept_count_values >= float(self.history_evidence_output_calibration_min_count))
-            & (seen_ratio.squeeze(-1) >= self.history_evidence_output_calibration_min_seen_ratio)
+        trigger_mask = self._concept_count_seen_trigger_mask(
+            concept_counts=concept_counts,
+            seen_ratio=target.seen_ratio,
+            min_count=self.history_evidence_output_calibration_min_count,
+            max_count=self.history_evidence_output_calibration_max_count,
+            min_seen_ratio=self.history_evidence_output_calibration_min_seen_ratio,
         )
-        if self.history_evidence_output_calibration_max_count > 0:
-            trigger_mask = trigger_mask & (
-                concept_count_values <= float(self.history_evidence_output_calibration_max_count)
-            )
         return residual * trigger_mask.to(dtype=residual.dtype)
 
     def _should_apply_history_evidence_output_calibration(self) -> bool:
@@ -1727,16 +1831,27 @@ class DecoupledCDM(nn.Module):
     ) -> torch.Tensor:
         if not self.history_evidence_logit_prior_residual:
             return q_vectors.new_zeros(q_vectors.size(0))
-        if student_concept_evidence is None:
-            raise ValueError(
-                "student_concept_evidence is required when history_evidence_logit_prior_residual is enabled."
-            )
-        if exercise_evidence is None:
-            raise ValueError("exercise_evidence is required when history_evidence_logit_prior_residual is enabled.")
+        student_concept_evidence = self._require_tensor(
+            student_concept_evidence,
+            name="student_concept_evidence",
+            feature="history_evidence_logit_prior_residual",
+        )
+        exercise_evidence = self._require_tensor(
+            exercise_evidence,
+            name="exercise_evidence",
+            feature="history_evidence_logit_prior_residual",
+        )
 
         dtype = q_vectors.dtype
         concept_counts, _, _ = concept_summary
-        q_mask = (q_vectors > 0).to(dtype=dtype)
+        target = self._target_concept_evidence(
+            q_vectors=q_vectors,
+            target_student_ids=target_student_ids,
+            student_concept_evidence=student_concept_evidence,
+            concept_summary=concept_summary,
+            dtype=dtype,
+            feature="history_evidence_logit_prior_residual",
+        )
         prior_weight = q_vectors.new_tensor(self.history_evidence_logit_prior_prior_weight)
 
         global_attempts = student_exercise_mask.sum().to(dtype=dtype)
@@ -1766,16 +1881,15 @@ class DecoupledCDM(nn.Module):
             prior_weight=prior_weight,
         )
 
-        target_concept_evidence = student_concept_evidence[target_student_ids].to(dtype=dtype)
-        target_concept_attempts = target_concept_evidence[..., 0] * q_mask
-        target_concept_correct = target_concept_evidence[..., 1] * q_mask
         target_concept_rate = self._smooth_rate_with_global(
-            correct=target_concept_correct,
-            attempts=target_concept_attempts,
+            correct=target.target_correct,
+            attempts=target.target_attempts,
             global_rate=global_rate,
             prior_weight=prior_weight,
         )
-        target_concept_rate_mean = (target_concept_rate * q_mask).sum(dim=1) / concept_counts.squeeze(-1).clamp_min(1.0)
+        target_concept_rate_mean = (
+            target_concept_rate * target.q_mask
+        ).sum(dim=1) / concept_counts.squeeze(-1).clamp_min(1.0)
 
         all_concept_attempts = student_concept_evidence[..., 0].to(dtype=dtype).sum(dim=0)
         all_concept_correct = student_concept_evidence[..., 1].to(dtype=dtype).sum(dim=0)
@@ -1785,11 +1899,13 @@ class DecoupledCDM(nn.Module):
             global_rate=global_rate,
             prior_weight=prior_weight,
         )
-        concept_rate_mean = (concept_rate.unsqueeze(0) * q_mask).sum(dim=1) / concept_counts.squeeze(-1).clamp_min(1.0)
+        concept_rate_mean = (
+            concept_rate.unsqueeze(0) * target.q_mask
+        ).sum(dim=1) / concept_counts.squeeze(-1).clamp_min(1.0)
 
         confidence_cap = q_vectors.new_tensor(self.history_evidence_logit_prior_mastery_confidence_cap)
-        mastery_confidence = (target_concept_attempts.clamp_max(confidence_cap) / confidence_cap).clamp(0.0, 1.0)
-        mastery_prior = ((target_concept_rate - global_rate) * mastery_confidence * q_mask).sum(dim=1)
+        mastery_confidence = (target.target_attempts.clamp_max(confidence_cap) / confidence_cap).clamp(0.0, 1.0)
+        mastery_prior = ((target_concept_rate - global_rate) * mastery_confidence * target.q_mask).sum(dim=1)
         mastery_prior = mastery_prior / concept_counts.squeeze(-1).clamp_min(1.0)
 
         component_cap = self.history_evidence_logit_prior_component_cap
@@ -1810,17 +1926,15 @@ class DecoupledCDM(nn.Module):
             max=self.history_evidence_logit_prior_max_logit,
         )
 
-        seen_count = ((target_concept_attempts > 0.0).to(dtype=dtype) * q_mask).sum(dim=1)
+        seen_count = ((target.target_attempts > 0.0).to(dtype=dtype) * target.q_mask).sum(dim=1)
         seen_ratio = seen_count / concept_counts.squeeze(-1).clamp_min(1.0)
-        concept_count_values = concept_counts.squeeze(-1)
-        trigger_mask = (
-            (concept_count_values >= float(self.history_evidence_logit_prior_min_count))
-            & (seen_ratio >= self.history_evidence_logit_prior_min_seen_ratio)
+        trigger_mask = self._concept_count_seen_trigger_mask(
+            concept_counts=concept_counts,
+            seen_ratio=seen_ratio.unsqueeze(-1),
+            min_count=self.history_evidence_logit_prior_min_count,
+            max_count=self.history_evidence_logit_prior_max_count,
+            min_seen_ratio=self.history_evidence_logit_prior_min_seen_ratio,
         )
-        if self.history_evidence_logit_prior_max_count > 0:
-            trigger_mask = trigger_mask & (
-                concept_count_values <= float(self.history_evidence_logit_prior_max_count)
-            )
         return residual * trigger_mask.to(dtype=residual.dtype)
 
     @staticmethod
