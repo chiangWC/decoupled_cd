@@ -183,3 +183,36 @@ Recorded experiment 104, merged the single-checkpoint dual CDM ensemble with bra
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Clean model evidence helpers
+
+**Date**: 2026-05-21
+**Task**: Clean model evidence helpers
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Refactored DecoupledCDM evidence residual helpers to share target evidence statistics, mastery/confidence summaries, trigger masks, and zero-init logic. Verified py_compile, diff check, and remote tests/test_decoupled_cdm.py.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9660809` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
