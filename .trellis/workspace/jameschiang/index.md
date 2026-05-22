@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
+- **Total Sessions**: 8
 - **Last Active**: 2026-05-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~251 | Active |
+| `journal-1.md` | ~284 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-05-22 | Cleanup non-trial CDM internals | `4e5d24c` | `exp/trellis-trial` |
 | 7 | 2026-05-22 | Cleanup active ASSIST09 trial CLI | `70c1f7f` | `exp/trellis-trial` |
 | 6 | 2026-05-21 | Clean model evidence helpers | `9660809` | `exp/trellis-trial` |
 | 5 | 2026-05-20 | Pure CDM dual ensemble promotion | `4400e6c`, `305c1dd`, `fb1542b` | `exp/trellis-trial` |

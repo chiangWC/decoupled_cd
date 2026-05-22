@@ -249,3 +249,36 @@ Removed obsolete ASSIST09 runner wrappers, promoted exp104 as the active trial r
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Cleanup non-trial CDM internals
+
+**Date**: 2026-05-22
+**Task**: Cleanup non-trial CDM internals
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Trimmed retired DecoupledCDM constructor/model branches after CLI cleanup, kept baseline and exp104 paths, updated exp104/model-surface docs, and verified focused tests plus baseline/exp104 remote smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4e5d24c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
