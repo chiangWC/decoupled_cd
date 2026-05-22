@@ -146,7 +146,7 @@
 - 实验 93-95 给出当前纯 CDM trial candidate:
   - 93: `loss_only` cognitive alignment 单 seed 过 high-water；94: hot config 多 seed 崩，lower-strength full target 成立；95: CF-risk ablation 后改为 `cogonly`
   - 当前 runner: `scripts/run_assist09_history_alignment_trial.sh`
-  - 判断: 以实验 95 的 `0.05 cogonly` 作为后续纯 CDM trial 起点；不要把 student/exercise direct history terms 加回去，也不要改成 output-logit prior
+  - 判断: 这一路线后续已推进到实验 104；实验 95 的 `0.05 cogonly` 仍是底座语义，不要把 student/exercise direct history terms 加回去，也不要改成 output-logit prior
   - 详情: [093](./experiments/093_history_evidence_cognitive_alignment.md)、[094](./experiments/094_history_alignment_trial_validation.md)、[095](./experiments/095_history_alignment_cf_risk_ablation.md)
 - 实验 96 已测试实验 95 target 的 smooth/correlation loss 替换:
   - branch: `exp/smooth-cognitive-alignment`
@@ -166,7 +166,7 @@
   - 详情: [099](./experiments/099_hybrid_stacker_multiseed_078.md)
 - 实验 100 已完成 pure CDM runner/default promotion 复探:
   - branch: `exp/pure-cdm-default-promotion`
-  - mechanism: 在实验 95 `loss_only cogonly` 训练目标上增加 opt-in output-alignment objective；runner 为 `scripts/run_assist09_history_output_alignment_trial.sh`
+  - mechanism: 在实验 95 `loss_only cogonly` 训练目标上增加 opt-in output-alignment objective；historical runner was `scripts/run_assist09_history_output_alignment_trial.sh`，清理后不再作为 active CLI wrapper 保留
   - best single seed: `concept_dim=80, output_alignment=0.004` seed2027 `test_auc 0.778122`
   - best four-seed mean: 同配置 `mean_auc 0.777030`，相对实验 95 mean 约 `+0.000751`，但 seeds 2024/2025 退化
   - 判断: 有纯 CDM 局部 headroom，但不能 default promotion；保留实验 95 runner，不改 `scripts/run_assist09_baseline.sh`
@@ -271,7 +271,7 @@
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
 - 若继续 pure-CDM `0.778+` single-run/default-training 路线，优先从当前 `exp/trellis-trial` 的实验 104 实现继续；`exp/pure-cdm-default-promotion` 只作为历史探索和结果复验参考。若允许 evaluator semantics，实验 102 fixed probability average 仍是 pure-CDM evaluator 上界诊断，但不作为论文默认训练答案。
 - 若继续本轮已过线的 `0.778+` hybrid 信号，优先从 `exp/auc-078-exploration` 的实验 99 继续；三 seed stacker validation 已完成，下一步是补 seed2027 或把同类 train-history feature family 转成模型侧 readout/objective。不要把它误记为已 promote 的纯 CDM 主线。
-- 若继续当前纯 CDM trial candidate，优先从 `exp/trellis-trial` 的 `scripts/run_assist09_history_alignment_trial.sh` 出发，并显式打开实验 104 flags：`--dual-cdm-ensemble --dual-cdm-secondary-concept-dim 80 --dual-cdm-branch-bce-weight 0.10`。实验 95/103 的 `cogonly loss_only` 与 late anneal 现在是 104 的底座，不要再把 student/exercise direct history terms 加回默认 trial，也不要继续只替换同一 target 的 smooth/correlation loss。
+- 若继续当前纯 CDM trial candidate，优先从 `exp/trellis-trial` 的 `scripts/run_assist09_history_alignment_trial.sh` 出发；该 runner 清理后已默认编码实验 104。实验 95/103 的 `cogonly loss_only` 与 late anneal 现在是 104 的底座，不要再把 student/exercise direct history terms 加回默认 trial，也不要继续只替换同一 target 的 smooth/correlation loss。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
 - 若继续实验 76 / deterministic evidence prior，默认按“历史候选待重构”处理：不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；实验 88/89 已证明 confidence/mastery、agreement、train-only、direction-only 等 deterministic mask/scope 只能稳定到低幅或单 seed AUC tradeoff，后续必须有 representation/objective 层的新机制才值得重开。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先按实验号查 `docs/experiment_index.jsonl` 的 `status/reason_tags/verdict`，再按需打开对应 detail，确认是否真的出现了新的 slice 假设或机制假设后再决定是否重开。
@@ -293,7 +293,7 @@
   - [scripts/evaluate.py](../scripts/evaluate.py)
   - [scripts/remote_exec.sh](../scripts/remote_exec.sh)
   - [scripts/run_assist09_baseline.sh](../scripts/run_assist09_baseline.sh)
-  - [scripts/run_assist09_multiseed.sh](../scripts/run_assist09_multiseed.sh)
+  - [scripts/run_assist09_history_alignment_trial.sh](../scripts/run_assist09_history_alignment_trial.sh)
   - [trainers/engine.py](../trainers/engine.py)
   - [configs/defaults.py](../configs/defaults.py)
 - 实验台账:

@@ -10,6 +10,10 @@ A single training run with a two-tower `DecoupledCDMEnsemble` plus branch-level 
 
 Best configuration:
 
+After runner cleanup, this configuration is encoded by default in
+`scripts/run_assist09_history_alignment_trial.sh`. The expanded command below
+is kept as the historical exact configuration record.
+
 ```bash
 bash scripts/run_assist09_history_alignment_trial.sh \
   --dual-cdm-ensemble \

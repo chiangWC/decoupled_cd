@@ -7,7 +7,6 @@ from pathlib import Path
 from datetime import datetime, UTC
 
 import pandas as pd
-import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -104,22 +103,10 @@ def parse_args() -> argparse.Namespace:
         help="Concept dimension for the secondary tower when --dual-cdm-ensemble is enabled.",
     )
     parser.add_argument(
-        "--dual-cdm-secondary-weight",
-        type=float,
-        default=0.5,
-        help="Probability mixing weight for the secondary tower when --dual-cdm-ensemble is enabled.",
-    )
-    parser.add_argument(
         "--dual-cdm-branch-bce-weight",
         type=float,
         default=0.0,
         help="Auxiliary BCE weight applied to each dual CDM tower before probability mixing.",
-    )
-    parser.add_argument(
-        "--cognitive-readout-head-count",
-        type=int,
-        default=1,
-        help="Number of same-representation cognitive readout heads to average inside a single checkpoint.",
     )
     parser.add_argument(
         "--student-gate-prior-alpha",
@@ -192,29 +179,6 @@ def parse_args() -> argparse.Namespace:
         help="Enable a zero-init none-seen readout residual from graph-adjacent student TKC states.",
     )
     parser.add_argument(
-        "--evidence-calibrated-behavior-gate",
-        action="store_true",
-        help="Enable a zero-init student-concept evidence residual on the TKC correct/incorrect behavior gate.",
-    )
-    parser.add_argument(
-        "--evidence-behavior-gate-max-logit",
-        type=float,
-        default=0.5,
-        help="Absolute logit scale used by tanh bounding for the evidence behavior-gate residual.",
-    )
-    parser.add_argument(
-        "--evidence-behavior-gate-trigger",
-        choices=["all", "low_evidence"],
-        default="all",
-        help="Which student-concept cells receive the evidence behavior-gate residual.",
-    )
-    parser.add_argument(
-        "--evidence-behavior-gate-low-attempt-threshold",
-        type=float,
-        default=3.0,
-        help="Maximum attempt count treated as low evidence when --evidence-behavior-gate-trigger=low_evidence.",
-    )
-    parser.add_argument(
         "--concept-evidence-readout-residual",
         action="store_true",
         help="Enable a zero-init target-local student-concept evidence residual on the cognitive readout.",
@@ -279,68 +243,6 @@ def parse_args() -> argparse.Namespace:
         default="all",
     )
     parser.add_argument(
-        "--student-evidence-ability-prior-residual",
-        action="store_true",
-        help="Enable a deterministic train-history student global ability prior on the cognitive readout.",
-    )
-    parser.add_argument("--student-evidence-ability-prior-min-attempts", type=int, default=1)
-    parser.add_argument("--student-evidence-ability-prior-max-logit", type=float, default=0.25)
-    parser.add_argument("--student-evidence-ability-prior-strength", type=float, default=2.0)
-    parser.add_argument("--student-evidence-ability-prior-confidence-cap", type=float, default=200.0)
-    parser.add_argument(
-        "--student-evidence-gs-prior-residual",
-        action="store_true",
-        help="Enable a deterministic student ability prior on guess/slip logits.",
-    )
-    parser.add_argument("--student-evidence-gs-prior-min-attempts", type=int, default=1)
-    parser.add_argument("--student-evidence-gs-prior-max-logit", type=float, default=0.25)
-    parser.add_argument("--student-evidence-gs-prior-strength", type=float, default=2.0)
-    parser.add_argument("--student-evidence-gs-prior-confidence-cap", type=float, default=200.0)
-    parser.add_argument(
-        "--concept-evidence-calibrated-readout",
-        action="store_true",
-        help="Enable a bounded pure-CDM readout residual from student/target concept evidence summaries.",
-    )
-    parser.add_argument("--concept-evidence-calibrated-readout-min-count", type=int, default=1)
-    parser.add_argument("--concept-evidence-calibrated-readout-max-count", type=int, default=0)
-    parser.add_argument("--concept-evidence-calibrated-readout-min-seen-ratio", type=float, default=1.0)
-    parser.add_argument("--concept-evidence-calibrated-readout-max-logit", type=float, default=0.35)
-    parser.add_argument("--concept-evidence-calibrated-readout-prior-strength", type=float, default=2.0)
-    parser.add_argument("--concept-evidence-calibrated-readout-confidence-cap", type=float, default=20.0)
-    parser.add_argument(
-        "--history-evidence-fusion-readout",
-        action="store_true",
-        help="Enable a zero-init bounded cognitive readout over train-history concept, student, and exercise evidence.",
-    )
-    parser.add_argument("--history-evidence-fusion-min-count", type=int, default=1)
-    parser.add_argument("--history-evidence-fusion-max-count", type=int, default=0)
-    parser.add_argument("--history-evidence-fusion-min-seen-ratio", type=float, default=0.0)
-    parser.add_argument("--history-evidence-fusion-max-logit", type=float, default=0.5)
-    parser.add_argument(
-        "--history-evidence-fusion-feature-set",
-        choices=("full", "cogonly"),
-        default="full",
-        help="Feature family for history-evidence fusion readout; cogonly masks direct student/exercise stats.",
-    )
-    parser.add_argument("--history-evidence-fusion-prior-strength", type=float, default=2.0)
-    parser.add_argument("--history-evidence-fusion-concept-confidence-cap", type=float, default=20.0)
-    parser.add_argument("--history-evidence-fusion-exercise-confidence-cap", type=float, default=200.0)
-    parser.add_argument("--history-evidence-fusion-student-confidence-cap", type=float, default=200.0)
-    parser.add_argument(
-        "--history-evidence-linear-readout",
-        action="store_true",
-        help="Enable a zero-init 3-weight linear readout over concept, student, and exercise evidence priors.",
-    )
-    parser.add_argument("--history-evidence-linear-min-count", type=int, default=1)
-    parser.add_argument("--history-evidence-linear-max-count", type=int, default=0)
-    parser.add_argument("--history-evidence-linear-min-seen-ratio", type=float, default=0.0)
-    parser.add_argument("--history-evidence-linear-max-logit", type=float, default=0.5)
-    parser.add_argument("--history-evidence-linear-feature-set", choices=["full", "cogonly"], default="full")
-    parser.add_argument("--history-evidence-linear-prior-strength", type=float, default=2.0)
-    parser.add_argument("--history-evidence-linear-concept-confidence-cap", type=float, default=20.0)
-    parser.add_argument("--history-evidence-linear-exercise-confidence-cap", type=float, default=200.0)
-    parser.add_argument("--history-evidence-linear-student-confidence-cap", type=float, default=200.0)
-    parser.add_argument(
         "--history-evidence-logit-prior-residual",
         action="store_true",
         help="Enable a fixed interpretable log-odds prior from train-history evidence on the cognitive readout.",
@@ -387,153 +289,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Epoch where cognitive alignment weight annealing reaches the final weight; defaults to --epochs.",
     )
-    parser.add_argument(
-        "--history-evidence-cognitive-alignment-confidence-power",
-        type=float,
-        default=0.0,
-        help="Optional power for train-history target-concept confidence weighting of the alignment loss.",
-    )
-    parser.add_argument(
-        "--history-evidence-cognitive-alignment-confidence-cap",
-        type=float,
-        default=20.0,
-        help="Attempt-count cap used to normalize confidence weights for the alignment loss.",
-    )
-    parser.add_argument(
-        "--history-evidence-cognitive-alignment-confidence-floor",
-        type=float,
-        default=0.0,
-        help="Minimum per-target alignment weight after confidence scaling.",
-    )
-    parser.add_argument(
-        "--history-evidence-cognitive-alignment-residual-power",
-        type=float,
-        default=0.0,
-        help="Optional power for focusing cognitive alignment on samples still mismatched with the history prior.",
-    )
-    parser.add_argument(
-        "--history-evidence-cognitive-alignment-residual-floor",
-        type=float,
-        default=0.0,
-        help="Minimum per-target residual-focus weight for cognitive alignment.",
-    )
-    parser.add_argument(
-        "--history-evidence-cognitive-rank-alignment-weight",
-        type=float,
-        default=0.0,
-        help="Pairwise rank loss weight aligning cognitive-logit ordering to loss-only history evidence prior.",
-    )
-    parser.add_argument("--history-evidence-cognitive-rank-alignment-pair-count", type=int, default=8192)
-    parser.add_argument("--history-evidence-cognitive-rank-alignment-min-target-gap", type=float, default=0.0)
-    parser.add_argument(
-        "--history-evidence-output-alignment-weight",
-        type=float,
-        default=0.0,
-        help="Standardized MSE loss weight aligning final output logits to loss-only history evidence prior.",
-    )
-    parser.add_argument(
-        "--history-evidence-output-alignment-confidence-power",
-        type=float,
-        default=0.0,
-        help="Optional power for train-history target-concept confidence weighting of the output alignment loss.",
-    )
-    parser.add_argument(
-        "--history-evidence-output-alignment-confidence-cap",
-        type=float,
-        default=20.0,
-        help="Attempt-count cap used to normalize confidence weights for the output alignment loss.",
-    )
-    parser.add_argument(
-        "--history-evidence-output-alignment-confidence-floor",
-        type=float,
-        default=0.0,
-        help="Minimum per-target output alignment weight after confidence scaling.",
-    )
-    parser.add_argument(
-        "--checkpoint-distillation-summaries",
-        nargs="+",
-        default=None,
-        help="Training summary JSON files whose train-split predictions are averaged as a soft teacher.",
-    )
-    parser.add_argument(
-        "--checkpoint-distillation-average",
-        choices=("prob", "logit"),
-        default="prob",
-        help="How to average teacher checkpoint probabilities before train-only distillation.",
-    )
-    parser.add_argument(
-        "--checkpoint-distillation-weight",
-        type=float,
-        default=0.0,
-        help="Soft-label BCE weight against averaged checkpoint train predictions.",
-    )
-    parser.add_argument(
-        "--checkpoint-distillation-loss",
-        choices=("bce", "standardized_logit_mse"),
-        default="bce",
-        help="Loss shape used to align current train predictions to checkpoint teacher probabilities.",
-    )
-    parser.add_argument(
-        "--checkpoint-distillation-start-epoch",
-        type=int,
-        default=1,
-        help="First epoch where checkpoint distillation contributes to the training loss.",
-    )
-    parser.add_argument(
-        "--history-evidence-output-calibration",
-        action="store_true",
-        help="Enable a zero-init bounded output-logit calibration from pure train-history evidence features.",
-    )
-    parser.add_argument("--history-evidence-output-calibration-min-count", type=int, default=1)
-    parser.add_argument("--history-evidence-output-calibration-max-count", type=int, default=0)
-    parser.add_argument("--history-evidence-output-calibration-min-seen-ratio", type=float, default=0.0)
-    parser.add_argument("--history-evidence-output-calibration-max-logit", type=float, default=0.5)
-    parser.add_argument("--history-evidence-output-calibration-prior-strength", type=float, default=2.0)
-    parser.add_argument("--history-evidence-output-calibration-concept-confidence-cap", type=float, default=20.0)
-    parser.add_argument("--history-evidence-output-calibration-exercise-confidence-cap", type=float, default=200.0)
-    parser.add_argument("--history-evidence-output-calibration-student-confidence-cap", type=float, default=200.0)
-    parser.add_argument(
-        "--history-evidence-output-calibration-apply-mode",
-        choices=["all", "eval_only", "train_only"],
-        default="all",
-    )
-    parser.add_argument(
-        "--exercise-evidence-prior-residual",
-        action="store_true",
-        help="Enable a bounded train-history exercise ease prior on the cognitive readout.",
-    )
-    parser.add_argument("--exercise-evidence-prior-min-count", type=int, default=1)
-    parser.add_argument("--exercise-evidence-prior-max-logit", type=float, default=0.25)
-    parser.add_argument("--exercise-evidence-prior-strength", type=float, default=2.0)
-    parser.add_argument("--exercise-evidence-prior-confidence-cap", type=float, default=200.0)
-    parser.add_argument(
-        "--exercise-evidence-difficulty-adapter",
-        action="store_true",
-        help="Enable a zero-init learnable global slope for bounded train-history exercise ease evidence.",
-    )
-    parser.add_argument("--exercise-evidence-difficulty-adapter-min-count", type=int, default=1)
-    parser.add_argument("--exercise-evidence-difficulty-adapter-max-logit", type=float, default=0.5)
-    parser.add_argument("--exercise-evidence-difficulty-adapter-strength", type=float, default=2.0)
-    parser.add_argument("--exercise-evidence-difficulty-adapter-confidence-cap", type=float, default=200.0)
-    parser.add_argument(
-        "--exercise-evidence-difficulty-init",
-        action="store_true",
-        help="Initialize learned exercise difficulty from bounded train-history exercise ease evidence.",
-    )
-    parser.add_argument("--exercise-evidence-difficulty-init-min-count", type=int, default=1)
-    parser.add_argument("--exercise-evidence-difficulty-init-max-abs-logit", type=float, default=0.25)
-    parser.add_argument("--exercise-evidence-difficulty-init-strength", type=float, default=2.0)
-    parser.add_argument("--exercise-evidence-difficulty-init-confidence-cap", type=float, default=200.0)
-    parser.add_argument(
-        "--exercise-evidence-difficulty-regularization-weight",
-        type=float,
-        default=0.0,
-        help="MSE penalty weight tying learned exercise difficulty to bounded train-history difficulty evidence.",
-    )
-    parser.add_argument("--exercise-evidence-difficulty-regularization-min-count", type=int, default=1)
-    parser.add_argument("--exercise-evidence-difficulty-regularization-max-abs-logit", type=float, default=0.25)
-    parser.add_argument("--exercise-evidence-difficulty-regularization-strength", type=float, default=2.0)
-    parser.add_argument("--exercise-evidence-difficulty-regularization-confidence-cap", type=float, default=200.0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--gpus", default=None, help="Optional comma-separated GPU candidates when --device auto.")
     parser.add_argument("--max-rows", type=int, default=None, help="Optional cap for quick smoke runs.")
@@ -541,24 +296,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr-scheduler-patience", type=int, default=10)
     parser.add_argument("--lr-scheduler-factor", type=float, default=0.5)
     parser.add_argument("--min-learning-rate", type=float, default=1e-5)
-    parser.add_argument(
-        "--swa-start-epoch",
-        type=int,
-        default=0,
-        help="Enable single-run weight averaging from this epoch onward; 0 disables it.",
-    )
-    parser.add_argument(
-        "--ema-start-epoch",
-        type=int,
-        default=0,
-        help="Enable exponential moving average weights from this epoch onward; 0 disables it.",
-    )
-    parser.add_argument(
-        "--ema-decay",
-        type=float,
-        default=0.99,
-        help="EMA decay used when --ema-start-epoch is enabled.",
-    )
     parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument("--log-dir", default="logs")
     parser.add_argument("--output", default="results/train_summary.json")
@@ -580,26 +317,10 @@ def parse_args() -> argparse.Namespace:
     )
     if args.weight_decay < 0.0:
         raise ValueError("--weight-decay must be non-negative.")
-    if args.swa_start_epoch < 0:
-        raise ValueError("--swa-start-epoch must be non-negative.")
-    if args.ema_start_epoch < 0:
-        raise ValueError("--ema-start-epoch must be non-negative.")
-    if args.ema_decay < 0.0 or args.ema_decay >= 1.0:
-        raise ValueError("--ema-decay must be in [0, 1).")
-    if args.swa_start_epoch > 0 and args.ema_start_epoch > 0:
-        raise ValueError("--swa-start-epoch and --ema-start-epoch cannot both be enabled.")
-    if args.cognitive_readout_head_count < 1:
-        raise ValueError("--cognitive-readout-head-count must be positive.")
     if args.dual_cdm_secondary_concept_dim < 1:
         raise ValueError("--dual-cdm-secondary-concept-dim must be positive.")
-    if args.dual_cdm_secondary_weight < 0.0 or args.dual_cdm_secondary_weight > 1.0:
-        raise ValueError("--dual-cdm-secondary-weight must be in [0, 1].")
     if args.dual_cdm_branch_bce_weight < 0.0:
         raise ValueError("--dual-cdm-branch-bce-weight must be non-negative.")
-    if args.evidence_behavior_gate_max_logit <= 0.0:
-        raise ValueError("--evidence-behavior-gate-max-logit must be positive.")
-    if args.evidence_behavior_gate_low_attempt_threshold < 0.0:
-        raise ValueError("--evidence-behavior-gate-low-attempt-threshold must be non-negative.")
     if args.concept_evidence_readout_min_count < 1:
         raise ValueError("--concept-evidence-readout-min-count must be positive.")
     if args.concept_evidence_readout_max_count < 0:
@@ -642,87 +363,6 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--concept-evidence-prior-train-start-epoch must be positive.")
     if args.concept_evidence_prior_train_warmup_epochs < 0:
         raise ValueError("--concept-evidence-prior-train-warmup-epochs must be non-negative.")
-    if args.student_evidence_ability_prior_min_attempts < 1:
-        raise ValueError("--student-evidence-ability-prior-min-attempts must be positive.")
-    if args.student_evidence_ability_prior_max_logit <= 0.0:
-        raise ValueError("--student-evidence-ability-prior-max-logit must be positive.")
-    if args.student_evidence_ability_prior_strength <= 0.0:
-        raise ValueError("--student-evidence-ability-prior-strength must be positive.")
-    if args.student_evidence_ability_prior_confidence_cap <= 0.0:
-        raise ValueError("--student-evidence-ability-prior-confidence-cap must be positive.")
-    if args.student_evidence_gs_prior_min_attempts < 1:
-        raise ValueError("--student-evidence-gs-prior-min-attempts must be positive.")
-    if args.student_evidence_gs_prior_max_logit <= 0.0:
-        raise ValueError("--student-evidence-gs-prior-max-logit must be positive.")
-    if args.student_evidence_gs_prior_strength <= 0.0:
-        raise ValueError("--student-evidence-gs-prior-strength must be positive.")
-    if args.student_evidence_gs_prior_confidence_cap <= 0.0:
-        raise ValueError("--student-evidence-gs-prior-confidence-cap must be positive.")
-    if args.concept_evidence_calibrated_readout_min_count < 1:
-        raise ValueError("--concept-evidence-calibrated-readout-min-count must be positive.")
-    if args.concept_evidence_calibrated_readout_max_count < 0:
-        raise ValueError("--concept-evidence-calibrated-readout-max-count must be non-negative.")
-    if (
-        args.concept_evidence_calibrated_readout_max_count > 0
-        and args.concept_evidence_calibrated_readout_max_count < args.concept_evidence_calibrated_readout_min_count
-    ):
-        raise ValueError(
-            "--concept-evidence-calibrated-readout-max-count must be zero or at least "
-            "--concept-evidence-calibrated-readout-min-count."
-        )
-    if (
-        args.concept_evidence_calibrated_readout_min_seen_ratio < 0.0
-        or args.concept_evidence_calibrated_readout_min_seen_ratio > 1.0
-    ):
-        raise ValueError("--concept-evidence-calibrated-readout-min-seen-ratio must be in [0, 1].")
-    if args.concept_evidence_calibrated_readout_max_logit <= 0.0:
-        raise ValueError("--concept-evidence-calibrated-readout-max-logit must be positive.")
-    if args.concept_evidence_calibrated_readout_prior_strength <= 0.0:
-        raise ValueError("--concept-evidence-calibrated-readout-prior-strength must be positive.")
-    if args.concept_evidence_calibrated_readout_confidence_cap <= 0.0:
-        raise ValueError("--concept-evidence-calibrated-readout-confidence-cap must be positive.")
-    if args.history_evidence_fusion_min_count < 1:
-        raise ValueError("--history-evidence-fusion-min-count must be positive.")
-    if args.history_evidence_fusion_max_count < 0:
-        raise ValueError("--history-evidence-fusion-max-count must be non-negative.")
-    if (
-        args.history_evidence_fusion_max_count > 0
-        and args.history_evidence_fusion_max_count < args.history_evidence_fusion_min_count
-    ):
-        raise ValueError("--history-evidence-fusion-max-count must be zero or at least --history-evidence-fusion-min-count.")
-    if args.history_evidence_fusion_min_seen_ratio < 0.0 or args.history_evidence_fusion_min_seen_ratio > 1.0:
-        raise ValueError("--history-evidence-fusion-min-seen-ratio must be in [0, 1].")
-    if args.history_evidence_fusion_max_logit <= 0.0:
-        raise ValueError("--history-evidence-fusion-max-logit must be positive.")
-    if args.history_evidence_fusion_prior_strength <= 0.0:
-        raise ValueError("--history-evidence-fusion-prior-strength must be positive.")
-    if args.history_evidence_fusion_concept_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-fusion-concept-confidence-cap must be positive.")
-    if args.history_evidence_fusion_exercise_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-fusion-exercise-confidence-cap must be positive.")
-    if args.history_evidence_fusion_student_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-fusion-student-confidence-cap must be positive.")
-    if args.history_evidence_linear_min_count < 1:
-        raise ValueError("--history-evidence-linear-min-count must be positive.")
-    if args.history_evidence_linear_max_count < 0:
-        raise ValueError("--history-evidence-linear-max-count must be non-negative.")
-    if (
-        args.history_evidence_linear_max_count > 0
-        and args.history_evidence_linear_max_count < args.history_evidence_linear_min_count
-    ):
-        raise ValueError("--history-evidence-linear-max-count must be zero or at least --history-evidence-linear-min-count.")
-    if args.history_evidence_linear_min_seen_ratio < 0.0 or args.history_evidence_linear_min_seen_ratio > 1.0:
-        raise ValueError("--history-evidence-linear-min-seen-ratio must be in [0, 1].")
-    if args.history_evidence_linear_max_logit <= 0.0:
-        raise ValueError("--history-evidence-linear-max-logit must be positive.")
-    if args.history_evidence_linear_prior_strength <= 0.0:
-        raise ValueError("--history-evidence-linear-prior-strength must be positive.")
-    if args.history_evidence_linear_concept_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-linear-concept-confidence-cap must be positive.")
-    if args.history_evidence_linear_exercise_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-linear-exercise-confidence-cap must be positive.")
-    if args.history_evidence_linear_student_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-linear-student-confidence-cap must be positive.")
     if args.history_evidence_logit_prior_min_count < 1:
         raise ValueError("--history-evidence-logit-prior-min-count must be positive.")
     if args.history_evidence_logit_prior_max_count < 0:
@@ -766,51 +406,8 @@ def parse_args() -> argparse.Namespace:
             "--history-evidence-cognitive-alignment-anneal-end-epoch must be at least "
             "--history-evidence-cognitive-alignment-anneal-start-epoch."
         )
-    if args.history_evidence_cognitive_alignment_confidence_power < 0.0:
-        raise ValueError("--history-evidence-cognitive-alignment-confidence-power must be non-negative.")
-    if args.history_evidence_cognitive_alignment_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-cognitive-alignment-confidence-cap must be positive.")
     if (
-        args.history_evidence_cognitive_alignment_confidence_floor < 0.0
-        or args.history_evidence_cognitive_alignment_confidence_floor > 1.0
-    ):
-        raise ValueError("--history-evidence-cognitive-alignment-confidence-floor must be in [0, 1].")
-    if args.history_evidence_cognitive_alignment_residual_power < 0.0:
-        raise ValueError("--history-evidence-cognitive-alignment-residual-power must be non-negative.")
-    if (
-        args.history_evidence_cognitive_alignment_residual_floor < 0.0
-        or args.history_evidence_cognitive_alignment_residual_floor > 1.0
-    ):
-        raise ValueError("--history-evidence-cognitive-alignment-residual-floor must be in [0, 1].")
-    if args.history_evidence_cognitive_rank_alignment_weight < 0.0:
-        raise ValueError("--history-evidence-cognitive-rank-alignment-weight must be non-negative.")
-    if args.history_evidence_cognitive_rank_alignment_pair_count < 1:
-        raise ValueError("--history-evidence-cognitive-rank-alignment-pair-count must be positive.")
-    if args.history_evidence_cognitive_rank_alignment_min_target_gap < 0.0:
-        raise ValueError("--history-evidence-cognitive-rank-alignment-min-target-gap must be non-negative.")
-    if args.history_evidence_output_alignment_weight < 0.0:
-        raise ValueError("--history-evidence-output-alignment-weight must be non-negative.")
-    if args.history_evidence_output_alignment_confidence_power < 0.0:
-        raise ValueError("--history-evidence-output-alignment-confidence-power must be non-negative.")
-    if args.history_evidence_output_alignment_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-output-alignment-confidence-cap must be positive.")
-    if (
-        args.history_evidence_output_alignment_confidence_floor < 0.0
-        or args.history_evidence_output_alignment_confidence_floor > 1.0
-    ):
-        raise ValueError("--history-evidence-output-alignment-confidence-floor must be in [0, 1].")
-    if args.checkpoint_distillation_weight < 0.0:
-        raise ValueError("--checkpoint-distillation-weight must be non-negative.")
-    if args.checkpoint_distillation_start_epoch < 1:
-        raise ValueError("--checkpoint-distillation-start-epoch must be positive.")
-    if args.checkpoint_distillation_weight > 0.0 and not args.checkpoint_distillation_summaries:
-        raise ValueError("--checkpoint-distillation-summaries is required when distillation weight is positive.")
-    if (
-        (
-            args.history_evidence_cognitive_alignment_weight > 0.0
-            or args.history_evidence_cognitive_rank_alignment_weight > 0.0
-            or args.history_evidence_output_alignment_weight > 0.0
-        )
+        args.history_evidence_cognitive_alignment_weight > 0.0
         and not args.history_evidence_logit_prior_residual
     ):
         raise ValueError(
@@ -818,77 +415,13 @@ def parse_args() -> argparse.Namespace:
             "history evidence alignment losses."
         )
     if (
-        (
-            args.history_evidence_cognitive_alignment_weight > 0.0
-            or args.history_evidence_cognitive_rank_alignment_weight > 0.0
-            or args.history_evidence_output_alignment_weight > 0.0
-        )
+        args.history_evidence_cognitive_alignment_weight > 0.0
         and args.history_evidence_logit_prior_location != "loss_only"
     ):
         raise ValueError(
             "--history-evidence-logit-prior-location must be loss_only with "
             "history evidence alignment losses."
         )
-    if args.history_evidence_output_calibration_min_count < 1:
-        raise ValueError("--history-evidence-output-calibration-min-count must be positive.")
-    if args.history_evidence_output_calibration_max_count < 0:
-        raise ValueError("--history-evidence-output-calibration-max-count must be non-negative.")
-    if (
-        args.history_evidence_output_calibration_max_count > 0
-        and args.history_evidence_output_calibration_max_count < args.history_evidence_output_calibration_min_count
-    ):
-        raise ValueError(
-            "--history-evidence-output-calibration-max-count must be zero or at least min-count."
-        )
-    if (
-        args.history_evidence_output_calibration_min_seen_ratio < 0.0
-        or args.history_evidence_output_calibration_min_seen_ratio > 1.0
-    ):
-        raise ValueError("--history-evidence-output-calibration-min-seen-ratio must be in [0, 1].")
-    if args.history_evidence_output_calibration_max_logit <= 0.0:
-        raise ValueError("--history-evidence-output-calibration-max-logit must be positive.")
-    if args.history_evidence_output_calibration_prior_strength <= 0.0:
-        raise ValueError("--history-evidence-output-calibration-prior-strength must be positive.")
-    if args.history_evidence_output_calibration_concept_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-output-calibration-concept-confidence-cap must be positive.")
-    if args.history_evidence_output_calibration_exercise_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-output-calibration-exercise-confidence-cap must be positive.")
-    if args.history_evidence_output_calibration_student_confidence_cap <= 0.0:
-        raise ValueError("--history-evidence-output-calibration-student-confidence-cap must be positive.")
-    if args.exercise_evidence_prior_min_count < 1:
-        raise ValueError("--exercise-evidence-prior-min-count must be positive.")
-    if args.exercise_evidence_prior_max_logit <= 0.0:
-        raise ValueError("--exercise-evidence-prior-max-logit must be positive.")
-    if args.exercise_evidence_prior_strength <= 0.0:
-        raise ValueError("--exercise-evidence-prior-strength must be positive.")
-    if args.exercise_evidence_prior_confidence_cap <= 0.0:
-        raise ValueError("--exercise-evidence-prior-confidence-cap must be positive.")
-    if args.exercise_evidence_difficulty_adapter_min_count < 1:
-        raise ValueError("--exercise-evidence-difficulty-adapter-min-count must be positive.")
-    if args.exercise_evidence_difficulty_adapter_max_logit <= 0.0:
-        raise ValueError("--exercise-evidence-difficulty-adapter-max-logit must be positive.")
-    if args.exercise_evidence_difficulty_adapter_strength <= 0.0:
-        raise ValueError("--exercise-evidence-difficulty-adapter-strength must be positive.")
-    if args.exercise_evidence_difficulty_adapter_confidence_cap <= 0.0:
-        raise ValueError("--exercise-evidence-difficulty-adapter-confidence-cap must be positive.")
-    if args.exercise_evidence_difficulty_init_min_count < 1:
-        raise ValueError("--exercise-evidence-difficulty-init-min-count must be positive.")
-    if args.exercise_evidence_difficulty_init_max_abs_logit <= 0.0:
-        raise ValueError("--exercise-evidence-difficulty-init-max-abs-logit must be positive.")
-    if args.exercise_evidence_difficulty_init_strength <= 0.0:
-        raise ValueError("--exercise-evidence-difficulty-init-strength must be positive.")
-    if args.exercise_evidence_difficulty_init_confidence_cap <= 0.0:
-        raise ValueError("--exercise-evidence-difficulty-init-confidence-cap must be positive.")
-    if args.exercise_evidence_difficulty_regularization_weight < 0.0:
-        raise ValueError("--exercise-evidence-difficulty-regularization-weight must be non-negative.")
-    if args.exercise_evidence_difficulty_regularization_min_count < 1:
-        raise ValueError("--exercise-evidence-difficulty-regularization-min-count must be positive.")
-    if args.exercise_evidence_difficulty_regularization_max_abs_logit <= 0.0:
-        raise ValueError("--exercise-evidence-difficulty-regularization-max-abs-logit must be positive.")
-    if args.exercise_evidence_difficulty_regularization_strength <= 0.0:
-        raise ValueError("--exercise-evidence-difficulty-regularization-strength must be positive.")
-    if args.exercise_evidence_difficulty_regularization_confidence_cap <= 0.0:
-        raise ValueError("--exercise-evidence-difficulty-regularization-confidence-cap must be positive.")
     return args
 
 
@@ -969,41 +502,6 @@ def materialize_subset_if_needed(interactions_path: str, max_rows: int | None) -
     return str(output_path)
 
 
-def build_checkpoint_distillation_targets(
-    *,
-    summary_paths: list[str],
-    bundles: dict[str, object],
-    average: str,
-    device: str,
-) -> torch.Tensor:
-    from scripts.analyze_prediction_slices import load_model, predict_bundle
-    from scripts.evaluate_checkpoint_average import (
-        _average_predictions,
-        _load_summary,
-        _validate_summary_compatibility,
-    )
-
-    summaries = [_load_summary(path) for path in summary_paths]
-    _validate_summary_compatibility(summary_paths, summaries)
-    train_bundle = bundles["train"]
-    predictions = []
-    for summary in summaries:
-        model = load_model(
-            summary=summary,
-            checkpoint_path=str(summary["best_checkpoint_path"]),
-            bundles=bundles,
-            concept_dim=int(summary["concept_dim"]),
-            device=device,
-        )
-        frame = predict_bundle(bundle=train_bundle, model=model, device=device)
-        predictions.append(frame["prob"].to_numpy(dtype="float64"))
-        del model
-        if device.startswith("cuda"):
-            torch.cuda.empty_cache()
-    averaged = _average_predictions(predictions, average)
-    return torch.tensor(averaged, dtype=torch.float32)
-
-
 def main() -> None:
     args = parse_args()
     validate_graph_args(args)
@@ -1060,7 +558,6 @@ def main() -> None:
         student_gate_prior_alpha=args.student_gate_prior_alpha,
         student_gate_prior_beta=args.student_gate_prior_beta,
         gs_mode=args.gs_mode,
-        cognitive_readout_head_count=args.cognitive_readout_head_count,
         high_concept_logit_adapter=args.high_concept_logit_adapter,
         high_concept_logit_min_count=args.high_concept_logit_min_count,
         pairwise_history_interaction_adapter=args.pairwise_history_interaction_adapter,
@@ -1069,10 +566,6 @@ def main() -> None:
         interpretable_readout_expert_adapter=args.interpretable_readout_expert_adapter,
         interpretable_readout_expert_count=args.interpretable_readout_expert_count,
         student_conditioned_ukc_readout_residual=args.student_conditioned_ukc_readout_residual,
-        evidence_calibrated_behavior_gate=args.evidence_calibrated_behavior_gate,
-        evidence_behavior_gate_max_logit=args.evidence_behavior_gate_max_logit,
-        evidence_behavior_gate_trigger=args.evidence_behavior_gate_trigger,
-        evidence_behavior_gate_low_attempt_threshold=args.evidence_behavior_gate_low_attempt_threshold,
         concept_evidence_readout_residual=args.concept_evidence_readout_residual,
         concept_evidence_readout_min_count=args.concept_evidence_readout_min_count,
         concept_evidence_readout_max_count=args.concept_evidence_readout_max_count,
@@ -1090,43 +583,6 @@ def main() -> None:
         concept_evidence_prior_positive_scale=args.concept_evidence_prior_positive_scale,
         concept_evidence_prior_negative_scale=args.concept_evidence_prior_negative_scale,
         concept_evidence_prior_apply_mode=args.concept_evidence_prior_apply_mode,
-        student_evidence_ability_prior_residual=args.student_evidence_ability_prior_residual,
-        student_evidence_ability_prior_min_attempts=args.student_evidence_ability_prior_min_attempts,
-        student_evidence_ability_prior_max_logit=args.student_evidence_ability_prior_max_logit,
-        student_evidence_ability_prior_strength=args.student_evidence_ability_prior_strength,
-        student_evidence_ability_prior_confidence_cap=args.student_evidence_ability_prior_confidence_cap,
-        student_evidence_gs_prior_residual=args.student_evidence_gs_prior_residual,
-        student_evidence_gs_prior_min_attempts=args.student_evidence_gs_prior_min_attempts,
-        student_evidence_gs_prior_max_logit=args.student_evidence_gs_prior_max_logit,
-        student_evidence_gs_prior_strength=args.student_evidence_gs_prior_strength,
-        student_evidence_gs_prior_confidence_cap=args.student_evidence_gs_prior_confidence_cap,
-        concept_evidence_calibrated_readout=args.concept_evidence_calibrated_readout,
-        concept_evidence_calibrated_readout_min_count=args.concept_evidence_calibrated_readout_min_count,
-        concept_evidence_calibrated_readout_max_count=args.concept_evidence_calibrated_readout_max_count,
-        concept_evidence_calibrated_readout_min_seen_ratio=args.concept_evidence_calibrated_readout_min_seen_ratio,
-        concept_evidence_calibrated_readout_max_logit=args.concept_evidence_calibrated_readout_max_logit,
-        concept_evidence_calibrated_readout_prior_strength=args.concept_evidence_calibrated_readout_prior_strength,
-        concept_evidence_calibrated_readout_confidence_cap=args.concept_evidence_calibrated_readout_confidence_cap,
-        history_evidence_fusion_readout=args.history_evidence_fusion_readout,
-        history_evidence_fusion_min_count=args.history_evidence_fusion_min_count,
-        history_evidence_fusion_max_count=args.history_evidence_fusion_max_count,
-        history_evidence_fusion_min_seen_ratio=args.history_evidence_fusion_min_seen_ratio,
-        history_evidence_fusion_max_logit=args.history_evidence_fusion_max_logit,
-        history_evidence_fusion_feature_set=args.history_evidence_fusion_feature_set,
-        history_evidence_fusion_prior_strength=args.history_evidence_fusion_prior_strength,
-        history_evidence_fusion_concept_confidence_cap=args.history_evidence_fusion_concept_confidence_cap,
-        history_evidence_fusion_exercise_confidence_cap=args.history_evidence_fusion_exercise_confidence_cap,
-        history_evidence_fusion_student_confidence_cap=args.history_evidence_fusion_student_confidence_cap,
-        history_evidence_linear_readout=args.history_evidence_linear_readout,
-        history_evidence_linear_min_count=args.history_evidence_linear_min_count,
-        history_evidence_linear_max_count=args.history_evidence_linear_max_count,
-        history_evidence_linear_min_seen_ratio=args.history_evidence_linear_min_seen_ratio,
-        history_evidence_linear_max_logit=args.history_evidence_linear_max_logit,
-        history_evidence_linear_feature_set=args.history_evidence_linear_feature_set,
-        history_evidence_linear_prior_strength=args.history_evidence_linear_prior_strength,
-        history_evidence_linear_concept_confidence_cap=args.history_evidence_linear_concept_confidence_cap,
-        history_evidence_linear_exercise_confidence_cap=args.history_evidence_linear_exercise_confidence_cap,
-        history_evidence_linear_student_confidence_cap=args.history_evidence_linear_student_confidence_cap,
         history_evidence_logit_prior_residual=args.history_evidence_logit_prior_residual,
         history_evidence_logit_prior_location=args.history_evidence_logit_prior_location,
         history_evidence_logit_prior_min_count=args.history_evidence_logit_prior_min_count,
@@ -1141,74 +597,15 @@ def main() -> None:
         history_evidence_logit_prior_weight_mastery=args.history_evidence_logit_prior_weight_mastery,
         history_evidence_logit_prior_prior_weight=args.history_evidence_logit_prior_prior_weight,
         history_evidence_logit_prior_mastery_confidence_cap=args.history_evidence_logit_prior_mastery_confidence_cap,
-        history_evidence_output_calibration=args.history_evidence_output_calibration,
-        history_evidence_output_calibration_min_count=args.history_evidence_output_calibration_min_count,
-        history_evidence_output_calibration_max_count=args.history_evidence_output_calibration_max_count,
-        history_evidence_output_calibration_min_seen_ratio=(
-            args.history_evidence_output_calibration_min_seen_ratio
-        ),
-        history_evidence_output_calibration_max_logit=args.history_evidence_output_calibration_max_logit,
-        history_evidence_output_calibration_prior_strength=(
-            args.history_evidence_output_calibration_prior_strength
-        ),
-        history_evidence_output_calibration_concept_confidence_cap=(
-            args.history_evidence_output_calibration_concept_confidence_cap
-        ),
-        history_evidence_output_calibration_exercise_confidence_cap=(
-            args.history_evidence_output_calibration_exercise_confidence_cap
-        ),
-        history_evidence_output_calibration_student_confidence_cap=(
-            args.history_evidence_output_calibration_student_confidence_cap
-        ),
-        history_evidence_output_calibration_apply_mode=args.history_evidence_output_calibration_apply_mode,
-        exercise_evidence_prior_residual=args.exercise_evidence_prior_residual,
-        exercise_evidence_prior_min_count=args.exercise_evidence_prior_min_count,
-        exercise_evidence_prior_max_logit=args.exercise_evidence_prior_max_logit,
-        exercise_evidence_prior_strength=args.exercise_evidence_prior_strength,
-        exercise_evidence_prior_confidence_cap=args.exercise_evidence_prior_confidence_cap,
-        exercise_evidence_difficulty_adapter=args.exercise_evidence_difficulty_adapter,
-        exercise_evidence_difficulty_adapter_min_count=args.exercise_evidence_difficulty_adapter_min_count,
-        exercise_evidence_difficulty_adapter_max_logit=args.exercise_evidence_difficulty_adapter_max_logit,
-        exercise_evidence_difficulty_adapter_strength=args.exercise_evidence_difficulty_adapter_strength,
-        exercise_evidence_difficulty_adapter_confidence_cap=args.exercise_evidence_difficulty_adapter_confidence_cap,
     )
     if args.dual_cdm_ensemble:
         model_kwargs["secondary_concept_dim"] = args.dual_cdm_secondary_concept_dim
-        model_kwargs["secondary_weight"] = args.dual_cdm_secondary_weight
         model = DecoupledCDMEnsemble(**model_kwargs)
     else:
         model = DecoupledCDM(**model_kwargs)
-    difficulty_init_count = 0
-    if args.exercise_evidence_difficulty_init:
-        difficulty_init_count = model.initialize_exercise_difficulty_from_evidence(
-            exercise_evidence=train_bundle.exercise_evidence_tensor,
-            min_count=args.exercise_evidence_difficulty_init_min_count,
-            max_abs_logit=args.exercise_evidence_difficulty_init_max_abs_logit,
-            strength=args.exercise_evidence_difficulty_init_strength,
-            confidence_cap=args.exercise_evidence_difficulty_init_confidence_cap,
-        )
-        logger.info("Initialized exercise difficulty from evidence for %s exercises.", difficulty_init_count)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_path = str(output_path.with_name(output_path.stem + "_best.pt"))
-    swa_checkpoint_path = (
-        str(output_path.with_name(output_path.stem + "_swa.pt")) if args.swa_start_epoch > 0 else None
-    )
-    ema_checkpoint_path = (
-        str(output_path.with_name(output_path.stem + "_ema.pt")) if args.ema_start_epoch > 0 else None
-    )
-    checkpoint_distillation_targets = None
-    if args.checkpoint_distillation_summaries:
-        logger.info(
-            "Building checkpoint distillation targets from %s summaries.",
-            len(args.checkpoint_distillation_summaries),
-        )
-        checkpoint_distillation_targets = build_checkpoint_distillation_targets(
-            summary_paths=[str(path) for path in args.checkpoint_distillation_summaries],
-            bundles=bundles,
-            average=args.checkpoint_distillation_average,
-            device=resolved_device,
-        )
     result = train_model(
         train_bundle=train_bundle,
         valid_bundle=valid_bundle,
@@ -1227,18 +624,6 @@ def main() -> None:
         checkpoint_selection_start_epoch=args.checkpoint_selection_start_epoch,
         checkpoint_selection_window=args.checkpoint_selection_window,
         checkpoint_path=checkpoint_path,
-        swa_start_epoch=args.swa_start_epoch,
-        swa_checkpoint_path=swa_checkpoint_path,
-        ema_start_epoch=args.ema_start_epoch,
-        ema_decay=args.ema_decay,
-        ema_checkpoint_path=ema_checkpoint_path,
-        exercise_evidence_difficulty_regularization_weight=args.exercise_evidence_difficulty_regularization_weight,
-        exercise_evidence_difficulty_regularization_min_count=args.exercise_evidence_difficulty_regularization_min_count,
-        exercise_evidence_difficulty_regularization_max_abs_logit=args.exercise_evidence_difficulty_regularization_max_abs_logit,
-        exercise_evidence_difficulty_regularization_strength=args.exercise_evidence_difficulty_regularization_strength,
-        exercise_evidence_difficulty_regularization_confidence_cap=(
-            args.exercise_evidence_difficulty_regularization_confidence_cap
-        ),
         history_evidence_cognitive_alignment_weight=args.history_evidence_cognitive_alignment_weight,
         history_evidence_cognitive_alignment_final_weight=args.history_evidence_cognitive_alignment_final_weight,
         history_evidence_cognitive_alignment_anneal_start_epoch=(
@@ -1247,42 +632,6 @@ def main() -> None:
         history_evidence_cognitive_alignment_anneal_end_epoch=(
             args.history_evidence_cognitive_alignment_anneal_end_epoch
         ),
-        history_evidence_cognitive_alignment_confidence_power=(
-            args.history_evidence_cognitive_alignment_confidence_power
-        ),
-        history_evidence_cognitive_alignment_confidence_cap=(
-            args.history_evidence_cognitive_alignment_confidence_cap
-        ),
-        history_evidence_cognitive_alignment_confidence_floor=(
-            args.history_evidence_cognitive_alignment_confidence_floor
-        ),
-        history_evidence_cognitive_alignment_residual_power=(
-            args.history_evidence_cognitive_alignment_residual_power
-        ),
-        history_evidence_cognitive_alignment_residual_floor=(
-            args.history_evidence_cognitive_alignment_residual_floor
-        ),
-        history_evidence_cognitive_rank_alignment_weight=args.history_evidence_cognitive_rank_alignment_weight,
-        history_evidence_cognitive_rank_alignment_pair_count=(
-            args.history_evidence_cognitive_rank_alignment_pair_count
-        ),
-        history_evidence_cognitive_rank_alignment_min_target_gap=(
-            args.history_evidence_cognitive_rank_alignment_min_target_gap
-        ),
-        history_evidence_output_alignment_weight=args.history_evidence_output_alignment_weight,
-        history_evidence_output_alignment_confidence_power=(
-            args.history_evidence_output_alignment_confidence_power
-        ),
-        history_evidence_output_alignment_confidence_cap=(
-            args.history_evidence_output_alignment_confidence_cap
-        ),
-        history_evidence_output_alignment_confidence_floor=(
-            args.history_evidence_output_alignment_confidence_floor
-        ),
-        checkpoint_distillation_targets=checkpoint_distillation_targets,
-        checkpoint_distillation_weight=args.checkpoint_distillation_weight,
-        checkpoint_distillation_start_epoch=args.checkpoint_distillation_start_epoch,
-        checkpoint_distillation_loss=args.checkpoint_distillation_loss,
         dual_tower_branch_bce_weight=args.dual_cdm_branch_bce_weight,
         concept_evidence_prior_train_start_epoch=args.concept_evidence_prior_train_start_epoch,
         concept_evidence_prior_train_warmup_epochs=args.concept_evidence_prior_train_warmup_epochs,
@@ -1305,9 +654,7 @@ def main() -> None:
         "concept_dim": args.concept_dim,
         "dual_cdm_ensemble": args.dual_cdm_ensemble,
         "dual_cdm_secondary_concept_dim": args.dual_cdm_secondary_concept_dim,
-        "dual_cdm_secondary_weight": args.dual_cdm_secondary_weight,
         "dual_cdm_branch_bce_weight": args.dual_cdm_branch_bce_weight,
-        "cognitive_readout_head_count": args.cognitive_readout_head_count,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
@@ -1329,10 +676,6 @@ def main() -> None:
         "interpretable_readout_expert_adapter": args.interpretable_readout_expert_adapter,
         "interpretable_readout_expert_count": args.interpretable_readout_expert_count,
         "student_conditioned_ukc_readout_residual": args.student_conditioned_ukc_readout_residual,
-        "evidence_calibrated_behavior_gate": args.evidence_calibrated_behavior_gate,
-        "evidence_behavior_gate_max_logit": args.evidence_behavior_gate_max_logit,
-        "evidence_behavior_gate_trigger": args.evidence_behavior_gate_trigger,
-        "evidence_behavior_gate_low_attempt_threshold": args.evidence_behavior_gate_low_attempt_threshold,
         "concept_evidence_readout_residual": args.concept_evidence_readout_residual,
         "concept_evidence_readout_min_count": args.concept_evidence_readout_min_count,
         "concept_evidence_readout_max_count": args.concept_evidence_readout_max_count,
@@ -1352,43 +695,6 @@ def main() -> None:
         "concept_evidence_prior_train_start_epoch": args.concept_evidence_prior_train_start_epoch,
         "concept_evidence_prior_train_warmup_epochs": args.concept_evidence_prior_train_warmup_epochs,
         "concept_evidence_prior_apply_mode": args.concept_evidence_prior_apply_mode,
-        "student_evidence_ability_prior_residual": args.student_evidence_ability_prior_residual,
-        "student_evidence_ability_prior_min_attempts": args.student_evidence_ability_prior_min_attempts,
-        "student_evidence_ability_prior_max_logit": args.student_evidence_ability_prior_max_logit,
-        "student_evidence_ability_prior_strength": args.student_evidence_ability_prior_strength,
-        "student_evidence_ability_prior_confidence_cap": args.student_evidence_ability_prior_confidence_cap,
-        "student_evidence_gs_prior_residual": args.student_evidence_gs_prior_residual,
-        "student_evidence_gs_prior_min_attempts": args.student_evidence_gs_prior_min_attempts,
-        "student_evidence_gs_prior_max_logit": args.student_evidence_gs_prior_max_logit,
-        "student_evidence_gs_prior_strength": args.student_evidence_gs_prior_strength,
-        "student_evidence_gs_prior_confidence_cap": args.student_evidence_gs_prior_confidence_cap,
-        "concept_evidence_calibrated_readout": args.concept_evidence_calibrated_readout,
-        "concept_evidence_calibrated_readout_min_count": args.concept_evidence_calibrated_readout_min_count,
-        "concept_evidence_calibrated_readout_max_count": args.concept_evidence_calibrated_readout_max_count,
-        "concept_evidence_calibrated_readout_min_seen_ratio": args.concept_evidence_calibrated_readout_min_seen_ratio,
-        "concept_evidence_calibrated_readout_max_logit": args.concept_evidence_calibrated_readout_max_logit,
-        "concept_evidence_calibrated_readout_prior_strength": args.concept_evidence_calibrated_readout_prior_strength,
-        "concept_evidence_calibrated_readout_confidence_cap": args.concept_evidence_calibrated_readout_confidence_cap,
-        "history_evidence_fusion_readout": args.history_evidence_fusion_readout,
-        "history_evidence_fusion_min_count": args.history_evidence_fusion_min_count,
-        "history_evidence_fusion_max_count": args.history_evidence_fusion_max_count,
-        "history_evidence_fusion_min_seen_ratio": args.history_evidence_fusion_min_seen_ratio,
-        "history_evidence_fusion_max_logit": args.history_evidence_fusion_max_logit,
-        "history_evidence_fusion_feature_set": args.history_evidence_fusion_feature_set,
-        "history_evidence_fusion_prior_strength": args.history_evidence_fusion_prior_strength,
-        "history_evidence_fusion_concept_confidence_cap": args.history_evidence_fusion_concept_confidence_cap,
-        "history_evidence_fusion_exercise_confidence_cap": args.history_evidence_fusion_exercise_confidence_cap,
-        "history_evidence_fusion_student_confidence_cap": args.history_evidence_fusion_student_confidence_cap,
-        "history_evidence_linear_readout": args.history_evidence_linear_readout,
-        "history_evidence_linear_min_count": args.history_evidence_linear_min_count,
-        "history_evidence_linear_max_count": args.history_evidence_linear_max_count,
-        "history_evidence_linear_min_seen_ratio": args.history_evidence_linear_min_seen_ratio,
-        "history_evidence_linear_max_logit": args.history_evidence_linear_max_logit,
-        "history_evidence_linear_feature_set": args.history_evidence_linear_feature_set,
-        "history_evidence_linear_prior_strength": args.history_evidence_linear_prior_strength,
-        "history_evidence_linear_concept_confidence_cap": args.history_evidence_linear_concept_confidence_cap,
-        "history_evidence_linear_exercise_confidence_cap": args.history_evidence_linear_exercise_confidence_cap,
-        "history_evidence_linear_student_confidence_cap": args.history_evidence_linear_student_confidence_cap,
         "history_evidence_logit_prior_residual": args.history_evidence_logit_prior_residual,
         "history_evidence_logit_prior_location": args.history_evidence_logit_prior_location,
         "history_evidence_logit_prior_min_count": args.history_evidence_logit_prior_min_count,
@@ -1415,90 +721,6 @@ def main() -> None:
         "history_evidence_cognitive_alignment_anneal_end_epoch": (
             args.history_evidence_cognitive_alignment_anneal_end_epoch
         ),
-        "history_evidence_cognitive_alignment_confidence_power": (
-            args.history_evidence_cognitive_alignment_confidence_power
-        ),
-        "history_evidence_cognitive_alignment_confidence_cap": (
-            args.history_evidence_cognitive_alignment_confidence_cap
-        ),
-        "history_evidence_cognitive_alignment_confidence_floor": (
-            args.history_evidence_cognitive_alignment_confidence_floor
-        ),
-        "history_evidence_cognitive_alignment_residual_power": (
-            args.history_evidence_cognitive_alignment_residual_power
-        ),
-        "history_evidence_cognitive_alignment_residual_floor": (
-            args.history_evidence_cognitive_alignment_residual_floor
-        ),
-        "history_evidence_cognitive_rank_alignment_weight": args.history_evidence_cognitive_rank_alignment_weight,
-        "history_evidence_cognitive_rank_alignment_pair_count": (
-            args.history_evidence_cognitive_rank_alignment_pair_count
-        ),
-        "history_evidence_cognitive_rank_alignment_min_target_gap": (
-            args.history_evidence_cognitive_rank_alignment_min_target_gap
-        ),
-        "history_evidence_output_alignment_weight": args.history_evidence_output_alignment_weight,
-        "history_evidence_output_alignment_confidence_power": (
-            args.history_evidence_output_alignment_confidence_power
-        ),
-        "history_evidence_output_alignment_confidence_cap": (
-            args.history_evidence_output_alignment_confidence_cap
-        ),
-        "history_evidence_output_alignment_confidence_floor": (
-            args.history_evidence_output_alignment_confidence_floor
-        ),
-        "checkpoint_distillation_summaries": args.checkpoint_distillation_summaries,
-        "checkpoint_distillation_average": args.checkpoint_distillation_average,
-        "checkpoint_distillation_weight": args.checkpoint_distillation_weight,
-        "checkpoint_distillation_loss": args.checkpoint_distillation_loss,
-        "checkpoint_distillation_start_epoch": args.checkpoint_distillation_start_epoch,
-        "history_evidence_output_calibration": args.history_evidence_output_calibration,
-        "history_evidence_output_calibration_min_count": args.history_evidence_output_calibration_min_count,
-        "history_evidence_output_calibration_max_count": args.history_evidence_output_calibration_max_count,
-        "history_evidence_output_calibration_min_seen_ratio": (
-            args.history_evidence_output_calibration_min_seen_ratio
-        ),
-        "history_evidence_output_calibration_max_logit": args.history_evidence_output_calibration_max_logit,
-        "history_evidence_output_calibration_prior_strength": (
-            args.history_evidence_output_calibration_prior_strength
-        ),
-        "history_evidence_output_calibration_concept_confidence_cap": (
-            args.history_evidence_output_calibration_concept_confidence_cap
-        ),
-        "history_evidence_output_calibration_exercise_confidence_cap": (
-            args.history_evidence_output_calibration_exercise_confidence_cap
-        ),
-        "history_evidence_output_calibration_student_confidence_cap": (
-            args.history_evidence_output_calibration_student_confidence_cap
-        ),
-        "history_evidence_output_calibration_apply_mode": args.history_evidence_output_calibration_apply_mode,
-        "exercise_evidence_prior_residual": args.exercise_evidence_prior_residual,
-        "exercise_evidence_prior_min_count": args.exercise_evidence_prior_min_count,
-        "exercise_evidence_prior_max_logit": args.exercise_evidence_prior_max_logit,
-        "exercise_evidence_prior_strength": args.exercise_evidence_prior_strength,
-        "exercise_evidence_prior_confidence_cap": args.exercise_evidence_prior_confidence_cap,
-        "exercise_evidence_difficulty_adapter": args.exercise_evidence_difficulty_adapter,
-        "exercise_evidence_difficulty_adapter_min_count": args.exercise_evidence_difficulty_adapter_min_count,
-        "exercise_evidence_difficulty_adapter_max_logit": args.exercise_evidence_difficulty_adapter_max_logit,
-        "exercise_evidence_difficulty_adapter_strength": args.exercise_evidence_difficulty_adapter_strength,
-        "exercise_evidence_difficulty_adapter_confidence_cap": args.exercise_evidence_difficulty_adapter_confidence_cap,
-        "exercise_evidence_difficulty_init": args.exercise_evidence_difficulty_init,
-        "exercise_evidence_difficulty_init_min_count": args.exercise_evidence_difficulty_init_min_count,
-        "exercise_evidence_difficulty_init_max_abs_logit": args.exercise_evidence_difficulty_init_max_abs_logit,
-        "exercise_evidence_difficulty_init_strength": args.exercise_evidence_difficulty_init_strength,
-        "exercise_evidence_difficulty_init_confidence_cap": args.exercise_evidence_difficulty_init_confidence_cap,
-        "exercise_evidence_difficulty_init_count": difficulty_init_count,
-        "exercise_evidence_difficulty_regularization_weight": args.exercise_evidence_difficulty_regularization_weight,
-        "exercise_evidence_difficulty_regularization_min_count": args.exercise_evidence_difficulty_regularization_min_count,
-        "exercise_evidence_difficulty_regularization_max_abs_logit": (
-            args.exercise_evidence_difficulty_regularization_max_abs_logit
-        ),
-        "exercise_evidence_difficulty_regularization_strength": (
-            args.exercise_evidence_difficulty_regularization_strength
-        ),
-        "exercise_evidence_difficulty_regularization_confidence_cap": (
-            args.exercise_evidence_difficulty_regularization_confidence_cap
-        ),
         "seed": args.seed,
         "device": resolved_device,
         "max_rows": args.max_rows,
@@ -1506,13 +728,6 @@ def main() -> None:
         "best_val_auc": result.best_val_auc,
         "best_epoch": result.best_epoch,
         "best_checkpoint_path": result.best_checkpoint_path,
-        "swa_start_epoch": result.swa_start_epoch,
-        "swa_epoch_count": result.swa_epoch_count,
-        "swa_checkpoint_path": result.swa_checkpoint_path,
-        "ema_start_epoch": result.ema_start_epoch,
-        "ema_decay": result.ema_decay,
-        "ema_epoch_count": result.ema_epoch_count,
-        "ema_checkpoint_path": result.ema_checkpoint_path,
         "valid_metrics": valid_metrics,
         "test_metrics": test_metrics,
         "history": result.history,
@@ -1536,18 +751,11 @@ def main() -> None:
         "lr_scheduler_patience": args.lr_scheduler_patience,
         "lr_scheduler_factor": args.lr_scheduler_factor,
         "min_learning_rate": args.min_learning_rate,
-        "swa_start_epoch": args.swa_start_epoch,
-        "swa_epoch_count": result.swa_epoch_count,
-        "ema_start_epoch": args.ema_start_epoch,
-        "ema_decay": args.ema_decay,
-        "ema_epoch_count": result.ema_epoch_count,
         "device": resolved_device,
         "concept_dim": args.concept_dim,
         "dual_cdm_ensemble": args.dual_cdm_ensemble,
         "dual_cdm_secondary_concept_dim": args.dual_cdm_secondary_concept_dim,
-        "dual_cdm_secondary_weight": args.dual_cdm_secondary_weight,
         "dual_cdm_branch_bce_weight": args.dual_cdm_branch_bce_weight,
-        "cognitive_readout_head_count": args.cognitive_readout_head_count,
         "gs_mode": args.gs_mode,
         "graph_mode": args.graph_mode,
         "student_gate_prior_alpha": args.student_gate_prior_alpha,
@@ -1560,10 +768,6 @@ def main() -> None:
         "interpretable_readout_expert_adapter": args.interpretable_readout_expert_adapter,
         "interpretable_readout_expert_count": args.interpretable_readout_expert_count,
         "student_conditioned_ukc_readout_residual": args.student_conditioned_ukc_readout_residual,
-        "evidence_calibrated_behavior_gate": args.evidence_calibrated_behavior_gate,
-        "evidence_behavior_gate_max_logit": args.evidence_behavior_gate_max_logit,
-        "evidence_behavior_gate_trigger": args.evidence_behavior_gate_trigger,
-        "evidence_behavior_gate_low_attempt_threshold": args.evidence_behavior_gate_low_attempt_threshold,
         "concept_evidence_readout_residual": args.concept_evidence_readout_residual,
         "concept_evidence_readout_min_count": args.concept_evidence_readout_min_count,
         "concept_evidence_readout_max_count": args.concept_evidence_readout_max_count,
@@ -1583,43 +787,6 @@ def main() -> None:
         "concept_evidence_prior_train_start_epoch": args.concept_evidence_prior_train_start_epoch,
         "concept_evidence_prior_train_warmup_epochs": args.concept_evidence_prior_train_warmup_epochs,
         "concept_evidence_prior_apply_mode": args.concept_evidence_prior_apply_mode,
-        "student_evidence_ability_prior_residual": args.student_evidence_ability_prior_residual,
-        "student_evidence_ability_prior_min_attempts": args.student_evidence_ability_prior_min_attempts,
-        "student_evidence_ability_prior_max_logit": args.student_evidence_ability_prior_max_logit,
-        "student_evidence_ability_prior_strength": args.student_evidence_ability_prior_strength,
-        "student_evidence_ability_prior_confidence_cap": args.student_evidence_ability_prior_confidence_cap,
-        "student_evidence_gs_prior_residual": args.student_evidence_gs_prior_residual,
-        "student_evidence_gs_prior_min_attempts": args.student_evidence_gs_prior_min_attempts,
-        "student_evidence_gs_prior_max_logit": args.student_evidence_gs_prior_max_logit,
-        "student_evidence_gs_prior_strength": args.student_evidence_gs_prior_strength,
-        "student_evidence_gs_prior_confidence_cap": args.student_evidence_gs_prior_confidence_cap,
-        "concept_evidence_calibrated_readout": args.concept_evidence_calibrated_readout,
-        "concept_evidence_calibrated_readout_min_count": args.concept_evidence_calibrated_readout_min_count,
-        "concept_evidence_calibrated_readout_max_count": args.concept_evidence_calibrated_readout_max_count,
-        "concept_evidence_calibrated_readout_min_seen_ratio": args.concept_evidence_calibrated_readout_min_seen_ratio,
-        "concept_evidence_calibrated_readout_max_logit": args.concept_evidence_calibrated_readout_max_logit,
-        "concept_evidence_calibrated_readout_prior_strength": args.concept_evidence_calibrated_readout_prior_strength,
-        "concept_evidence_calibrated_readout_confidence_cap": args.concept_evidence_calibrated_readout_confidence_cap,
-        "history_evidence_fusion_readout": args.history_evidence_fusion_readout,
-        "history_evidence_fusion_min_count": args.history_evidence_fusion_min_count,
-        "history_evidence_fusion_max_count": args.history_evidence_fusion_max_count,
-        "history_evidence_fusion_min_seen_ratio": args.history_evidence_fusion_min_seen_ratio,
-        "history_evidence_fusion_max_logit": args.history_evidence_fusion_max_logit,
-        "history_evidence_fusion_feature_set": args.history_evidence_fusion_feature_set,
-        "history_evidence_fusion_prior_strength": args.history_evidence_fusion_prior_strength,
-        "history_evidence_fusion_concept_confidence_cap": args.history_evidence_fusion_concept_confidence_cap,
-        "history_evidence_fusion_exercise_confidence_cap": args.history_evidence_fusion_exercise_confidence_cap,
-        "history_evidence_fusion_student_confidence_cap": args.history_evidence_fusion_student_confidence_cap,
-        "history_evidence_linear_readout": args.history_evidence_linear_readout,
-        "history_evidence_linear_min_count": args.history_evidence_linear_min_count,
-        "history_evidence_linear_max_count": args.history_evidence_linear_max_count,
-        "history_evidence_linear_min_seen_ratio": args.history_evidence_linear_min_seen_ratio,
-        "history_evidence_linear_max_logit": args.history_evidence_linear_max_logit,
-        "history_evidence_linear_feature_set": args.history_evidence_linear_feature_set,
-        "history_evidence_linear_prior_strength": args.history_evidence_linear_prior_strength,
-        "history_evidence_linear_concept_confidence_cap": args.history_evidence_linear_concept_confidence_cap,
-        "history_evidence_linear_exercise_confidence_cap": args.history_evidence_linear_exercise_confidence_cap,
-        "history_evidence_linear_student_confidence_cap": args.history_evidence_linear_student_confidence_cap,
         "history_evidence_logit_prior_residual": args.history_evidence_logit_prior_residual,
         "history_evidence_logit_prior_location": args.history_evidence_logit_prior_location,
         "history_evidence_logit_prior_min_count": args.history_evidence_logit_prior_min_count,
@@ -1646,90 +813,6 @@ def main() -> None:
         "history_evidence_cognitive_alignment_anneal_end_epoch": (
             args.history_evidence_cognitive_alignment_anneal_end_epoch
         ),
-        "history_evidence_cognitive_alignment_confidence_power": (
-            args.history_evidence_cognitive_alignment_confidence_power
-        ),
-        "history_evidence_cognitive_alignment_confidence_cap": (
-            args.history_evidence_cognitive_alignment_confidence_cap
-        ),
-        "history_evidence_cognitive_alignment_confidence_floor": (
-            args.history_evidence_cognitive_alignment_confidence_floor
-        ),
-        "history_evidence_cognitive_alignment_residual_power": (
-            args.history_evidence_cognitive_alignment_residual_power
-        ),
-        "history_evidence_cognitive_alignment_residual_floor": (
-            args.history_evidence_cognitive_alignment_residual_floor
-        ),
-        "history_evidence_cognitive_rank_alignment_weight": args.history_evidence_cognitive_rank_alignment_weight,
-        "history_evidence_cognitive_rank_alignment_pair_count": (
-            args.history_evidence_cognitive_rank_alignment_pair_count
-        ),
-        "history_evidence_cognitive_rank_alignment_min_target_gap": (
-            args.history_evidence_cognitive_rank_alignment_min_target_gap
-        ),
-        "history_evidence_output_alignment_weight": args.history_evidence_output_alignment_weight,
-        "history_evidence_output_alignment_confidence_power": (
-            args.history_evidence_output_alignment_confidence_power
-        ),
-        "history_evidence_output_alignment_confidence_cap": (
-            args.history_evidence_output_alignment_confidence_cap
-        ),
-        "history_evidence_output_alignment_confidence_floor": (
-            args.history_evidence_output_alignment_confidence_floor
-        ),
-        "checkpoint_distillation_summaries": args.checkpoint_distillation_summaries,
-        "checkpoint_distillation_average": args.checkpoint_distillation_average,
-        "checkpoint_distillation_weight": args.checkpoint_distillation_weight,
-        "checkpoint_distillation_loss": args.checkpoint_distillation_loss,
-        "checkpoint_distillation_start_epoch": args.checkpoint_distillation_start_epoch,
-        "history_evidence_output_calibration": args.history_evidence_output_calibration,
-        "history_evidence_output_calibration_min_count": args.history_evidence_output_calibration_min_count,
-        "history_evidence_output_calibration_max_count": args.history_evidence_output_calibration_max_count,
-        "history_evidence_output_calibration_min_seen_ratio": (
-            args.history_evidence_output_calibration_min_seen_ratio
-        ),
-        "history_evidence_output_calibration_max_logit": args.history_evidence_output_calibration_max_logit,
-        "history_evidence_output_calibration_prior_strength": (
-            args.history_evidence_output_calibration_prior_strength
-        ),
-        "history_evidence_output_calibration_concept_confidence_cap": (
-            args.history_evidence_output_calibration_concept_confidence_cap
-        ),
-        "history_evidence_output_calibration_exercise_confidence_cap": (
-            args.history_evidence_output_calibration_exercise_confidence_cap
-        ),
-        "history_evidence_output_calibration_student_confidence_cap": (
-            args.history_evidence_output_calibration_student_confidence_cap
-        ),
-        "history_evidence_output_calibration_apply_mode": args.history_evidence_output_calibration_apply_mode,
-        "exercise_evidence_prior_residual": args.exercise_evidence_prior_residual,
-        "exercise_evidence_prior_min_count": args.exercise_evidence_prior_min_count,
-        "exercise_evidence_prior_max_logit": args.exercise_evidence_prior_max_logit,
-        "exercise_evidence_prior_strength": args.exercise_evidence_prior_strength,
-        "exercise_evidence_prior_confidence_cap": args.exercise_evidence_prior_confidence_cap,
-        "exercise_evidence_difficulty_adapter": args.exercise_evidence_difficulty_adapter,
-        "exercise_evidence_difficulty_adapter_min_count": args.exercise_evidence_difficulty_adapter_min_count,
-        "exercise_evidence_difficulty_adapter_max_logit": args.exercise_evidence_difficulty_adapter_max_logit,
-        "exercise_evidence_difficulty_adapter_strength": args.exercise_evidence_difficulty_adapter_strength,
-        "exercise_evidence_difficulty_adapter_confidence_cap": args.exercise_evidence_difficulty_adapter_confidence_cap,
-        "exercise_evidence_difficulty_init": args.exercise_evidence_difficulty_init,
-        "exercise_evidence_difficulty_init_min_count": args.exercise_evidence_difficulty_init_min_count,
-        "exercise_evidence_difficulty_init_max_abs_logit": args.exercise_evidence_difficulty_init_max_abs_logit,
-        "exercise_evidence_difficulty_init_strength": args.exercise_evidence_difficulty_init_strength,
-        "exercise_evidence_difficulty_init_confidence_cap": args.exercise_evidence_difficulty_init_confidence_cap,
-        "exercise_evidence_difficulty_init_count": difficulty_init_count,
-        "exercise_evidence_difficulty_regularization_weight": args.exercise_evidence_difficulty_regularization_weight,
-        "exercise_evidence_difficulty_regularization_min_count": args.exercise_evidence_difficulty_regularization_min_count,
-        "exercise_evidence_difficulty_regularization_max_abs_logit": (
-            args.exercise_evidence_difficulty_regularization_max_abs_logit
-        ),
-        "exercise_evidence_difficulty_regularization_strength": (
-            args.exercise_evidence_difficulty_regularization_strength
-        ),
-        "exercise_evidence_difficulty_regularization_confidence_cap": (
-            args.exercise_evidence_difficulty_regularization_confidence_cap
-        ),
         "seed": args.seed,
         "best_epoch": result.best_epoch,
         "best_val_auc": result.best_val_auc,
@@ -1739,12 +822,6 @@ def main() -> None:
         "test_brier": test_metrics["brier"],
         "test_ece": test_metrics["ece"],
         "best_checkpoint_path": str(Path(checkpoint_path).resolve()),
-        "swa_checkpoint_path": (
-            str(Path(result.swa_checkpoint_path).resolve()) if result.swa_checkpoint_path is not None else None
-        ),
-        "ema_checkpoint_path": (
-            str(Path(result.ema_checkpoint_path).resolve()) if result.ema_checkpoint_path is not None else None
-        ),
         "output_json": str(output_path.resolve()),
         "history_csv": str(Path(history_path).resolve()),
     }

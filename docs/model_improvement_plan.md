@@ -75,7 +75,7 @@
     - branch/source: 已合入 `exp/trellis-trial`，trial commit `305c1dd`；探索来源为 `exp/pure-cdm-default-promotion`
     - 判断: 当前最强 single-checkpoint pure CDM runner/default-training 候选；不依赖 fixed checkpoint average、valid-trained combiner 或 hybrid tabular side-channel
     - runner: `scripts/run_assist09_history_alignment_trial.sh`
-    - config: 实验 103 late-window + train-only concept prior 底座，追加 `--dual-cdm-ensemble --dual-cdm-secondary-concept-dim 80 --dual-cdm-branch-bce-weight 0.10`
+    - config: runner 已默认编码实验 104；底座为实验 103 late-window + train-only concept prior，并默认开启 dual CDM ensemble、secondary concept dim 80、branch BCE 0.10
     - 关键指标: seed2024 `0.778773`、seed2025 `0.778250`、seed2026 `0.778508`、seed2027 `0.777948`，mean `0.778370`
     - 限制: 解释性低于单塔 CDM，因为最终输出是两个 CDM tower 的结构化平均；但每个 tower 仍保留 `cognitive/guess/slip` 分解，且 branch BCE 让 branch-level 输出本身可监督。论文前必须补 `weight/capacity/branch` ablation
     - 详细指标见 `docs/experiments/104_single_checkpoint_dual_cdm_ensemble.md`
@@ -94,7 +94,7 @@
   - 实验 100
     - branch: `exp/pure-cdm-default-promotion`
     - 判断: 当前最接近 `0.778` 的纯 CDM runner/default-promotion probe，但不满足默认晋升稳定性。dim80 加弱 output-alignment 在 seed2026/2027 暴露 headroom，最佳 seed2027 `AUC 0.778122`；四 seed mean `0.777030` 仅小幅高于实验 95，且 2024/2025 regression 明确
-    - runner: `scripts/run_assist09_history_output_alignment_trial.sh`
+    - runner: historical probe was `scripts/run_assist09_history_output_alignment_trial.sh`; this wrapper is no longer part of the active CLI surface after exp104 cleanup
     - 限制: 不改 `scripts/run_assist09_baseline.sh`，也不替换实验 95 trial runner；实验 101 已判负 confidence weighting、weight decay、training-protocol、capacity interpolation、linear readout、exercise difficulty init 等 follow-up，后续只有在新结构机制能消除 2024/2025 tail 时才值得复访
     - 详细指标见 `docs/experiments/100_pure_cdm_default_promotion.md`
     - follow-up 判负见 `docs/experiments/101_pure_cdm_default_promotion_followups.md`

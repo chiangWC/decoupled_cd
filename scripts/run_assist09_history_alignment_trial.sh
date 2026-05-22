@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-OUTPUT_DEFAULT="results/pure_cdm_hybrid_signal/seed${SEED:-2024}_history_alignment_tc2w005_300ep.json"
+OUTPUT_DEFAULT="results/pure_cdm_default_promotion/seed${SEED:-2024}_exp104_dual64x80_branchbce010_300ep.json"
 
 OUTPUT="${OUTPUT:-${OUTPUT_DEFAULT}}" \
   bash "${SCRIPT_DIR}/run_assist09_baseline.sh" \
@@ -19,4 +19,18 @@ OUTPUT="${OUTPUT:-${OUTPUT_DEFAULT}}" \
     --history-evidence-logit-prior-weight-concept 0.22 \
     --history-evidence-logit-prior-weight-mastery 0.22 \
     --history-evidence-cognitive-alignment-weight 0.05 \
+    --history-evidence-cognitive-alignment-final-weight 0.0881 \
+    --history-evidence-cognitive-alignment-anneal-start-epoch 170 \
+    --history-evidence-cognitive-alignment-anneal-end-epoch 230 \
+    --concept-evidence-prior-residual \
+    --concept-evidence-prior-min-count 1 \
+    --concept-evidence-prior-min-seen-ratio 1.0 \
+    --concept-evidence-prior-max-logit 0.30 \
+    --concept-evidence-prior-min-confidence 0.75 \
+    --concept-evidence-prior-min-abs-mastery 0.5 \
+    --concept-evidence-prior-apply-mode train_only \
+    --concept-evidence-prior-train-start-epoch 135 \
+    --dual-cdm-ensemble \
+    --dual-cdm-secondary-concept-dim 80 \
+    --dual-cdm-branch-bce-weight 0.10 \
     "$@"

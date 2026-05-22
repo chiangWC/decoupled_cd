@@ -113,7 +113,7 @@ Expanded files: `results/pure_cdm_default_promotion/seed2024_history_alignment_c
 ## Decision
 
 - Keep `scripts/run_assist09_history_alignment_trial.sh` as the active pure-CDM trial runner.
-- Keep `scripts/run_assist09_history_output_alignment_trial.sh` as an opt-in probe/reproduction runner.
+- Historical note: `scripts/run_assist09_history_output_alignment_trial.sh` was kept as an opt-in probe/reproduction runner at the time, but was later removed from the active CLI surface during exp104 runner cleanup.
 - Do not change `scripts/run_assist09_baseline.sh`.
 - Do not promote `concept_dim=80` or output alignment as the default CDM runner until a later mechanism removes the 2024/2025 regression.
 - Treat the useful evidence as directional: increasing concept capacity to 80 plus a very weak output-alignment objective exposes 2026/2027 headroom near or above `0.778`, but this is not yet a stable default.
