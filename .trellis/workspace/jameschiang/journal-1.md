@@ -216,3 +216,36 @@ Refactored DecoupledCDM evidence residual helpers to share target evidence stati
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Cleanup active ASSIST09 trial CLI
+
+**Date**: 2026-05-22
+**Task**: Cleanup active ASSIST09 trial CLI
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Removed obsolete ASSIST09 runner wrappers, promoted exp104 as the active trial runner default, cleaned non-trial train.py CLI flags, updated trial docs/specs, and verified baseline/exp104 remote smoke plus full exp104 GPU rerun.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `70c1f7f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
