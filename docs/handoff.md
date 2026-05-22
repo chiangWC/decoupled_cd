@@ -42,8 +42,9 @@
 - 当前状态:
   - `master` accepted reference: 实验 70，three-seed mean `test_auc = 0.765517`
   - `exp/trellis-trial` baseline reference: 实验 81，`scripts/run_assist09_baseline.sh`，seed2024 `test_auc = 0.767478`
-  - active pure-CDM single-checkpoint trial candidate: 实验 104，已合入 `exp/trellis-trial` 提交 `305c1dd`，`DecoupledCDMEnsemble` 双塔 `64x80` + `dual_cdm_branch_bce_weight=0.10`，四 seed AUC `0.778773/0.778250/0.778508/0.777948`，mean `0.778370`，stdev `0.000306`
-  - previous pure-CDM default-promotion probes: 实验 100/103 已被实验 104 取代；实验 100 的 dim80 + weak output alignment 四 seed mean 仅 `0.777030`，实验 103 的 late-window single checkpoint mean 仅 `0.776623`
+  - active pure-CDM single-checkpoint trial candidate: 实验 106，`DecoupledCDMEnsemble` 双塔 `64x80` + `dual_cdm_branch_bce_weight=0.18`，四 seed AUC `0.778890/0.778552/0.778256/0.778618`，mean `0.778579`，stdev `0.000226`
+  - lightweight pure-CDM reference: 实验 105 复测 exp104 pre-dual single64，seed2024 `test_auc 0.778379`、`max_cuda_memory_allocated_gb 6.33`，但历史四 seed mean `0.776736`；实验 107 进一步确认 dim64 `output_alignment=0.002` 与 `checkpoint_selection_window=3` 都不足以形成替代路线，实验 108 又继续排掉 soft difficulty regularization、主干 residual trigger threshold 收紧、cognitive-alignment residual focusing、validation `brier` checkpoint selection，并确认 `concept_evidence_prior_train_start_epoch=170` 仍只是弱 seed 微正 / 强 seed 回撤。shared-branch single-tower 和 single72 也均降级，不替代实验 106
+  - previous pure-CDM default-promotion probes: 实验 100/103 已被实验 104/106 取代；实验 100 的 dim80 + weak output alignment 四 seed mean 仅 `0.777030`，实验 103 的 late-window single checkpoint mean 仅 `0.776623`
   - active hybrid growth signal: 实验 99，`exp/auc-078-exploration`，hist-gradient hybrid stacker 三 seed mean `test_auc = 0.786910`，seeds 2024/2025/2026 全部超过 `0.778`
 - 当前冲刺目标:
   - 当前 practical target 已按用户口径调整为 `test_auc >= 0.778`
@@ -52,9 +53,12 @@
   - 实验 99 已用 hybrid stacker 三 seed `0.787288/0.788060/0.785382` 清晰过目标；但它是 valid-trained hybrid evaluator，不是 pure-CDM/default-runner promotion
   - 实验 100 已按 pure CDM/default-runner 口径补测：最佳单点 `dim80 + output_alignment=0.004` seed2027 `0.778122`，但最佳四 seed mean `0.777030` 且 seeds 2024/2025 回撤；结论是不做 default promotion，只保留 opt-in runner/probe
   - 实验 102 fixed checkpoint average 四 seed mean `0.778872`，但用户当前不接受它作为 single-run/default-training 复现答案；只保留为 pure-CDM evaluator 上界诊断
-  - 实验 104 已用 single-run/single-checkpoint pure-CDM 训练候选四 seed mean `0.778370` 达到 practical target；它低于实验 102 fixed-average 上界，但满足用户对 default-training 复现路径的约束
+  - 实验 106 已用 single-run/single-checkpoint pure-CDM 训练候选四 seed mean `0.778579` 达到 practical target；它低于实验 102 fixed-average 上界，但满足用户对 default-training 复现路径的约束
+  - 实验 105 说明轻量 single64 可在 seed2024 达到 `0.778379` 且约 `6.33GB`，但四 seed mean 低于 exp104；shared-branch 最好 seed2024 `0.776504`、single72 seeds 2024/2026 `0.776216/0.775486`，因此不改默认路线
+  - 实验 107 说明恢复单塔 probe CLI 后，dim64 `output_alignment=0.002` 在 seed2026 为负，`checkpoint_selection_window=3` 虽在 seed2026 微正但 seed2024 转负，因此不继续这两条轻量单塔微调
+  - 实验 108 继续说明 exp105 single64 轻量路线上的 soft difficulty regularization、pairwise/high-concept trigger threshold 收紧、cognitive residual focusing、validation `brier` checkpoint selection 都无效；`concept_evidence_prior_train_start_epoch=170` 是唯一不崩的新点，但 seed2026 仅 `+0.000019` 且 seed2024 转负，不值得扩四 seed
   - 实验 92 已用固定等权 train-history evidence output-logit prior 达到 seed2027 `test_auc 0.776813`，超过该阈值；但它是 readout-prior diagnostic，误差/校准回撤明显，不能直接当作默认纯 cognitive CDM 主线
-  - 若面向论文继续提升，优先补实验 104 的 ablation 和解释性证据：`branch_bce_weight`、`64x64/64x80/80x80`、各 tower 单独 AUC、融合 AUC、以及 `cognitive/guess/slip` 组件语义稳定性；不要再回到实验 100/103 的局部参数小扫
+  - 若面向论文继续提升，优先补实验 106 的 ablation 和解释性证据：`64x64/64x80/80x80`、各 tower 单独 AUC、融合 AUC、branch BCE 邻域解释、以及 `cognitive/guess/slip` 组件语义稳定性；不要再回到实验 100/103 的局部参数小扫
 - 详细背景先看 [model_improvement_plan.md](./model_improvement_plan.md) 的当前快照；若需要按实验号定位，再查 [experiment_index.jsonl](./experiment_index.jsonl) 或对应 detail doc。
 
 当前正向训练策略支线:
@@ -189,12 +193,41 @@
   - 四 seed AUC: `0.778242/0.776913/0.775059/0.776280`，mean `0.776623`，相对实验 95 mean `+0.000345`
   - 判断: 这是实验 104 前的 single-checkpoint 基线，已被 dual CDM + branch BCE 取代；capacity dim72/80、rank alignment、target/global 配比偏移、multi-head readout、direct cognitive prior、concept calibrated readout、SWA 都未形成更好默认候选
   - 详情: [103](./experiments/103_pure_cdm_late_alignment_promotion.md)
-- 实验 104 已合入当前 `exp/trellis-trial`，作为当前最强 pure-CDM single-checkpoint default-training 候选:
+- 实验 104 已合入当前 `exp/trellis-trial`，现作为实验 106 的双塔结构基座和 ablation 对照:
   - branch/source: 从 `exp/pure-cdm-default-promotion` 合入 `exp/trellis-trial`，trial commit `305c1dd`
   - mechanism: 单 checkpoint 双塔 `DecoupledCDMEnsemble`，primary `concept_dim=64`、secondary `concept_dim=80`，模型内概率平均；`dual_cdm_branch_bce_weight=0.10` 对两个 tower 的单独输出加 BCE 辅助监督
   - results: seeds 2024/2025/2026/2027 `test_auc 0.778773/0.778250/0.778508/0.777948`，mean `0.778370`，stdev `0.000306`
-  - 判断: 这是当前最适合作为论文方法候选的 pure-CDM 路线；解释性低于单塔 CDM，但仍保留 branch-level `cognitive/guess/slip` 分解，明显强于 fixed checkpoint average / hybrid stacker 的默认训练叙事
+  - 判断: 这是实验 106 前的 pure-CDM 路线；解释性低于单塔 CDM，但仍保留 branch-level `cognitive/guess/slip` 分解，明显强于 fixed checkpoint average / hybrid stacker 的默认训练叙事
   - 详情: [104](./experiments/104_single_checkpoint_dual_cdm_ensemble.md)
+- 实验 106 已完成 exp104 branch BCE refinement，并提升当前 trial runner 默认值:
+  - branch/source: `exp/lightweight-single-tower-cdm`
+  - mechanism: 保持单 checkpoint 双塔 `DecoupledCDMEnsemble`，只把 `dual_cdm_branch_bce_weight` 从 `0.10` 调到 `0.18`
+  - results: seeds 2024/2025/2026/2027 `test_auc 0.778890/0.778552/0.778256/0.778618`，mean `0.778579`，stdev `0.000226`
+  - 判断: 当前最强 single-run/single-checkpoint pure-CDM default-training 候选；`0.15` 是最高峰值参考，`0.20` mean 接近但 seed2026 尾部更弱。仍是双塔，max CUDA peak 约 `11.76GB`
+  - 详情: [106](./experiments/106_dual_cdm_branch_bce_refinement.md)
+- 实验 105 已完成 lightweight single-tower 复探:
+  - branch: `exp/lightweight-single-tower-cdm`
+  - results: exp104 pre-dual single64 seed2024 `test_auc 0.778379`、`max_cuda_memory_allocated_gb 6.33`；历史四 seed mean `0.776736`
+  - rejected: shared-branch single-tower seed2024 最好 `0.776504`、`6.61GB`；single72 seeds 2024/2026 `0.776216/0.775486`、`6.83GB`
+  - 判断: single64 可作为显存优先时的轻量参考，但不替代 exp104；shared-branch 和 dim72 不继续作为默认路线。全程未使用非纯 CDM、hybrid、valid-trained combiner 或 multi-checkpoint average
+  - 详情: [105](./experiments/105_lightweight_single_tower_cdm.md)
+- 实验 107 已完成单塔 probe 控制恢复与两条轻量 follow-up 判负:
+  - branch: `exp/lightweight-single-tower-cdm`
+  - code path: `scripts/train.py` 重新暴露单塔 `output_alignment`、`rank_alignment` 与 alignment weighting CLI；远端 `py_compile` 与 `unittest` 已通过
+  - results: dim64 `history_evidence_output_alignment_weight=0.002` 在 seed2026 为 `test_auc 0.774925`，低于 single64 base `0.775065`；`checkpoint_selection_window=3` 在 seed2026 仅到 `0.775082`，但 seed2024 从 `0.778379` 降到 `0.778300`
+  - 判断: 保留 `scripts/run_assist09_single_tower_history_alignment_trial.sh` 作为显式非双塔命令路径，但不继续 dim64 output alignment 微扫，也不继续 checkpoint smoothing；single64 仍只是轻量参考，不是默认 promotion 候选
+  - 详情: [107](./experiments/107_single_tower_probe_controls_and_rejections.md)
+- 实验 108 已继续排掉一批新的 exp105 single64 轻量 follow-up:
+  - branch: `exp/lightweight-single-tower-cdm`
+  - code path: `scripts/train.py` 新增 `exercise_evidence_difficulty_regularization_*` CLI；远端 `py_compile` 与 `unittest` 已通过
+  - results:
+    - soft difficulty regularization 在 seed2026 为 `test_auc 0.774668`
+    - `pairwise-history-interaction-min-count=3` 在 seed2026 为 `0.773786`
+    - `high-concept-logit-min-count=3` 与 cognitive-alignment residual focusing 都在 seed2026 近随机崩盘
+    - `concept_evidence_prior_train_start_epoch=170` 仅把 seed2026 微升到 `0.775084`，但 seed2024 从 `0.778379` 降到 `0.778212`
+    - validation `brier` checkpoint selection 在 seed2026 为 `0.773786`
+  - 判断: 不继续这些轻量 rescue follow-up；single64 仍只保留为显存优先时的参考，不是新的默认路线候选
+  - 详情: [108](./experiments/108_lightweight_single64_followup_rejections.md)
 - 当前主线新增默认配置:
   - `--interpretable-readout-expert-adapter`
   - `--interpretable-readout-expert-count 3`
@@ -269,9 +302,9 @@
 - 若继续当前最强 evidence readout 候选，优先留在 `exp/exp70-evidence-readout-scope`；默认下一步是补 `B49 seed=2024` 交叉复验，而不是重新开始自由扫结构。
 - 若继续 `q-local` / readout expert 这条 representation-level 线，不要直接把 `q-local` 叠回当前带 `expert` 的 trial，也不要继续扫 coverage gate、bounded expert、post-expert replay、target-evidence state/qrepr 前移或 contrastive common-mode removal；先看 [083_exp81_q_local_expert_diagnosis.md](./experiments/083_exp81_q_local_expert_diagnosis.md)、[084_exp81_expert_output_modulation.md](./experiments/084_exp81_expert_output_modulation.md)、[085_exp81_state_and_attention_qrepr_adapters.md](./experiments/085_exp81_state_and_attention_qrepr_adapters.md)、[086_contrastive_readout_expert.md](./experiments/086_contrastive_readout_expert.md)，只有出现 materially different 的 expert architecture / training objective 假设时再重开。
 - 若继续比较 target-exclusion 训练口径或准备正式主线切换对比，优先从 `exp/full-target-exclusion-opt` 出发。
-- 若继续 pure-CDM `0.778+` single-run/default-training 路线，优先从当前 `exp/trellis-trial` 的实验 104 实现继续；`exp/pure-cdm-default-promotion` 只作为历史探索和结果复验参考。若允许 evaluator semantics，实验 102 fixed probability average 仍是 pure-CDM evaluator 上界诊断，但不作为论文默认训练答案。
+- 若继续 pure-CDM `0.778+` single-run/default-training 路线，优先从当前实验 106 runner 默认配置继续；`exp/pure-cdm-default-promotion` 只作为历史探索和结果复验参考。若允许 evaluator semantics，实验 102 fixed probability average 仍是 pure-CDM evaluator 上界诊断，但不作为论文默认训练答案。
 - 若继续本轮已过线的 `0.778+` hybrid 信号，优先从 `exp/auc-078-exploration` 的实验 99 继续；三 seed stacker validation 已完成，下一步是补 seed2027 或把同类 train-history feature family 转成模型侧 readout/objective。不要把它误记为已 promote 的纯 CDM 主线。
-- 若继续当前纯 CDM trial candidate，优先从 `exp/trellis-trial` 的 `scripts/run_assist09_history_alignment_trial.sh` 出发；该 runner 清理后已默认编码实验 104。实验 95/103 的 `cogonly loss_only` 与 late anneal 现在是 104 的底座，不要再把 student/exercise direct history terms 加回默认 trial，也不要继续只替换同一 target 的 smooth/correlation loss。
+- 若继续当前纯 CDM trial candidate，优先从 `scripts/run_assist09_history_alignment_trial.sh` 出发；该 runner 当前默认编码实验 106。实验 95/103 的 `cogonly loss_only` 与 late anneal 现在是 104/106 的底座，不要再把 student/exercise direct history terms 加回默认 trial，也不要继续只替换同一 target 的 smooth/correlation loss。
 - 若继续做结构主线，在当前 Trellis-managed worktree 中默认从 `exp/trellis-trial` 伪主线或其后代切新 `exp/*` 分支；不要直接从 `master` 切分支。实验 51 与实验 70 的模型主线语义仍按当前台账理解。
 - 若继续实验 76 / deterministic evidence prior，默认按“历史候选待重构”处理：不要再把原版 `concept_evidence_prior_residual` 当作当前 trial 默认 promote 路线；实验 88/89 已证明 confidence/mastery、agreement、train-only、direction-only 等 deterministic mask/scope 只能稳定到低幅或单 seed AUC tradeoff，后续必须有 representation/objective 层的新机制才值得重开。
 - 其余近期 `exp/*` 路线大多已形成暂停或降级判断；若要复访，默认先按实验号查 `docs/experiment_index.jsonl` 的 `status/reason_tags/verdict`，再按需打开对应 detail，确认是否真的出现了新的 slice 假设或机制假设后再决定是否重开。
@@ -322,7 +355,7 @@
   - `cosine + warmup` 可带来极小的 `AUC/ACC` 提升，但量级不足以推动主线切换，且 `ECE` 变差
   - 训练模式支线暂不合入 `master`；如继续推进，优先做保持语义干净的模型改动，而不是继续打磨训练协议
 - 实验 101 又在 pure-CDM dim80 default-promotion 语境下确认 Adam `weight_decay` 与常见 lr/patience rescue 不能修复弱 seed；不要把训练协议小改当作当前主推进方向。
-- 实验 102 表明 experiment 95 与 experiment 100 checkpoint 的排序误差有互补性，仍可作为 evaluator 上界；但 pure-CDM default-training / 论文方法候选已切到实验 104 的 dual CDM + branch BCE，不要回到 dim80 单模型局部扫参，也不要把 checkpoint average 当作默认训练答案。
+- 实验 102 表明 experiment 95 与 experiment 100 checkpoint 的排序误差有互补性，仍可作为 evaluator 上界；但 pure-CDM default-training / 论文方法候选已切到实验 106 的 dual CDM + branch BCE 0.18，不要回到 dim80 单模型局部扫参，也不要把 checkpoint average 当作默认训练答案。
 - CF residual 支线暂停:
   - 不继续扫 `cf_dim`，不作为纯 CDM 主线推进
   - 后续默认回归实验 34/37 这类干净主线
