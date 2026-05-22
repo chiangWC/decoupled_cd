@@ -16,8 +16,6 @@ class DecoupledCDMEnsemble(nn.Module):
         "history_evidence_logit_prior_location",
         "concept_evidence_prior_residual",
         "concept_evidence_prior_max_logit",
-        "history_evidence_output_calibration",
-        "history_evidence_output_calibration_apply_mode",
     )
 
     def __init__(
@@ -25,19 +23,15 @@ class DecoupledCDMEnsemble(nn.Module):
         *,
         concept_dim: int = 64,
         secondary_concept_dim: int = 80,
-        secondary_weight: float = 0.5,
         **kwargs: Any,
     ) -> None:
         super().__init__()
         if secondary_concept_dim < 1:
             raise ValueError("secondary_concept_dim must be positive.")
-        if secondary_weight < 0.0 or secondary_weight > 1.0:
-            raise ValueError("secondary_weight must be in [0, 1].")
         self.primary = DecoupledCDM(concept_dim=concept_dim, **kwargs)
         self.secondary = DecoupledCDM(concept_dim=secondary_concept_dim, **kwargs)
         self.concept_dim = int(concept_dim)
         self.secondary_concept_dim = int(secondary_concept_dim)
-        self.secondary_weight = float(secondary_weight)
         for name in self._RUNTIME_SYNC_ATTRS:
             if hasattr(self.primary, name):
                 setattr(self, name, getattr(self.primary, name))
@@ -77,15 +71,10 @@ class DecoupledCDMEnsemble(nn.Module):
                     setattr(self.secondary, name, value)
 
     def _blend(self, primary: torch.Tensor, secondary: torch.Tensor) -> torch.Tensor:
-        return primary * (1.0 - self.secondary_weight) + secondary * self.secondary_weight
+        return (primary + secondary) * 0.5
 
     def _build_history_evidence_logit_prior_residual(self, **kwargs: Any) -> torch.Tensor:
         return self.primary._build_history_evidence_logit_prior_residual(**kwargs)
 
     def build_exercise_difficulty_prior_target(self, **kwargs: Any) -> tuple[torch.Tensor, torch.Tensor]:
         return self.primary.build_exercise_difficulty_prior_target(**kwargs)
-
-    def initialize_exercise_difficulty_from_evidence(self, **kwargs: Any) -> int:
-        primary_count = self.primary.initialize_exercise_difficulty_from_evidence(**kwargs)
-        self.secondary.initialize_exercise_difficulty_from_evidence(**kwargs)
-        return primary_count

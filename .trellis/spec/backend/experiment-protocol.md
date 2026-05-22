@@ -293,6 +293,27 @@ Correct:
 Report those as evaluator/diagnostic routes and keep experiment 104 as the default single-run pure-CDM trial.
 ```
 
+## Current CDM Model Surface Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changes touch `DecoupledCDM`, `DecoupledCDMEnsemble`, the retained evaluation loaders, or focused CDM unit tests.
+- Current HEAD is only required to preserve the official exp81 baseline path and the current exp104 pure-CDM trial path.
+- Constructor knobs and helper branches that no longer have an active `scripts/train.py` CLI or runner are not part of the supported surface.
+
+### 2. Contracts
+
+- Keep baseline model paths: graph propagation, high-concept adapter, pairwise history interaction adapter, GS difficulty adapter, interpretable readout expert adapter, student-conditioned UKC readout residual, and concept evidence readout residual.
+- Keep exp104 model paths: dual CDM ensemble, equal-weight tower averaging, branch BCE supervision, concept evidence prior residual, history evidence logit prior residual with `loss_only`, and cognitive alignment support.
+- `DecoupledCDMEnsemble` uses a fixed equal-weight average across towers; there is no active `secondary_weight` runtime knob.
+- Removed probe-only model routes should stay out of active code and active tests unless a new task explicitly restores them with updated docs and runner semantics.
+
+### 3. Bad Cases
+
+- Reintroduce deleted constructor flags because an old experiment detail doc still mentions them.
+- Keep evaluation/model loading shims for rejected probes after the active CLI and runner surface has already dropped them.
+- Treat historical reproduction as a reason to preserve every retired branch in current HEAD.
+
 ---
 
 ## Experiment Design Rules

@@ -49,7 +49,7 @@ This is the first documented pure-CDM single-checkpoint route in this branch tha
 - Model structure: add `DecoupledCDMEnsemble`, a single-checkpoint two-tower wrapper over `DecoupledCDM`.
 - Primary tower: `concept_dim=64`.
 - Secondary tower: `concept_dim=80`.
-- Inference output: weighted average of branch `probs`, `cognitive_probs`, `guess_probs`, and `slip_probs`; best tested weight is `dual_cdm_secondary_weight=0.5`.
+- Inference output: fixed equal-weight average of branch `probs`, `cognitive_probs`, `guess_probs`, and `slip_probs`.
 - Training objective: add branch BCE auxiliary loss through `dual_cdm_branch_bce_weight`, so both primary and secondary towers are directly supervised before probability mixing.
 
 The key growth signal is not capacity alone. Equal-weight dual tower without branch BCE mainly improved variance, while branch BCE made both towers individually useful enough for the averaged output to clear the target.

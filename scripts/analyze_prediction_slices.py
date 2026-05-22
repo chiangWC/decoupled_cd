@@ -92,12 +92,6 @@ def load_model(
         student_conditioned_ukc_readout_residual=bool(
             summary.get("student_conditioned_ukc_readout_residual", False)
         ),
-        evidence_calibrated_behavior_gate=bool(summary.get("evidence_calibrated_behavior_gate", False)),
-        evidence_behavior_gate_max_logit=float(summary.get("evidence_behavior_gate_max_logit", 0.5)),
-        evidence_behavior_gate_trigger=str(summary.get("evidence_behavior_gate_trigger", "all")),
-        evidence_behavior_gate_low_attempt_threshold=float(
-            summary.get("evidence_behavior_gate_low_attempt_threshold", 3.0)
-        ),
         concept_evidence_readout_residual=bool(summary.get("concept_evidence_readout_residual", False)),
         concept_evidence_readout_min_count=int(summary.get("concept_evidence_readout_min_count", 2)),
         concept_evidence_readout_max_count=int(summary.get("concept_evidence_readout_max_count", 0)),
@@ -115,79 +109,6 @@ def load_model(
         concept_evidence_prior_positive_scale=float(summary.get("concept_evidence_prior_positive_scale", 1.0)),
         concept_evidence_prior_negative_scale=float(summary.get("concept_evidence_prior_negative_scale", 1.0)),
         concept_evidence_prior_apply_mode=str(summary.get("concept_evidence_prior_apply_mode", "all")),
-        student_evidence_ability_prior_residual=bool(
-            summary.get("student_evidence_ability_prior_residual", False)
-        ),
-        student_evidence_ability_prior_min_attempts=int(
-            summary.get("student_evidence_ability_prior_min_attempts", 1)
-        ),
-        student_evidence_ability_prior_max_logit=float(
-            summary.get("student_evidence_ability_prior_max_logit", 0.25)
-        ),
-        student_evidence_ability_prior_strength=float(
-            summary.get("student_evidence_ability_prior_strength", 2.0)
-        ),
-        student_evidence_ability_prior_confidence_cap=float(
-            summary.get("student_evidence_ability_prior_confidence_cap", 200.0)
-        ),
-        student_evidence_gs_prior_residual=bool(summary.get("student_evidence_gs_prior_residual", False)),
-        student_evidence_gs_prior_min_attempts=int(summary.get("student_evidence_gs_prior_min_attempts", 1)),
-        student_evidence_gs_prior_max_logit=float(summary.get("student_evidence_gs_prior_max_logit", 0.25)),
-        student_evidence_gs_prior_strength=float(summary.get("student_evidence_gs_prior_strength", 2.0)),
-        student_evidence_gs_prior_confidence_cap=float(
-            summary.get("student_evidence_gs_prior_confidence_cap", 200.0)
-        ),
-        concept_evidence_calibrated_readout=bool(summary.get("concept_evidence_calibrated_readout", False)),
-        concept_evidence_calibrated_readout_min_count=int(
-            summary.get("concept_evidence_calibrated_readout_min_count", 1)
-        ),
-        concept_evidence_calibrated_readout_max_count=int(
-            summary.get("concept_evidence_calibrated_readout_max_count", 0)
-        ),
-        concept_evidence_calibrated_readout_min_seen_ratio=float(
-            summary.get("concept_evidence_calibrated_readout_min_seen_ratio", 1.0)
-        ),
-        concept_evidence_calibrated_readout_max_logit=float(
-            summary.get("concept_evidence_calibrated_readout_max_logit", 0.35)
-        ),
-        concept_evidence_calibrated_readout_prior_strength=float(
-            summary.get("concept_evidence_calibrated_readout_prior_strength", 2.0)
-        ),
-        concept_evidence_calibrated_readout_confidence_cap=float(
-            summary.get("concept_evidence_calibrated_readout_confidence_cap", 20.0)
-        ),
-        history_evidence_fusion_readout=bool(summary.get("history_evidence_fusion_readout", False)),
-        history_evidence_fusion_min_count=int(summary.get("history_evidence_fusion_min_count", 1)),
-        history_evidence_fusion_max_count=int(summary.get("history_evidence_fusion_max_count", 0)),
-        history_evidence_fusion_min_seen_ratio=float(summary.get("history_evidence_fusion_min_seen_ratio", 0.0)),
-        history_evidence_fusion_max_logit=float(summary.get("history_evidence_fusion_max_logit", 0.5)),
-        history_evidence_fusion_feature_set=str(summary.get("history_evidence_fusion_feature_set", "full")),
-        history_evidence_fusion_prior_strength=float(summary.get("history_evidence_fusion_prior_strength", 2.0)),
-        history_evidence_fusion_concept_confidence_cap=float(
-            summary.get("history_evidence_fusion_concept_confidence_cap", 20.0)
-        ),
-        history_evidence_fusion_exercise_confidence_cap=float(
-            summary.get("history_evidence_fusion_exercise_confidence_cap", 200.0)
-        ),
-        history_evidence_fusion_student_confidence_cap=float(
-            summary.get("history_evidence_fusion_student_confidence_cap", 200.0)
-        ),
-        history_evidence_linear_readout=bool(summary.get("history_evidence_linear_readout", False)),
-        history_evidence_linear_min_count=int(summary.get("history_evidence_linear_min_count", 1)),
-        history_evidence_linear_max_count=int(summary.get("history_evidence_linear_max_count", 0)),
-        history_evidence_linear_min_seen_ratio=float(summary.get("history_evidence_linear_min_seen_ratio", 0.0)),
-        history_evidence_linear_max_logit=float(summary.get("history_evidence_linear_max_logit", 0.5)),
-        history_evidence_linear_feature_set=str(summary.get("history_evidence_linear_feature_set", "full")),
-        history_evidence_linear_prior_strength=float(summary.get("history_evidence_linear_prior_strength", 2.0)),
-        history_evidence_linear_concept_confidence_cap=float(
-            summary.get("history_evidence_linear_concept_confidence_cap", 20.0)
-        ),
-        history_evidence_linear_exercise_confidence_cap=float(
-            summary.get("history_evidence_linear_exercise_confidence_cap", 200.0)
-        ),
-        history_evidence_linear_student_confidence_cap=float(
-            summary.get("history_evidence_linear_student_confidence_cap", 200.0)
-        ),
         history_evidence_logit_prior_residual=bool(summary.get("history_evidence_logit_prior_residual", False)),
         history_evidence_logit_prior_location=str(summary.get("history_evidence_logit_prior_location", "cognitive")),
         history_evidence_logit_prior_min_count=int(summary.get("history_evidence_logit_prior_min_count", 1)),
@@ -220,56 +141,9 @@ def load_model(
         history_evidence_logit_prior_mastery_confidence_cap=float(
             summary.get("history_evidence_logit_prior_mastery_confidence_cap", 20.0)
         ),
-        history_evidence_output_calibration=bool(summary.get("history_evidence_output_calibration", False)),
-        history_evidence_output_calibration_min_count=int(
-            summary.get("history_evidence_output_calibration_min_count", 1)
-        ),
-        history_evidence_output_calibration_max_count=int(
-            summary.get("history_evidence_output_calibration_max_count", 0)
-        ),
-        history_evidence_output_calibration_min_seen_ratio=float(
-            summary.get("history_evidence_output_calibration_min_seen_ratio", 0.0)
-        ),
-        history_evidence_output_calibration_max_logit=float(
-            summary.get("history_evidence_output_calibration_max_logit", 0.5)
-        ),
-        history_evidence_output_calibration_prior_strength=float(
-            summary.get("history_evidence_output_calibration_prior_strength", 2.0)
-        ),
-        history_evidence_output_calibration_concept_confidence_cap=float(
-            summary.get("history_evidence_output_calibration_concept_confidence_cap", 20.0)
-        ),
-        history_evidence_output_calibration_exercise_confidence_cap=float(
-            summary.get("history_evidence_output_calibration_exercise_confidence_cap", 200.0)
-        ),
-        history_evidence_output_calibration_student_confidence_cap=float(
-            summary.get("history_evidence_output_calibration_student_confidence_cap", 200.0)
-        ),
-        history_evidence_output_calibration_apply_mode=str(
-            summary.get("history_evidence_output_calibration_apply_mode", "all")
-        ),
-        exercise_evidence_prior_residual=bool(summary.get("exercise_evidence_prior_residual", False)),
-        exercise_evidence_prior_min_count=int(summary.get("exercise_evidence_prior_min_count", 1)),
-        exercise_evidence_prior_max_logit=float(summary.get("exercise_evidence_prior_max_logit", 0.25)),
-        exercise_evidence_prior_strength=float(summary.get("exercise_evidence_prior_strength", 2.0)),
-        exercise_evidence_prior_confidence_cap=float(summary.get("exercise_evidence_prior_confidence_cap", 200.0)),
-        exercise_evidence_difficulty_adapter=bool(summary.get("exercise_evidence_difficulty_adapter", False)),
-        exercise_evidence_difficulty_adapter_min_count=int(
-            summary.get("exercise_evidence_difficulty_adapter_min_count", 1)
-        ),
-        exercise_evidence_difficulty_adapter_max_logit=float(
-            summary.get("exercise_evidence_difficulty_adapter_max_logit", 0.5)
-        ),
-        exercise_evidence_difficulty_adapter_strength=float(
-            summary.get("exercise_evidence_difficulty_adapter_strength", 2.0)
-        ),
-        exercise_evidence_difficulty_adapter_confidence_cap=float(
-            summary.get("exercise_evidence_difficulty_adapter_confidence_cap", 200.0)
-        ),
     )
     if bool(summary.get("dual_cdm_ensemble", False)):
         model_kwargs["secondary_concept_dim"] = int(summary.get("dual_cdm_secondary_concept_dim", 80))
-        model_kwargs["secondary_weight"] = float(summary.get("dual_cdm_secondary_weight", 0.5))
         model = DecoupledCDMEnsemble(**model_kwargs)
     else:
         model = DecoupledCDM(**model_kwargs)
