@@ -2,7 +2,7 @@
 
 ## Status
 
-`single_checkpoint_branch_bce_refinement_promoted`, current best pure-CDM single-run/single-checkpoint default-training candidate.
+`candidate_not_promoted_in_current_head`, branch-BCE refinement over experiment 104.
 
 ## Verdict
 
@@ -15,7 +15,7 @@ bash scripts/run_assist09_history_alignment_trial.sh \
   --dual-cdm-branch-bce-weight 0.18
 ```
 
-After this experiment, `scripts/run_assist09_history_alignment_trial.sh` encodes `0.18` by default.
+Current HEAD still keeps `scripts/run_assist09_history_alignment_trial.sh` at the experiment 104 default `0.10`. Use `0.18` only when explicitly testing or promoting experiment 106.
 
 Four-seed AUC is `0.778890/0.778552/0.778256/0.778618`, mean `0.778579`, population stdev `0.000226`, and mean ECE `0.034913`. This is higher and more stable than experiment 104's branch BCE `0.10` mean `0.778370` and stdev `0.000306`.
 
@@ -35,7 +35,7 @@ No non-pure-CDM strategy, validation-trained combiner, hybrid feature path, or m
 |---:|---|---:|---:|---:|---:|---:|---|
 | 0.05 | 2024/2027 | `0.778412/0.777724` | 0.778068 | 0.000344 | 0.777724 | 0.778412 | rejected, below exp104 on matched seeds |
 | 0.15 | 2024/2025/2026/2027 | `0.779046/0.778553/0.778348/0.778106` | 0.778514 | 0.000346 | 0.778106 | 0.779046 | highest peak, mean positive |
-| 0.18 | 2024/2025/2026/2027 | `0.778890/0.778552/0.778256/0.778618` | 0.778579 | 0.000226 | 0.778256 | 0.778890 | promoted default |
+| 0.18 | 2024/2025/2026/2027 | `0.778890/0.778552/0.778256/0.778618` | 0.778579 | 0.000226 | 0.778256 | 0.778890 | strongest refinement candidate |
 | 0.20 | 2024/2025/2026/2027 | `0.778955/0.778645/0.778055/0.778590` | 0.778561 | 0.000324 | 0.778055 | 0.778955 | second-best mean, weaker tail |
 
 Detailed promoted rows:
@@ -58,7 +58,7 @@ Aggregate comparison:
 
 ## Decision
 
-Promote `dual_cdm_branch_bce_weight=0.18` as the default for `scripts/run_assist09_history_alignment_trial.sh`.
+Record `dual_cdm_branch_bce_weight=0.18` as the strongest tested branch-BCE refinement candidate. Current HEAD does not promote it as the default for `scripts/run_assist09_history_alignment_trial.sh`.
 
 Use `0.15` only as a high-peak reference if a future search explicitly optimizes peak AUC. Use `0.20` as a nearby mean-positive reference, but not as default because it weakens the seed2026 tail.
 

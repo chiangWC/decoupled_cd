@@ -54,7 +54,7 @@ Result files:
 
 | route | seeds | AUCs | mean AUC | max CUDA GB observed | decision |
 |---|---|---:|---:|---:|---|
-| exp104 dual CDM ensemble | 2024/2025/2026/2027 | `0.778773/0.778250/0.778508/0.777948` | 0.778370 | not remeasured here | current default candidate |
+| exp104 dual CDM ensemble | 2024/2025/2026/2027 | `0.778773/0.778250/0.778508/0.777948` | 0.778370 | not remeasured here | current active trial |
 | exp104 pre-dual single64 base | 2024/2025/2026/2027 | `0.778379/0.776930/0.775065/0.776569` | 0.776736 | 6.329924 on seed2024 | lightweight reference only |
 | shared-branch best single seed | 2024 | `0.776504` | n/a | 6.614818 | rejected |
 | single72 sampled seeds | 2024/2026 | `0.776216/0.775486` | 0.775851 | 6.833642 | rejected |

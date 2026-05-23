@@ -2,7 +2,7 @@
 
 ## Status
 
-`single_checkpoint_0778_target_cleared`, current best pure-CDM default-training candidate.
+`single_checkpoint_0778_target_cleared`, current active pure-CDM trial runner in this HEAD.
 
 ## Verdict
 
@@ -10,7 +10,7 @@ A single training run with a two-tower `DecoupledCDMEnsemble` plus branch-level 
 
 Best configuration:
 
-After runner cleanup, this configuration is encoded by default in
+This configuration is encoded by default in
 `scripts/run_assist09_history_alignment_trial.sh`. The expanded command below
 is kept as the historical exact configuration record.
 
@@ -92,4 +92,4 @@ Aggregate:
 
 ## Decision
 
-Promote this as the current best pure-CDM single-checkpoint candidate for the `0.778` sprint. Future work should compare any new pure-CDM idea against this four-seed mean, not against experiment 103 or the older experiment 95 cog-only baseline alone.
+Promote this as the current active pure-CDM single-checkpoint runner for the `0.778` sprint. Experiment 106 records a stronger branch-BCE refinement, but it is not the runner contract in this HEAD unless explicitly promoted.

@@ -220,7 +220,7 @@ Report experiment 102 as an opt-in pure-CDM checkpoint-average evaluator and kee
 
 ### 1. Scope / Trigger
 
-- Trigger: `scripts/run_assist09_history_alignment_trial.sh` runs the current strongest single-run/single-checkpoint pure-CDM trial, experiment 104.
+- Trigger: `scripts/run_assist09_history_alignment_trial.sh` runs the current active single-run/single-checkpoint pure-CDM trial, experiment 104.
 - The runner layers experiment 104's dual CDM ensemble, branch BCE, late cognitive-alignment anneal, and train-only concept evidence prior on top of the official experiment 81 baseline script.
 - Historical probe runners for reliability weighting, output alignment, rank alignment, fusion/linear readouts, evidence-gate variants, and multiseed wrappers have been removed from the active CLI surface. Reproduce old experiments from their detail docs or git history instead of keeping runnable wrappers in `scripts/`.
 
@@ -235,11 +235,12 @@ The runner accepts common `scripts/train.py` smoke/test overrides such as `--epo
 ### 3. Contracts
 
 - `scripts/run_assist09_baseline.sh` remains the official experiment 81 baseline runner.
-- `scripts/run_assist09_history_alignment_trial.sh` remains the current active trial runner and now encodes experiment 104 by default.
+- `scripts/run_assist09_history_alignment_trial.sh` remains the current active trial runner and encodes experiment 104 by default.
 - `scripts/train.py` keeps CLI flags needed by the official baseline and experiment 104; rejected probe-only flags should not be reintroduced without a new task and updated ledger rationale.
 - Experiment 104 still uses `history_evidence_logit_prior_location=loss_only`; it must not add an inference-time output-logit sidecar, valid-trained combiner, or hybrid tabular features.
 - Concept evidence prior uses `apply_mode=train_only` and starts at epoch 135 in the current runner.
 - Dual tower branch BCE uses `dual_cdm_branch_bce_weight=0.10`; the secondary tower concept dimension is 80.
+- Experiment 106 reports a branch-BCE `0.18` refinement, but current HEAD does not promote it into the runner contract unless that promotion is made explicitly.
 
 ### 4. Validation & Error Matrix
 
@@ -253,19 +254,19 @@ The runner accepts common `scripts/train.py` smoke/test overrides such as `--epo
 
 ### 5. Good/Base/Bad Cases
 
-- Good: compare a new pure-CDM single-checkpoint idea against experiment 104's four-seed mean `0.778370`.
+- Good: compare a new pure-CDM single-checkpoint idea against the current active runner, experiment 104's four-seed mean `0.778370`, unless the task explicitly adopts experiment 106 as the new baseline.
 - Good: use `scripts/run_assist09_baseline.sh` for exp81 baseline checks and `scripts/run_assist09_history_alignment_trial.sh` for exp104 trial checks.
 - Base: exp81 baseline runner.
 - Bad: reporting experiment 95/100/103 historical runner behavior as the current trial after this cleanup.
 - Bad: reintroducing removed probe-only runner scripts or train CLI flags because an old detail doc mentions them.
-- Bad: changing `scripts/run_assist09_baseline.sh` to experiment 104; baseline and trial remain separate.
+- Bad: changing `scripts/run_assist09_baseline.sh` to experiment 104 or 106; baseline and trial remain separate.
 
 ### 6. Tests Required
 
 - `python3 -m py_compile scripts/train.py`.
 - Shell syntax check for active runner scripts.
 - Remote smoke test for both baseline and exp104 runner after CLI or runner cleanup.
-- Remote full exp104 run when the user asks to verify current strongest trial metrics.
+- Remote full exp104 run when the user asks to verify current active trial metrics.
 
 ### 7. Wrong vs Correct
 
@@ -290,7 +291,7 @@ Treat checkpoint-average or hybrid stacker evaluator results as the default trai
 Correct:
 
 ```text
-Report those as evaluator/diagnostic routes and keep experiment 104 as the default single-run pure-CDM trial.
+Report those as evaluator/diagnostic routes and keep experiment 104 as the default single-run pure-CDM trial until an explicit promotion changes the runner contract.
 ```
 
 ## Current CDM Model Surface Contract
