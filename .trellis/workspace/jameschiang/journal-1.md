@@ -282,3 +282,36 @@ Trimmed retired DecoupledCDM constructor/model branches after CLI cleanup, kept 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Clarify current trial handoff
+
+**Date**: 2026-05-23
+**Task**: Clarify current trial handoff
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Cleaned the handoff and experiment ledger wording so current active trial remains exp104, exp106 is documented as an unpromoted branch-BCE refinement, and post-104 work is framed as low-VRAM signal exploration rather than a default-promotion chain.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1c33471` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
