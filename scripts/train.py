@@ -20,6 +20,20 @@ from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
 
+def _reset_cuda_peak_memory_if_available(device: str) -> None:
+    if not device.startswith("cuda") or not torch.cuda.is_available():
+        return
+    torch.cuda.set_device(torch.device(device))
+    torch.cuda.reset_peak_memory_stats()
+
+
+def _max_cuda_memory_allocated_gb(device: str) -> float | None:
+    if not device.startswith("cuda") or not torch.cuda.is_available():
+        return None
+    torch.cuda.set_device(torch.device(device))
+    return torch.cuda.max_memory_allocated() / (1024**3)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the minimal decoupled CDM pipeline.")
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
@@ -509,8 +523,7 @@ def main() -> None:
     set_global_seed(args.seed)
     logger, log_path = setup_logging(args.log_dir, name="train")
     resolved_device = str(resolve_device(args.device, args.gpus))
-    if resolved_device.startswith("cuda") and torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats(torch.device(resolved_device))
+    _reset_cuda_peak_memory_if_available(resolved_device)
     logger.info("Resolved device: %s", resolved_device)
     logger.info("Graph mode: %s", args.graph_mode)
     logger.info("Seed: %s", args.seed)
@@ -641,9 +654,7 @@ def main() -> None:
     )
     test_metrics = evaluate_model(bundle=test_bundle, model=model, device=resolved_device)
     valid_metrics = evaluate_model(bundle=valid_bundle, model=model, device=resolved_device) if valid_bundle is not None else None
-    max_cuda_memory_allocated_gb = None
-    if resolved_device.startswith("cuda") and torch.cuda.is_available():
-        max_cuda_memory_allocated_gb = torch.cuda.max_memory_allocated(torch.device(resolved_device)) / (1024**3)
+    max_cuda_memory_allocated_gb = _max_cuda_memory_allocated_gb(resolved_device)
 
     output = {
         "dataset": args.dataset,
