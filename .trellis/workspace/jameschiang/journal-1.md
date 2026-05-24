@@ -315,3 +315,38 @@ Cleaned the handoff and experiment ledger wording so current active trial remain
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: exp110 ablation study
+
+**Date**: 2026-05-24
+**Task**: exp110 ablation study
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Designed and ran the full exp110 pure-CDM ablation matrix excluding checkpoint averaging; recorded experiment 111 with aggregate results, conclusions, and ledger updates. Added CUDA peak-memory tracking to train summaries and fixed CUDA initialization.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `849a1c7` | (see git log) |
+| `71e9898` | (see git log) |
+| `ba63730` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
