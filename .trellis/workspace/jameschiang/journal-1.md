@@ -350,3 +350,36 @@ Designed and ran the full exp110 pure-CDM ablation matrix excluding checkpoint a
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: exp110 seed2027 component ablation
+
+**Date**: 2026-05-24
+**Task**: exp110 seed2027 component ablation
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Ran and recorded a paper-style seed2027 one-factor component ablation for exp110, reusing existing exp111 rows and adding missing base-runner component removals.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `76815ec` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
