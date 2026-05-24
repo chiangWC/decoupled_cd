@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import datetime, UTC
 
 import pandas as pd
+import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -508,6 +509,8 @@ def main() -> None:
     set_global_seed(args.seed)
     logger, log_path = setup_logging(args.log_dir, name="train")
     resolved_device = str(resolve_device(args.device, args.gpus))
+    if resolved_device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats(torch.device(resolved_device))
     logger.info("Resolved device: %s", resolved_device)
     logger.info("Graph mode: %s", args.graph_mode)
     logger.info("Seed: %s", args.seed)
@@ -638,6 +641,9 @@ def main() -> None:
     )
     test_metrics = evaluate_model(bundle=test_bundle, model=model, device=resolved_device)
     valid_metrics = evaluate_model(bundle=valid_bundle, model=model, device=resolved_device) if valid_bundle is not None else None
+    max_cuda_memory_allocated_gb = None
+    if resolved_device.startswith("cuda") and torch.cuda.is_available():
+        max_cuda_memory_allocated_gb = torch.cuda.max_memory_allocated(torch.device(resolved_device)) / (1024**3)
 
     output = {
         "dataset": args.dataset,
@@ -727,6 +733,7 @@ def main() -> None:
         "final_loss": result.final_loss,
         "best_val_auc": result.best_val_auc,
         "best_epoch": result.best_epoch,
+        "max_cuda_memory_allocated_gb": max_cuda_memory_allocated_gb,
         "best_checkpoint_path": result.best_checkpoint_path,
         "valid_metrics": valid_metrics,
         "test_metrics": test_metrics,
@@ -815,6 +822,7 @@ def main() -> None:
         ),
         "seed": args.seed,
         "best_epoch": result.best_epoch,
+        "max_cuda_memory_allocated_gb": max_cuda_memory_allocated_gb,
         "best_val_auc": result.best_val_auc,
         "test_auc": test_metrics["auc"],
         "test_acc": test_metrics["acc"],
