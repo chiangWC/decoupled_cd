@@ -138,10 +138,10 @@ New four-seed runs:
 
 ## Acceptance Criteria
 
-* [ ] A task result note exists under `docs/experiments/` or task research notes with a clear ablation table.
-* [ ] Each completed run has a result JSON path and exact command recorded.
-* [ ] The full Track A-D matrix is either run or explicitly marked as an exact existing reference.
-* [ ] Final conclusion names:
+* [x] A task result note exists under `docs/experiments/` or task research notes with a clear ablation table.
+* [x] Each completed run has a result JSON path and exact command recorded.
+* [x] The full Track A-D matrix is either run or explicitly marked as an exact existing reference.
+* [x] Final conclusion names:
   * strongest single-seed AUC variant
   * strongest mean-AUC candidate if expanded
   * best low-memory candidate
@@ -166,4 +166,5 @@ New four-seed runs:
 * Baseline doc: `docs/experiments/110_recompute_minibatch_low_memory_dual_cdm.md`
 * Heavy comparison doc: `docs/experiments/106_dual_cdm_branch_bce_refinement.md`
 * Runner: `scripts/run_assist09_history_alignment_trial.sh`
-* Likely result directory: `results/pure_cdm_distillation/`
+* Completed result directory: `results/pure_cdm_exp110_ablation/`
+* Completed result note: `docs/experiments/111_exp110_ablation_study.md`
