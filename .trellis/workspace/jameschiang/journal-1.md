@@ -416,3 +416,36 @@ Ran and recorded seed2027 coarse paper-style module ablations for exp110: eviden
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Record exp114 cross-dataset runs
+
+**Date**: 2026-05-25
+**Task**: Record exp114 cross-dataset runs
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Recorded exp114 cross-dataset ASSIST17, NIPS34, and Junyi runs, including Junyi memory and runtime findings.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e900a94` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
