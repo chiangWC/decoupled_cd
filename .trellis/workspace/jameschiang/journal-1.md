@@ -383,3 +383,36 @@ Ran and recorded a paper-style seed2027 one-factor component ablation for exp110
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: exp110 coarse module ablation
+
+**Date**: 2026-05-25
+**Task**: exp110 coarse module ablation
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Ran and recorded seed2027 coarse paper-style module ablations for exp110: evidence-aware readout, cognitive alignment objective, and dual-branch ensemble.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `09a1823` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

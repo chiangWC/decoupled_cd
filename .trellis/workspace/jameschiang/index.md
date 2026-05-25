@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
-- **Last Active**: 2026-05-24
+- **Total Sessions**: 12
+- **Last Active**: 2026-05-25
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~385 | Active |
+| `journal-1.md` | ~418 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-05-25 | exp110 coarse module ablation | `09a1823` | `exp/trellis-trial` |
 | 11 | 2026-05-24 | exp110 seed2027 component ablation | `76815ec` | `exp/trellis-trial` |
 | 10 | 2026-05-24 | exp110 ablation study | `849a1c7`, `71e9898`, `ba63730` | `exp/trellis-trial` |
 | 9 | 2026-05-23 | Clarify current trial handoff | `1c33471` | `exp/trellis-trial` |
