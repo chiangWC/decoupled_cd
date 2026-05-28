@@ -46,6 +46,18 @@ class _PriorToggleModel(_BiasOnlyModel):
         return super().forward(target_student_ids=target_student_ids, **kwargs)
 
 
+class _TrackingBiasModel(_BiasOnlyModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.forward_student_ids: list[list[int]] = []
+        self.use_student_subset_values: list[bool] = []
+
+    def forward(self, *, target_student_ids: torch.Tensor, use_student_subset: bool = False, **kwargs):
+        self.forward_student_ids.append([int(value) for value in target_student_ids.detach().cpu().tolist()])
+        self.use_student_subset_values.append(bool(use_student_subset))
+        return super().forward(target_student_ids=target_student_ids, **kwargs)
+
+
 class _DualBranchOutput:
     def __init__(self) -> None:
         self.primary_probs = torch.tensor([0.2, 0.8], dtype=torch.float32)
@@ -81,6 +93,41 @@ def _build_toy_bundle(num_interactions: int = 5, labels: list[float] | None = No
     )
 
 
+def _build_multi_student_toy_bundle() -> StepDataBundle:
+    interactions = pd.DataFrame(
+        [
+            {"stu_id": 1, "exer_id": 11, "label": 0.0, "cpt_seq": "A"},
+            {"stu_id": 1, "exer_id": 12, "label": 1.0, "cpt_seq": "A"},
+            {"stu_id": 2, "exer_id": 13, "label": 0.0, "cpt_seq": "A"},
+            {"stu_id": 2, "exer_id": 14, "label": 1.0, "cpt_seq": "A"},
+            {"stu_id": 3, "exer_id": 15, "label": 0.0, "cpt_seq": "A"},
+        ]
+    )
+    return StepDataBundle(
+        interactions=interactions,
+        history_interactions=interactions.copy(),
+        split_name="train",
+        allow_target_in_history=True,
+        q_matrix=pd.DataFrame([{"exer_id": 11 + index, "cpt_seq": "A"} for index in range(5)]),
+        student_id_map={"1": 0, "2": 1, "3": 2},
+        exercise_id_map={str(11 + index): index for index in range(5)},
+        concept_id_map={"A": 0},
+        q_matrix_tensor=torch.ones(5, 1, dtype=torch.float32),
+        concept_graph=torch.ones(1, 1, dtype=torch.float32),
+        student_exercise_mask=torch.tensor(
+            [[1.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0, 1.0]],
+            dtype=torch.float32,
+        ),
+        student_tkc_mask=torch.ones(3, 1, dtype=torch.float32),
+        student_ukc_mask=torch.zeros(3, 1, dtype=torch.float32),
+        response_matrix_tensor=torch.tensor(
+            [[0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]],
+            dtype=torch.float32,
+        ),
+        interaction_student_ids=torch.tensor([0, 0, 1, 1, 2], dtype=torch.long),
+        interaction_exercise_ids=torch.arange(5, dtype=torch.long),
+        interaction_labels=torch.tensor(interactions["label"].tolist(), dtype=torch.float32),
+    )
 class TrainingModeValidationTest(unittest.TestCase):
     def test_full_batch_rejects_batch_size_override(self) -> None:
         with self.assertRaisesRegex(ValueError, "does not consume --batch-size"):
@@ -99,6 +146,26 @@ class TrainingModeValidationTest(unittest.TestCase):
                 model=_BiasOnlyModel(),
                 epochs=1,
                 training_mode="recompute_minibatch",
+            )
+
+    def test_student_recompute_minibatch_requires_student_batch_size(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires --student-batch-size"):
+            train_model(
+                train_bundle=_build_toy_bundle(),
+                model=_BiasOnlyModel(),
+                epochs=1,
+                training_mode="student_recompute_minibatch",
+            )
+
+    def test_student_recompute_minibatch_rejects_batch_size(self) -> None:
+        with self.assertRaisesRegex(ValueError, "does not consume --batch-size"):
+            train_model(
+                train_bundle=_build_toy_bundle(),
+                model=_BiasOnlyModel(),
+                epochs=1,
+                batch_size=2,
+                student_batch_size=1,
+                training_mode="student_recompute_minibatch",
             )
 
     def test_weight_decay_must_be_non_negative(self) -> None:
@@ -627,6 +694,23 @@ class RecomputeMinibatchTrainingTest(unittest.TestCase):
         self.assertEqual(len(result.history), 1)
         self.assertEqual(result.history[0]["training_mode"], "recompute_minibatch")
         self.assertEqual(result.history[0]["optimizer_steps"], 3.0)
+
+    def test_student_recompute_minibatch_groups_interactions_by_student(self) -> None:
+        model = _TrackingBiasModel()
+
+        result = train_model(
+            train_bundle=_build_multi_student_toy_bundle(),
+            model=model,
+            epochs=1,
+            student_batch_size=1,
+            training_mode="student_recompute_minibatch",
+        )
+
+        self.assertEqual(result.history[0]["training_mode"], "student_recompute_minibatch")
+        self.assertEqual(result.history[0]["optimizer_steps"], 3.0)
+        self.assertTrue(all(model.use_student_subset_values))
+        for seen_student_ids in model.forward_student_ids:
+            self.assertEqual(len(set(seen_student_ids)), 1)
 
     def test_concept_evidence_prior_can_start_after_early_training_epochs(self) -> None:
         model = _PriorToggleModel()

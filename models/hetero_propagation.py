@@ -84,7 +84,16 @@ class HeterogeneousGraphPropagation(nn.Module):
         student_tkc_mask: torch.Tensor,
         student_ukc_mask: torch.Tensor,
         student_concept_evidence: torch.Tensor | None = None,
+        student_indices: torch.Tensor | None = None,
     ) -> PropagationOutput:
+        if student_indices is not None:
+            if student_indices.dim() != 1:
+                raise ValueError("student_indices must be a 1D tensor.")
+            student_exercise_mask = student_exercise_mask.index_select(0, student_indices)
+            response_matrix = response_matrix.index_select(0, student_indices)
+            student_tkc_mask = student_tkc_mask.index_select(0, student_indices)
+            student_ukc_mask = student_ukc_mask.index_select(0, student_indices)
+
         correct_exercise_messages = self.correct_exercise_to_concept(exercise_embeddings)
         incorrect_exercise_messages = self.incorrect_exercise_to_concept(exercise_embeddings)
         if self.graph_mode == "dual":

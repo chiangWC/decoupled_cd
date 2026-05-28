@@ -6,6 +6,70 @@ from models.decoupled_cdm import DecoupledCDM
 from models.ensemble_cdm import DecoupledCDMEnsemble
 
 
+def _subset_forward_inputs() -> dict[str, torch.Tensor | None]:
+    student_exercise_mask = torch.tensor(
+        [
+            [1.0, 1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0, 1.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    response_matrix = torch.tensor(
+        [
+            [1.0, 0.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    student_concept_evidence = torch.zeros(4, 3, 6, dtype=torch.float32)
+    student_concept_evidence[..., 0] = torch.tensor(
+        [[2.0, 1.0, 1.0], [1.0, 2.0, 0.0], [1.0, 0.0, 1.0], [0.0, 2.0, 2.0]],
+        dtype=torch.float32,
+    )
+    student_concept_evidence[..., 1] = torch.tensor(
+        [[1.0, 0.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 1.0]],
+        dtype=torch.float32,
+    )
+    student_concept_evidence[..., 3] = student_concept_evidence[..., 1] / student_concept_evidence[
+        ..., 0
+    ].clamp_min(1.0)
+    student_concept_evidence[..., 4] = torch.log1p(student_concept_evidence[..., 0])
+    student_concept_evidence[..., 5] = (student_concept_evidence[..., 0] > 0).to(torch.float32)
+    return {
+        "q_matrix": torch.tensor(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 1.0],
+            ],
+            dtype=torch.float32,
+        ),
+        "concept_graph": torch.tensor(
+            [[1.0, 0.2, 0.0], [0.1, 1.0, 0.3], [0.0, 0.4, 1.0]],
+            dtype=torch.float32,
+        ),
+        "student_exercise_mask": student_exercise_mask,
+        "response_matrix": response_matrix,
+        "student_tkc_mask": torch.tensor(
+            [[1.0, 1.0, 1.0], [1.0, 1.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 1.0]],
+            dtype=torch.float32,
+        ),
+        "student_ukc_mask": torch.tensor(
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=torch.float32,
+        ),
+        "student_concept_evidence": student_concept_evidence,
+        "target_student_ids": torch.tensor([3, 1, 3, 0, 2], dtype=torch.long),
+        "target_exercise_ids": torch.tensor([4, 2, 3, 0, 1], dtype=torch.long),
+    }
+
+
 class CognitiveDifficultyAdapterTest(unittest.TestCase):
     def test_adapter_output_layer_starts_at_zero(self) -> None:
         model = DecoupledCDM(num_students=2, num_exercises=3, num_concepts=2, concept_dim=4)
@@ -61,6 +125,53 @@ class DualTowerCDMEnsembleTest(unittest.TestCase):
         self.assertFalse(model.secondary.concept_evidence_prior_residual)
         self.assertEqual(model.primary.concept_evidence_prior_max_logit, 0.25)
         self.assertEqual(model.secondary.concept_evidence_prior_max_logit, 0.25)
+
+    def test_student_subset_forward_matches_full_forward(self) -> None:
+        torch.manual_seed(7)
+        model = DecoupledCDMEnsemble(
+            num_students=4,
+            num_exercises=5,
+            num_concepts=3,
+            concept_dim=4,
+            secondary_concept_dim=5,
+        )
+        model.eval()
+        inputs = _subset_forward_inputs()
+
+        full_output = model(**inputs, use_student_subset=False)
+        subset_output = model(**inputs, use_student_subset=True)
+
+        torch.testing.assert_close(subset_output.probs, full_output.probs)
+        torch.testing.assert_close(subset_output.primary_probs, full_output.primary_probs)
+        torch.testing.assert_close(subset_output.secondary_probs, full_output.secondary_probs)
+
+
+class StudentSubsetForwardTest(unittest.TestCase):
+    def test_student_subset_forward_matches_full_forward(self) -> None:
+        torch.manual_seed(11)
+        model = DecoupledCDM(
+            num_students=4,
+            num_exercises=5,
+            num_concepts=3,
+            concept_dim=4,
+            high_concept_logit_adapter=True,
+            pairwise_history_interaction_adapter=True,
+            gs_difficulty_adapter=True,
+            interpretable_readout_expert_adapter=True,
+            student_conditioned_ukc_readout_residual=True,
+            concept_evidence_readout_residual=True,
+            concept_evidence_readout_min_count=1,
+        )
+        model.eval()
+        inputs = _subset_forward_inputs()
+
+        full_output = model(**inputs, use_student_subset=False)
+        subset_output = model(**inputs, use_student_subset=True)
+
+        torch.testing.assert_close(subset_output.probs, full_output.probs)
+        torch.testing.assert_close(subset_output.cognitive_probs, full_output.cognitive_probs)
+        torch.testing.assert_close(subset_output.guess_probs, full_output.guess_probs)
+        torch.testing.assert_close(subset_output.slip_probs, full_output.slip_probs)
 
 
 class InterpretableReadoutExpertAdapterTest(unittest.TestCase):

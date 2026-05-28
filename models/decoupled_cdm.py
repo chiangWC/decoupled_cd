@@ -336,9 +336,23 @@ class DecoupledCDM(nn.Module):
         exercise_evidence: torch.Tensor | None = None,
         target_student_ids: torch.Tensor | None = None,
         target_exercise_ids: torch.Tensor | None = None,
+        use_student_subset: bool = False,
     ) -> DecoupledForwardOutput:
+        if (target_student_ids is None) != (target_exercise_ids is None):
+            raise ValueError("target_student_ids and target_exercise_ids must be provided together.")
+        if target_student_ids is None or target_exercise_ids is None:
+            raise ValueError("target_student_ids and target_exercise_ids are required for prediction.")
+
         concept_embeddings = self.concept_embedding.weight
         exercise_embeddings = self.exercise_embedding.weight
+        student_indices = None
+        state_target_student_ids = target_student_ids
+        if use_student_subset:
+            student_indices, state_target_student_ids = torch.unique(
+                target_student_ids,
+                sorted=True,
+                return_inverse=True,
+            )
         propagated: PropagationOutput = self.propagation(
             concept_embeddings=concept_embeddings,
             exercise_embeddings=exercise_embeddings,
@@ -351,14 +365,10 @@ class DecoupledCDM(nn.Module):
             student_tkc_mask=student_tkc_mask,
             student_ukc_mask=student_ukc_mask,
             student_concept_evidence=student_concept_evidence,
+            student_indices=student_indices,
         )
 
-        if (target_student_ids is None) != (target_exercise_ids is None):
-            raise ValueError("target_student_ids and target_exercise_ids must be provided together.")
-        if target_student_ids is None or target_exercise_ids is None:
-            raise ValueError("target_student_ids and target_exercise_ids are required for prediction.")
-
-        student_state = propagated.student_state[target_student_ids]
+        student_state = propagated.student_state[state_target_student_ids]
         q_vectors = q_matrix[target_exercise_ids]
         target_exercise_embeddings = exercise_embeddings[target_exercise_ids]
         concept_summary = self._summarize_exercise_concepts(
@@ -428,6 +438,7 @@ class DecoupledCDM(nn.Module):
                 student_exercise_mask=student_exercise_mask,
                 student_tkc_mask=student_tkc_mask,
                 target_student_ids=target_student_ids,
+                state_target_student_ids=state_target_student_ids,
                 tkc_states=propagated.tkc_states,
                 ukc_states=propagated.ukc_states,
                 student_state=student_state,
@@ -779,10 +790,13 @@ class DecoupledCDM(nn.Module):
         q_repr: torch.Tensor,
         concept_summary: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         difficulty: torch.Tensor,
+        state_target_student_ids: torch.Tensor | None = None,
         student_concept_attempt_counts: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if self.student_conditioned_ukc_readout_residual_head is None:
             return q_repr.new_zeros(q_repr.size(0))
+        if state_target_student_ids is None:
+            state_target_student_ids = target_student_ids
         if student_concept_attempt_counts is None:
             student_concept_attempt_counts = student_exercise_mask.to(dtype=q_repr.dtype) @ q_matrix.to(dtype=q_repr.dtype)
         chunk_size = 8192
@@ -798,6 +812,7 @@ class DecoupledCDM(nn.Module):
                         student_exercise_mask=student_exercise_mask,
                         student_tkc_mask=student_tkc_mask,
                         target_student_ids=target_student_ids[start:stop],
+                        state_target_student_ids=state_target_student_ids[start:stop],
                         tkc_states=tkc_states,
                         ukc_states=ukc_states,
                         student_state=student_state[start:stop],
@@ -827,8 +842,8 @@ class DecoupledCDM(nn.Module):
         else:
             target_concept_attempt_counts = student_concept_attempt_counts[target_student_ids]
             target_tkc_mask = student_tkc_mask[target_student_ids].to(dtype=q_repr.dtype)
-        target_tkc_states = tkc_states[target_student_ids].detach()
-        target_ukc_states = ukc_states[target_student_ids].detach()
+        target_tkc_states = tkc_states[state_target_student_ids].detach()
+        target_ukc_states = ukc_states[state_target_student_ids].detach()
 
         selected_graph_rows = concept_graph.to(dtype=q_repr.dtype)[safe_indices]
         graph_weights = selected_graph_rows * target_tkc_mask.unsqueeze(1)

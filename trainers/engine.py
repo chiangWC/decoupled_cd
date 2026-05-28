@@ -88,7 +88,10 @@ def evaluate_model(
     bundle: StepDataBundle,
     model: DecoupledCDM,
     device: str = "cpu",
+    student_batch_size: int | None = None,
 ) -> dict[str, float]:
+    if student_batch_size is not None and student_batch_size <= 0:
+        raise ValueError("student_batch_size must be positive when provided.")
     _validate_history_visibility(bundle)
     torch_device = torch.device(device)
     model = model.to(torch_device)
@@ -96,28 +99,78 @@ def evaluate_model(
     tensors = _bundle_tensors(bundle, torch_device)
 
     with torch.no_grad():
-        output = model(
-            q_matrix=tensors["q_matrix"],
-            concept_graph=tensors["concept_graph"],
-            prerequisite_graph=tensors["prerequisite_graph"],
-            similarity_graph=tensors["similarity_graph"],
-            student_exercise_mask=tensors["student_exercise_mask"],
-            response_matrix=tensors["response_matrix"],
-            student_tkc_mask=tensors["student_tkc_mask"],
-            student_ukc_mask=tensors["student_ukc_mask"],
-            student_concept_evidence=tensors["student_concept_evidence"],
-            exercise_evidence=tensors["exercise_evidence"],
-            target_student_ids=tensors["interaction_student_ids"],
-            target_exercise_ids=tensors["interaction_exercise_ids"],
-        )
-        loss = F.binary_cross_entropy(output.probs, tensors["interaction_labels"])
+        if student_batch_size is None:
+            output = model(
+                q_matrix=tensors["q_matrix"],
+                concept_graph=tensors["concept_graph"],
+                prerequisite_graph=tensors["prerequisite_graph"],
+                similarity_graph=tensors["similarity_graph"],
+                student_exercise_mask=tensors["student_exercise_mask"],
+                response_matrix=tensors["response_matrix"],
+                student_tkc_mask=tensors["student_tkc_mask"],
+                student_ukc_mask=tensors["student_ukc_mask"],
+                student_concept_evidence=tensors["student_concept_evidence"],
+                exercise_evidence=tensors["exercise_evidence"],
+                target_student_ids=tensors["interaction_student_ids"],
+                target_exercise_ids=tensors["interaction_exercise_ids"],
+            )
+            loss = F.binary_cross_entropy(output.probs, tensors["interaction_labels"])
+            probs = output.probs
+            labels = tensors["interaction_labels"]
+        else:
+            labels_parts = []
+            probs_parts = []
+            total_loss = tensors["interaction_labels"].new_zeros(())
+            unique_student_ids = torch.unique(tensors["interaction_student_ids"], sorted=False)
+            for start in range(0, unique_student_ids.numel(), student_batch_size):
+                student_ids = unique_student_ids[start : start + student_batch_size]
+                batch_indices = _interaction_indices_for_student_ids(
+                    interaction_student_ids=tensors["interaction_student_ids"],
+                    student_ids=student_ids,
+                    num_students=tensors["student_exercise_mask"].size(0),
+                )
+                if batch_indices.numel() == 0:
+                    continue
+                batch_labels = tensors["interaction_labels"][batch_indices]
+                output = model(
+                    q_matrix=tensors["q_matrix"],
+                    concept_graph=tensors["concept_graph"],
+                    prerequisite_graph=tensors["prerequisite_graph"],
+                    similarity_graph=tensors["similarity_graph"],
+                    student_exercise_mask=tensors["student_exercise_mask"],
+                    response_matrix=tensors["response_matrix"],
+                    student_tkc_mask=tensors["student_tkc_mask"],
+                    student_ukc_mask=tensors["student_ukc_mask"],
+                    student_concept_evidence=tensors["student_concept_evidence"],
+                    exercise_evidence=tensors["exercise_evidence"],
+                    target_student_ids=tensors["interaction_student_ids"][batch_indices],
+                    target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
+                    use_student_subset=True,
+                )
+                total_loss = total_loss + F.binary_cross_entropy(output.probs, batch_labels, reduction="sum")
+                labels_parts.append(batch_labels)
+                probs_parts.append(output.probs)
+            labels = torch.cat(labels_parts, dim=0)
+            probs = torch.cat(probs_parts, dim=0)
+            loss = total_loss / labels.numel()
 
     metrics = compute_metrics(
-        labels=tensors["interaction_labels"].detach().cpu().numpy(),
-        probs=output.probs.detach().cpu().numpy(),
+        labels=labels.detach().cpu().numpy(),
+        probs=probs.detach().cpu().numpy(),
     )
     metrics["loss"] = float(loss.item())
     return metrics
+
+
+def _interaction_indices_for_student_ids(
+    *,
+    interaction_student_ids: torch.Tensor,
+    student_ids: torch.Tensor,
+    num_students: int,
+) -> torch.Tensor:
+    selected_students = torch.zeros(num_students, dtype=torch.bool, device=interaction_student_ids.device)
+    selected_students[student_ids] = True
+    return torch.nonzero(selected_students[interaction_student_ids], as_tuple=False).squeeze(-1)
 
 
 def _resolve_linear_epoch_weight(
@@ -164,6 +217,7 @@ def train_model(
     valid_bundle: StepDataBundle | None = None,
     epochs: int = 5,
     batch_size: int | None = None,
+    student_batch_size: int | None = None,
     learning_rate: float = 1e-3,
     weight_decay: float = 0.0,
     training_mode: str = "full_batch",
@@ -210,10 +264,12 @@ def train_model(
     concept_evidence_prior_train_start_epoch: int = 1,
     concept_evidence_prior_train_warmup_epochs: int = 0,
 ) -> TrainResult:
-    if training_mode not in {"full_batch", "recompute_minibatch"}:
+    if training_mode not in {"full_batch", "recompute_minibatch", "student_recompute_minibatch"}:
         raise ValueError(f"Unsupported training_mode: {training_mode}")
     if batch_size is not None and batch_size <= 0:
         raise ValueError("batch_size must be positive when provided.")
+    if student_batch_size is not None and student_batch_size <= 0:
+        raise ValueError("student_batch_size must be positive when provided.")
     if weight_decay < 0.0:
         raise ValueError("weight_decay must be non-negative.")
     if swa_start_epoch < 0:
@@ -226,8 +282,19 @@ def train_model(
         raise ValueError("swa_start_epoch and ema_start_epoch cannot both be enabled.")
     if training_mode == "full_batch" and batch_size is not None:
         raise ValueError("full_batch training does not consume --batch-size; use --training-mode recompute_minibatch.")
+    if training_mode == "full_batch" and student_batch_size is not None:
+        raise ValueError(
+            "full_batch training does not consume --student-batch-size; "
+            "use --training-mode student_recompute_minibatch."
+        )
     if training_mode == "recompute_minibatch" and batch_size is None:
         raise ValueError("recompute_minibatch training requires --batch-size.")
+    if training_mode == "recompute_minibatch" and student_batch_size is not None:
+        raise ValueError("recompute_minibatch training does not consume --student-batch-size.")
+    if training_mode == "student_recompute_minibatch" and student_batch_size is None:
+        raise ValueError("student_recompute_minibatch training requires --student-batch-size.")
+    if training_mode == "student_recompute_minibatch" and batch_size is not None:
+        raise ValueError("student_recompute_minibatch training does not consume --batch-size.")
     if exercise_evidence_difficulty_regularization_weight < 0.0:
         raise ValueError("exercise_evidence_difficulty_regularization_weight must be non-negative.")
     if exercise_evidence_difficulty_regularization_min_count < 1:
@@ -440,13 +507,60 @@ def train_model(
                     checkpoint_distillation_loss=checkpoint_distillation_loss,
                     dual_tower_branch_bce_weight=dual_tower_branch_bce_weight,
                 )
-            else:
+            elif training_mode == "recompute_minibatch":
                 train_stats = _train_recompute_minibatch_epoch(
                     model=model,
                     tensors=train_tensors,
                     optimizer=optimizer,
                     batch_size=int(batch_size),
                     device=torch_device,
+                    exercise_evidence_difficulty_regularization_weight=exercise_evidence_difficulty_regularization_weight,
+                    difficulty_prior_target=difficulty_prior_target,
+                    difficulty_prior_mask=difficulty_prior_mask,
+                    history_evidence_cognitive_alignment_weight=cognitive_alignment_epoch_weight,
+                    history_evidence_cognitive_alignment_confidence_power=(
+                        history_evidence_cognitive_alignment_confidence_power
+                    ),
+                    history_evidence_cognitive_alignment_confidence_cap=(
+                        history_evidence_cognitive_alignment_confidence_cap
+                    ),
+                    history_evidence_cognitive_alignment_confidence_floor=(
+                        history_evidence_cognitive_alignment_confidence_floor
+                    ),
+                    history_evidence_cognitive_alignment_residual_power=(
+                        history_evidence_cognitive_alignment_residual_power
+                    ),
+                    history_evidence_cognitive_alignment_residual_floor=(
+                        history_evidence_cognitive_alignment_residual_floor
+                    ),
+                    history_evidence_cognitive_rank_alignment_weight=history_evidence_cognitive_rank_alignment_weight,
+                    history_evidence_cognitive_rank_alignment_pair_count=(
+                        history_evidence_cognitive_rank_alignment_pair_count
+                    ),
+                    history_evidence_cognitive_rank_alignment_min_target_gap=(
+                        history_evidence_cognitive_rank_alignment_min_target_gap
+                    ),
+                    history_evidence_output_alignment_weight=history_evidence_output_alignment_weight,
+                    history_evidence_output_alignment_confidence_power=(
+                        history_evidence_output_alignment_confidence_power
+                    ),
+                    history_evidence_output_alignment_confidence_cap=(
+                        history_evidence_output_alignment_confidence_cap
+                    ),
+                    history_evidence_output_alignment_confidence_floor=(
+                        history_evidence_output_alignment_confidence_floor
+                    ),
+                    checkpoint_distillation_targets=checkpoint_distillation_targets_tensor,
+                    checkpoint_distillation_weight=checkpoint_distillation_epoch_weight,
+                    checkpoint_distillation_loss=checkpoint_distillation_loss,
+                    dual_tower_branch_bce_weight=dual_tower_branch_bce_weight,
+                )
+            else:
+                train_stats = _train_student_recompute_minibatch_epoch(
+                    model=model,
+                    tensors=train_tensors,
+                    optimizer=optimizer,
+                    student_batch_size=int(student_batch_size),
                     exercise_evidence_difficulty_regularization_weight=exercise_evidence_difficulty_regularization_weight,
                     difficulty_prior_target=difficulty_prior_target,
                     difficulty_prior_mask=difficulty_prior_mask,
@@ -505,7 +619,14 @@ def train_model(
         }
 
         if valid_bundle is not None:
-            val_metrics = evaluate_model(bundle=valid_bundle, model=model, device=device)
+            evaluate_kwargs = {
+                "bundle": valid_bundle,
+                "model": model,
+                "device": device,
+            }
+            if training_mode == "student_recompute_minibatch":
+                evaluate_kwargs["student_batch_size"] = student_batch_size
+            val_metrics = evaluate_model(**evaluate_kwargs)
             row["val_loss"] = float(val_metrics["loss"])
             row["val_auc"] = float(val_metrics["auc"])
             row["val_acc"] = float(val_metrics["acc"])
@@ -777,6 +898,135 @@ def _train_recompute_minibatch_epoch(
             exercise_evidence=tensors["exercise_evidence"],
             target_student_ids=tensors["interaction_student_ids"][batch_indices],
             target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
+            use_student_subset=True,
+        )
+        loss = F.binary_cross_entropy(output.probs, batch_labels)
+        if dual_tower_branch_bce_weight > 0.0:
+            loss = loss + _dual_tower_branch_bce_loss(
+                output=output,
+                labels=batch_labels,
+                weight=dual_tower_branch_bce_weight,
+            )
+        if history_evidence_cognitive_alignment_weight > 0.0:
+            loss = loss + _history_evidence_cognitive_alignment_loss(
+                model=model,
+                output=output,
+                tensors=tensors,
+                target_student_ids=tensors["interaction_student_ids"][batch_indices],
+                target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
+                weight=history_evidence_cognitive_alignment_weight,
+                confidence_power=history_evidence_cognitive_alignment_confidence_power,
+                confidence_cap=history_evidence_cognitive_alignment_confidence_cap,
+                confidence_floor=history_evidence_cognitive_alignment_confidence_floor,
+                residual_power=history_evidence_cognitive_alignment_residual_power,
+                residual_floor=history_evidence_cognitive_alignment_residual_floor,
+            )
+        if history_evidence_cognitive_rank_alignment_weight > 0.0:
+            loss = loss + _history_evidence_cognitive_rank_alignment_loss(
+                model=model,
+                output=output,
+                tensors=tensors,
+                target_student_ids=tensors["interaction_student_ids"][batch_indices],
+                target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
+                weight=history_evidence_cognitive_rank_alignment_weight,
+                pair_count=history_evidence_cognitive_rank_alignment_pair_count,
+                min_target_gap=history_evidence_cognitive_rank_alignment_min_target_gap,
+            )
+        if history_evidence_output_alignment_weight > 0.0:
+            loss = loss + _history_evidence_output_alignment_loss(
+                model=model,
+                output=output,
+                tensors=tensors,
+                target_student_ids=tensors["interaction_student_ids"][batch_indices],
+                target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
+                weight=history_evidence_output_alignment_weight,
+                confidence_power=history_evidence_output_alignment_confidence_power,
+                confidence_cap=history_evidence_output_alignment_confidence_cap,
+                confidence_floor=history_evidence_output_alignment_confidence_floor,
+            )
+        if checkpoint_distillation_weight > 0.0:
+            loss = loss + _checkpoint_distillation_loss(
+                output=output,
+                target_probs=checkpoint_distillation_targets[batch_indices],
+                weight=checkpoint_distillation_weight,
+                loss_type=checkpoint_distillation_loss,
+            )
+        if exercise_evidence_difficulty_regularization_weight > 0.0:
+            loss = loss + _exercise_difficulty_regularization_loss(
+                model=model,
+                weight=exercise_evidence_difficulty_regularization_weight,
+                difficulty_prior_target=difficulty_prior_target,
+                difficulty_prior_mask=difficulty_prior_mask,
+            )
+        loss.backward()
+        optimizer.step()
+        total_loss += float(loss.item()) * float(batch_labels.numel())
+        optimizer_steps += 1
+
+    return EpochTrainStats(mean_loss=total_loss / float(num_targets), optimizer_steps=optimizer_steps)
+
+
+def _train_student_recompute_minibatch_epoch(
+    *,
+    model: DecoupledCDM,
+    tensors: dict[str, torch.Tensor | None],
+    optimizer: torch.optim.Optimizer,
+    student_batch_size: int,
+    exercise_evidence_difficulty_regularization_weight: float = 0.0,
+    difficulty_prior_target: torch.Tensor | None = None,
+    difficulty_prior_mask: torch.Tensor | None = None,
+    history_evidence_cognitive_alignment_weight: float = 0.0,
+    history_evidence_cognitive_alignment_confidence_power: float = 0.0,
+    history_evidence_cognitive_alignment_confidence_cap: float = 20.0,
+    history_evidence_cognitive_alignment_confidence_floor: float = 0.0,
+    history_evidence_cognitive_alignment_residual_power: float = 0.0,
+    history_evidence_cognitive_alignment_residual_floor: float = 0.0,
+    history_evidence_cognitive_rank_alignment_weight: float = 0.0,
+    history_evidence_cognitive_rank_alignment_pair_count: int = 8192,
+    history_evidence_cognitive_rank_alignment_min_target_gap: float = 0.0,
+    history_evidence_output_alignment_weight: float = 0.0,
+    history_evidence_output_alignment_confidence_power: float = 0.0,
+    history_evidence_output_alignment_confidence_cap: float = 20.0,
+    history_evidence_output_alignment_confidence_floor: float = 0.0,
+    checkpoint_distillation_targets: torch.Tensor | None = None,
+    checkpoint_distillation_weight: float = 0.0,
+    checkpoint_distillation_loss: str = "bce",
+    dual_tower_branch_bce_weight: float = 0.0,
+) -> EpochTrainStats:
+    model.train()
+    num_targets = int(tensors["interaction_labels"].size(0))
+    unique_student_ids = torch.unique(tensors["interaction_student_ids"], sorted=False)
+    student_permutation = unique_student_ids[
+        torch.randperm(unique_student_ids.numel(), device=unique_student_ids.device)
+    ]
+    total_loss = 0.0
+    optimizer_steps = 0
+
+    for start in range(0, student_permutation.numel(), student_batch_size):
+        student_ids = student_permutation[start : start + student_batch_size]
+        batch_indices = _interaction_indices_for_student_ids(
+            interaction_student_ids=tensors["interaction_student_ids"],
+            student_ids=student_ids,
+            num_students=tensors["student_exercise_mask"].size(0),
+        )
+        if batch_indices.numel() == 0:
+            continue
+        batch_labels = tensors["interaction_labels"][batch_indices]
+        optimizer.zero_grad()
+        output = model(
+            q_matrix=tensors["q_matrix"],
+            concept_graph=tensors["concept_graph"],
+            prerequisite_graph=tensors["prerequisite_graph"],
+            similarity_graph=tensors["similarity_graph"],
+            student_exercise_mask=tensors["student_exercise_mask"],
+            response_matrix=tensors["response_matrix"],
+            student_tkc_mask=tensors["student_tkc_mask"],
+            student_ukc_mask=tensors["student_ukc_mask"],
+            student_concept_evidence=tensors["student_concept_evidence"],
+            exercise_evidence=tensors["exercise_evidence"],
+            target_student_ids=tensors["interaction_student_ids"][batch_indices],
+            target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
+            use_student_subset=True,
         )
         loss = F.binary_cross_entropy(output.probs, batch_labels)
         if dual_tower_branch_bce_weight > 0.0:

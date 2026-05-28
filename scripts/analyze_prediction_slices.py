@@ -171,6 +171,7 @@ def predict_bundle(*, bundle: Any, model: DecoupledCDM | DecoupledCDMEnsemble, d
             student_concept_evidence=tensors["student_concept_evidence"],
             target_student_ids=tensors["interaction_student_ids"],
             target_exercise_ids=tensors["interaction_exercise_ids"],
+            use_student_subset=True,
         )
 
     frame = bundle.interactions.reset_index(drop=True).copy()

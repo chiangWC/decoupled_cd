@@ -145,6 +145,18 @@ and evaluation path rather than by the interaction-batch count. Treat Junyi
 full-run checks as long-running jobs even after dimensions are reduced enough
 to fit in memory.
 
+Follow-up optimization note:
+
+- Use `--training-mode student_recompute_minibatch` with
+  `--student-batch-size <N>` for future Junyi probes when the goal is faster
+  iteration. This batches optimizer steps by student IDs and uses target-student
+  subset propagation, avoiding repeated all-student propagation inside
+  interaction minibatches.
+- The default `full_batch` and `recompute_minibatch` modes remain available for
+  protocol comparisons. Treat `student_recompute_minibatch` as a runtime
+  optimization/training-mode change and record it explicitly in any Junyi result
+  summary.
+
 ## Junyi Memory Findings
 
 Junyi's original exp110 `dual64x80` run failed on dense propagation tensors:

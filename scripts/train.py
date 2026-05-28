@@ -71,6 +71,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Mini-batch size used only when --training-mode recompute_minibatch.",
     )
+    parser.add_argument(
+        "--student-batch-size",
+        type=int,
+        default=None,
+        help=(
+            "Number of students per optimizer step for --training-mode "
+            "student_recompute_minibatch. This avoids recomputing propagation "
+            "for every student in Junyi-scale runs."
+        ),
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument(
         "--weight-decay",
@@ -80,9 +90,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--training-mode",
-        choices=["full_batch", "recompute_minibatch"],
+        choices=["full_batch", "recompute_minibatch", "student_recompute_minibatch"],
         default="full_batch",
-        help="Training loop semantics. full_batch preserves the current mainline; recompute_minibatch makes --batch-size effective.",
+        help=(
+            "Training loop semantics. full_batch preserves the current mainline; "
+            "recompute_minibatch makes --batch-size effective; "
+            "student_recompute_minibatch batches interactions by student IDs."
+        ),
     )
     parser.add_argument(
         "--checkpoint-selection-metric",
@@ -628,6 +642,7 @@ def main() -> None:
         model=model,
         epochs=args.epochs,
         batch_size=args.batch_size,
+        student_batch_size=args.student_batch_size,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         training_mode=args.training_mode,
@@ -652,8 +667,25 @@ def main() -> None:
         concept_evidence_prior_train_start_epoch=args.concept_evidence_prior_train_start_epoch,
         concept_evidence_prior_train_warmup_epochs=args.concept_evidence_prior_train_warmup_epochs,
     )
-    test_metrics = evaluate_model(bundle=test_bundle, model=model, device=resolved_device)
-    valid_metrics = evaluate_model(bundle=valid_bundle, model=model, device=resolved_device) if valid_bundle is not None else None
+    evaluation_student_batch_size = (
+        args.student_batch_size if args.training_mode == "student_recompute_minibatch" else None
+    )
+    test_metrics = evaluate_model(
+        bundle=test_bundle,
+        model=model,
+        device=resolved_device,
+        student_batch_size=evaluation_student_batch_size,
+    )
+    valid_metrics = (
+        evaluate_model(
+            bundle=valid_bundle,
+            model=model,
+            device=resolved_device,
+            student_batch_size=evaluation_student_batch_size,
+        )
+        if valid_bundle is not None
+        else None
+    )
     max_cuda_memory_allocated_gb = _max_cuda_memory_allocated_gb(resolved_device)
 
     output = {
@@ -674,6 +706,7 @@ def main() -> None:
         "dual_cdm_branch_bce_weight": args.dual_cdm_branch_bce_weight,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
+        "student_batch_size": args.student_batch_size,
         "learning_rate": args.learning_rate,
         "weight_decay": args.weight_decay,
         "training_mode": args.training_mode,
@@ -763,6 +796,7 @@ def main() -> None:
         "test_interactions": args.test_interactions or args.interactions,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
+        "student_batch_size": args.student_batch_size,
         "learning_rate": args.learning_rate,
         "weight_decay": args.weight_decay,
         "training_mode": args.training_mode,
