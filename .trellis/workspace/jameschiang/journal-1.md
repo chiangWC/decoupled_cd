@@ -483,3 +483,36 @@ Added student-subset propagation and student_recompute_minibatch training mode f
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: Record exp114 Junyi memcheck result
+
+**Date**: 2026-05-28
+**Task**: Record exp114 Junyi memcheck result
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Updated exp114 with the Junyi student-subset full-run validation, including nvidia-smi process-memory peak from the memcheck rerun and removing the misleading 5.69GB memory wording.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a6c5864` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
