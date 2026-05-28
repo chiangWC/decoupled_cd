@@ -2,20 +2,23 @@
 
 ## Status
 
-`candidate_not_promoted_in_current_head`, branch-BCE refinement over experiment 104.
+`heavy_full_batch_reference_for_exp110`, branch-BCE refinement over experiment 104.
 
 ## Verdict
 
 Refining experiment 104's dual-tower branch BCE from `0.10` to `0.18` improves the four-seed AUC mean while preserving the accepted pure-CDM/default-training constraints.
 
-Best configuration:
+Historical full-batch configuration:
 
 ```bash
 bash scripts/run_assist09_history_alignment_trial.sh \
   --dual-cdm-branch-bce-weight 0.18
 ```
 
-Current HEAD still keeps `scripts/run_assist09_history_alignment_trial.sh` at the experiment 104 default `0.10`. Use `0.18` only when explicitly testing or promoting experiment 106.
+Current HEAD now uses experiment 110 as the active default runner. Experiment
+110 inherits this `0.18` branch-BCE setting, but changes training to
+`recompute_minibatch`; this experiment remains the heavy full-batch refinement
+reference.
 
 Four-seed AUC is `0.778890/0.778552/0.778256/0.778618`, mean `0.778579`, population stdev `0.000226`, and mean ECE `0.034913`. This is higher and more stable than experiment 104's branch BCE `0.10` mean `0.778370` and stdev `0.000306`.
 
@@ -58,7 +61,10 @@ Aggregate comparison:
 
 ## Decision
 
-Record `dual_cdm_branch_bce_weight=0.18` as the strongest tested branch-BCE refinement candidate. Current HEAD does not promote it as the default for `scripts/run_assist09_history_alignment_trial.sh`.
+Record `dual_cdm_branch_bce_weight=0.18` as the strongest tested heavy
+full-batch branch-BCE refinement. It is not itself the current default runner;
+experiment 110 is the promoted default route that reuses this branch-BCE setting
+under recompute-minibatch training.
 
 Use `0.15` only as a high-peak reference if a future search explicitly optimizes peak AUC. Use `0.20` as a nearby mean-positive reference, but not as default because it weakens the seed2026 tail.
 

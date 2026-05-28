@@ -220,8 +220,8 @@ Report experiment 102 as an opt-in pure-CDM checkpoint-average evaluator and kee
 
 ### 1. Scope / Trigger
 
-- Trigger: `scripts/run_assist09_history_alignment_trial.sh` runs the current active single-run/single-checkpoint pure-CDM trial, experiment 104.
-- The runner layers experiment 104's dual CDM ensemble, branch BCE, late cognitive-alignment anneal, and train-only concept evidence prior on top of the official experiment 81 baseline script.
+- Trigger: `scripts/run_assist09_history_alignment_trial.sh` runs the current active single-run/single-checkpoint pure-CDM trial, experiment 110.
+- The runner layers experiment 110's low-memory dual CDM ensemble, branch BCE, recompute-minibatch training, late cognitive-alignment anneal, and train-only concept evidence prior on top of the official experiment 81 baseline script.
 - Historical probe runners for reliability weighting, output alignment, rank alignment, fusion/linear readouts, evidence-gate variants, and multiseed wrappers have been removed from the active CLI surface. Reproduce old experiments from their detail docs or git history instead of keeping runnable wrappers in `scripts/`.
 
 ### 2. Signatures
@@ -235,12 +235,13 @@ The runner accepts common `scripts/train.py` smoke/test overrides such as `--epo
 ### 3. Contracts
 
 - `scripts/run_assist09_baseline.sh` remains the official experiment 81 baseline runner.
-- `scripts/run_assist09_history_alignment_trial.sh` remains the current active trial runner and encodes experiment 104 by default.
-- `scripts/train.py` keeps CLI flags needed by the official baseline and experiment 104; rejected probe-only flags should not be reintroduced without a new task and updated ledger rationale.
-- Experiment 104 still uses `history_evidence_logit_prior_location=loss_only`; it must not add an inference-time output-logit sidecar, valid-trained combiner, or hybrid tabular features.
+- `scripts/run_assist09_history_alignment_trial.sh` remains the current active trial runner and encodes experiment 110 by default.
+- `scripts/train.py` keeps CLI flags needed by the official baseline and experiment 110; rejected probe-only flags should not be reintroduced without a new task and updated ledger rationale.
+- Experiment 110 still uses `history_evidence_logit_prior_location=loss_only`; it must not add an inference-time output-logit sidecar, valid-trained combiner, or hybrid tabular features.
 - Concept evidence prior uses `apply_mode=train_only` and starts at epoch 135 in the current runner.
-- Dual tower branch BCE uses `dual_cdm_branch_bce_weight=0.10`; the secondary tower concept dimension is 80.
-- Experiment 106 reports a branch-BCE `0.18` refinement, but current HEAD does not promote it into the runner contract unless that promotion is made explicitly.
+- Dual tower branch BCE uses `dual_cdm_branch_bce_weight=0.18`; the secondary tower concept dimension is 80.
+- Training mode is `recompute_minibatch` with `batch_size=65536` and `learning_rate=0.0003`.
+- Experiment 104 remains the previous heavy full-batch dual-tower reference (`branchBCE=0.10`), and experiment 106 remains the heavy full-batch `branchBCE=0.18` refinement that experiment 110 builds on.
 
 ### 4. Validation & Error Matrix
 
@@ -254,19 +255,20 @@ The runner accepts common `scripts/train.py` smoke/test overrides such as `--epo
 
 ### 5. Good/Base/Bad Cases
 
-- Good: compare a new pure-CDM single-checkpoint idea against the current active runner, experiment 104's four-seed mean `0.778370`, unless the task explicitly adopts experiment 106 as the new baseline.
-- Good: use `scripts/run_assist09_baseline.sh` for exp81 baseline checks and `scripts/run_assist09_history_alignment_trial.sh` for exp104 trial checks.
+- Good: compare a new pure-CDM single-checkpoint idea against the current active runner, experiment 110's four-seed mean `0.778321`.
+- Good: use `scripts/run_assist09_baseline.sh` for exp81 baseline checks and `scripts/run_assist09_history_alignment_trial.sh` for exp110 trial checks.
 - Base: exp81 baseline runner.
 - Bad: reporting experiment 95/100/103 historical runner behavior as the current trial after this cleanup.
 - Bad: reintroducing removed probe-only runner scripts or train CLI flags because an old detail doc mentions them.
-- Bad: changing `scripts/run_assist09_baseline.sh` to experiment 104 or 106; baseline and trial remain separate.
+- Bad: changing `scripts/run_assist09_baseline.sh` to experiment 104, 106, or 110; baseline and trial remain separate.
+- Bad: reporting exp111's `c_prior_start001` single-seed near-tie as the current default; exp110 baseline remains the default.
 
 ### 6. Tests Required
 
 - `python3 -m py_compile scripts/train.py`.
 - Shell syntax check for active runner scripts.
-- Remote smoke test for both baseline and exp104 runner after CLI or runner cleanup.
-- Remote full exp104 run when the user asks to verify current active trial metrics.
+- Remote smoke test for both baseline and exp110 runner after CLI or runner cleanup.
+- Remote full exp110 run when the user asks to verify current active trial metrics.
 
 ### 7. Wrong vs Correct
 
@@ -279,19 +281,19 @@ Recreate `run_assist09_history_output_alignment_trial.sh` for a quick old probe 
 Correct:
 
 ```text
-Keep the active script surface small: baseline runner plus exp104 trial runner.
+Keep the active script surface small: baseline runner plus exp110 trial runner.
 ```
 
 Wrong:
 
 ```text
-Treat checkpoint-average or hybrid stacker evaluator results as the default training runner.
+Treat checkpoint-average, hybrid stacker, or a single-seed exp111 ablation result as the default training runner.
 ```
 
 Correct:
 
 ```text
-Report those as evaluator/diagnostic routes and keep experiment 104 as the default single-run pure-CDM trial until an explicit promotion changes the runner contract.
+Report those as evaluator/diagnostic routes and keep experiment 110 as the default single-run pure-CDM trial until an explicit promotion changes the runner contract.
 ```
 
 ## Current CDM Model Surface Contract
@@ -299,13 +301,13 @@ Report those as evaluator/diagnostic routes and keep experiment 104 as the defau
 ### 1. Scope / Trigger
 
 - Trigger: changes touch `DecoupledCDM`, `DecoupledCDMEnsemble`, the retained evaluation loaders, or focused CDM unit tests.
-- Current HEAD is only required to preserve the official exp81 baseline path and the current exp104 pure-CDM trial path.
+- Current HEAD is only required to preserve the official exp81 baseline path and the current exp110 pure-CDM trial path.
 - Constructor knobs and helper branches that no longer have an active `scripts/train.py` CLI or runner are not part of the supported surface.
 
 ### 2. Contracts
 
 - Keep baseline model paths: graph propagation, high-concept adapter, pairwise history interaction adapter, GS difficulty adapter, interpretable readout expert adapter, student-conditioned UKC readout residual, and concept evidence readout residual.
-- Keep exp104 model paths: dual CDM ensemble, equal-weight tower averaging, branch BCE supervision, concept evidence prior residual, history evidence logit prior residual with `loss_only`, and cognitive alignment support.
+- Keep exp110 model/training paths: dual CDM ensemble, equal-weight tower averaging, branch BCE supervision, concept evidence prior residual, history evidence logit prior residual with `loss_only`, cognitive alignment support, and `recompute_minibatch` training.
 - `DecoupledCDMEnsemble` uses a fixed equal-weight average across towers; there is no active `secondary_weight` runtime knob.
 - Removed probe-only model routes should stay out of active code and active tests unless a new task explicitly restores them with updated docs and runner semantics.
 

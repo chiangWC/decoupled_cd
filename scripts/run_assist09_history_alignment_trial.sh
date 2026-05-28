@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-OUTPUT_DEFAULT="results/pure_cdm_default_promotion/seed${SEED:-2024}_exp104_dual64x80_branchbce010_300ep.json"
+OUTPUT_DEFAULT="results/pure_cdm_default_promotion/seed${SEED:-2024}_exp110_dual64x80_branchbce018_recompute65536_lr3e4_300ep.json"
 
 OUTPUT="${OUTPUT:-${OUTPUT_DEFAULT}}" \
   bash "${SCRIPT_DIR}/run_assist09_baseline.sh" \
@@ -32,5 +32,8 @@ OUTPUT="${OUTPUT:-${OUTPUT_DEFAULT}}" \
     --concept-evidence-prior-train-start-epoch 135 \
     --dual-cdm-ensemble \
     --dual-cdm-secondary-concept-dim 80 \
-    --dual-cdm-branch-bce-weight 0.10 \
+    --dual-cdm-branch-bce-weight 0.18 \
+    --training-mode recompute_minibatch \
+    --batch-size 65536 \
+    --learning-rate 0.0003 \
     "$@"

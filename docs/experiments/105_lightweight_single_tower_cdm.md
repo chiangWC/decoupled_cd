@@ -2,13 +2,13 @@
 
 ## Status
 
-`lightweight_single_tower_probe_rejected_as_exp104_replacement`, keep single64 as lightweight reference only.
+`lightweight_single_tower_probe_rejected`, keep single64 as lightweight reference only.
 
 ## Verdict
 
 The exp104 pre-dual single-tower base is already the best lightweight reference: seed2024 reaches `test_auc 0.778379` with `max_cuda_memory_allocated_gb 6.33`, and the historical four-seed AUC is `0.778379/0.776930/0.775065/0.776569`, mean `0.776736`.
 
-That satisfies the user's VRAM target, but it does not match exp104's four-seed mean `0.778370`. The new shared-branch single-tower probes and the `concept_dim=72` capacity probe both stay under `7GB`, but both reduce AUC. They should not replace exp104 as the default route.
+That satisfies the user's VRAM target, but it does not match exp104's four-seed mean `0.778370`, and it is weaker than the later exp110 default route. The new shared-branch single-tower probes and the `concept_dim=72` capacity probe both stay under `7GB`, but both reduce AUC. They should not replace exp110 as the default route.
 
 No non-pure-CDM strategy, validation-trained combiner, hybrid feature stacker, or multi-checkpoint average was used in this experiment.
 
@@ -50,11 +50,12 @@ Result files:
 - `results/pure_cdm_default_promotion/seed2024_single72_late170to230_eprior_trainonly_memtrack_300ep.json`
 - `results/pure_cdm_default_promotion/seed2026_single72_late170to230_eprior_trainonly_memtrack_300ep.json`
 
-## Comparison To Exp104
+## Comparison To Heavy And Low-Memory References
 
 | route | seeds | AUCs | mean AUC | max CUDA GB observed | decision |
 |---|---|---:|---:|---:|---|
-| exp104 dual CDM ensemble | 2024/2025/2026/2027 | `0.778773/0.778250/0.778508/0.777948` | 0.778370 | not remeasured here | current active trial |
+| exp104 dual CDM ensemble | 2024/2025/2026/2027 | `0.778773/0.778250/0.778508/0.777948` | 0.778370 | not remeasured here | historical heavy trial |
+| exp110 recompute-minibatch dual CDM | 2024/2025/2026/2027 | `0.778252/0.778263/0.777449/0.779321` | 0.778321 | 6.190541 | current active trial |
 | exp104 pre-dual single64 base | 2024/2025/2026/2027 | `0.778379/0.776930/0.775065/0.776569` | 0.776736 | 6.329924 on seed2024 | lightweight reference only |
 | shared-branch best single seed | 2024 | `0.776504` | n/a | 6.614818 | rejected |
 | single72 sampled seeds | 2024/2026 | `0.776216/0.775486` | 0.775851 | 6.833642 | rejected |
@@ -71,6 +72,6 @@ The `concept_dim=72` probe confirms that slightly larger single-tower capacity r
 
 ## Decision
 
-Do not replace experiment 104 with shared-branch single-tower or dim72 single-tower.
+Do not replace the current default route with shared-branch single-tower or dim72 single-tower.
 
-Keep the exp104 pre-dual single64 base as the lightweight reference route when memory is the first priority: it is clean, pure CDM, single checkpoint, and measured at `6.33GB` on seed2024. However, for the current `0.778+` default-training target, experiment 104 remains the stronger route because its four-seed mean is higher and much more stable.
+Keep the exp104 pre-dual single64 base as a lightweight reference: it is clean, pure CDM, single checkpoint, and measured at `6.33GB` on seed2024. However, for the current `0.778+` default-training target, experiment 110 is stronger because it keeps similar memory while restoring the four-seed mean above `0.778`.

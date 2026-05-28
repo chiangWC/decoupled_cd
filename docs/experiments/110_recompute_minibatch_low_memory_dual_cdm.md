@@ -2,25 +2,20 @@
 
 ## Status
 
-`low_memory_pure_cdm_signal_confirmed`
+`promoted_default_pure_cdm_trial`
 
 ## Verdict
 
 `recompute_minibatch` training with a large batch keeps the experiment 106
 heavy dual-CDM structure in the `~6GB` memory band while preserving almost all
-of the experiment 104/106 AUC.
+of the experiment 104/106 AUC. It is now promoted as the active default
+pure-CDM trial口径.
 
-Best candidate:
+Current default runner command:
 
 ```bash
 SEED=<seed> OUTPUT=results/pure_cdm_distillation/seed${SEED}_dual64x80_branchbce018_recompute65536_lr3e4_300ep.json \
-  bash scripts/run_assist09_history_alignment_trial.sh \
-    --dual-cdm-secondary-concept-dim 80 \
-    --dual-cdm-branch-bce-weight 0.18 \
-    --training-mode recompute_minibatch \
-    --batch-size 65536 \
-    --learning-rate 0.0003 \
-    --epochs 300
+  bash scripts/run_assist09_history_alignment_trial.sh --epochs 300
 ```
 
 Four-seed AUC is `0.778252/0.778263/0.777449/0.779321`, mean
@@ -135,9 +130,9 @@ All rows use:
 
 ## Decision
 
-- Record this as the current best `~7GB` pure-CDM training candidate.
-- Do not promote it as default yet: it nearly matches experiment 104 and saves
-  substantial memory, but it is still slightly below experiment 106 on mean AUC.
+- Promote this as the current default pure-CDM trial口径.
+- Keep the exact caveat: it nearly matches experiment 104 and saves substantial
+  memory, but it is still slightly below experiment 106 on mean AUC.
 - Prefer this route over experiment 109 when memory is the priority. Experiment
   109 is useful as a full-batch low-cost dual-tower boundary, but experiment 110
   has better mean AUC and lower peak memory.
@@ -146,5 +141,5 @@ All rows use:
     semantics stay near the 7GB target
   - `lr=4e-4/5e-4` around `batch=65536` if chasing AUC without losing the
     low-memory band
-  - optional runner wrapper only after deciding whether experiment 110 should
-    become a named low-memory runner
+  - `batch=131072` remains a higher-memory candidate from experiment 111, not
+    the default low-memory runner

@@ -2,7 +2,7 @@
 
 ## Status
 
-`single_checkpoint_0778_target_cleared`, current active pure-CDM trial runner in this HEAD.
+`single_checkpoint_0778_target_cleared`, historical heavy pure-CDM trial runner.
 
 ## Verdict
 
@@ -10,9 +10,10 @@ A single training run with a two-tower `DecoupledCDMEnsemble` plus branch-level 
 
 Best configuration:
 
-This configuration is encoded by default in
-`scripts/run_assist09_history_alignment_trial.sh`. The expanded command below
-is kept as the historical exact configuration record.
+This configuration used to be encoded by default in
+`scripts/run_assist09_history_alignment_trial.sh`. Experiment 110 is now the
+active default runner; the expanded command below is kept as the historical
+exact configuration record.
 
 ```bash
 bash scripts/run_assist09_history_alignment_trial.sh \
@@ -34,7 +35,7 @@ bash scripts/run_assist09_history_alignment_trial.sh \
 
 Four-seed AUC is `0.778773/0.778250/0.778508/0.777948`, mean `0.778370`, population stdev `0.000306`, and mean ECE `0.035412`.
 
-This is the first documented pure-CDM single-checkpoint route in this branch that reaches the `0.778` mean target. It remains below experiment 102's fixed checkpoint-average mean `0.778872`, but it satisfies the user's default-training constraint better because it is one training run and one checkpoint artifact.
+This is the first documented pure-CDM single-checkpoint route in this branch that reaches the `0.778` mean target. It remains below experiment 102's fixed checkpoint-average mean `0.778872`, but it satisfies the user's default-training constraint better because it is one training run and one checkpoint artifact. It is now superseded as the active default by experiment 110's low-memory recompute-minibatch route.
 
 ## Base
 

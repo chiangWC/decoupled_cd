@@ -9,12 +9,13 @@
 - 当前分支: `exp/trellis-trial`。
 - accepted `master` 模型主线: 实验 70，三 seed mean `test_auc = 0.765517`。
 - Trellis pseudo-mainline / baseline runner: 实验 81，`scripts/run_assist09_baseline.sh`，在实验 70 上加入 single-only concept-evidence readout。
-- 当前 pure-CDM trial runner: 实验 104，`scripts/run_assist09_history_alignment_trial.sh`。
-- 实验 106: 已记录的 branch-BCE `0.18` refinement 候选；当前 HEAD 未把它提升为 runner 默认。
+- 当前 pure-CDM trial runner / 默认实验口径: 实验 110，`scripts/run_assist09_history_alignment_trial.sh`。
+- 实验 104: 前一版 heavy dual-tower default-training 候选，`branchBCE=0.10`，四 seed mean `0.778370`，现作为历史对照和 exp110 的前序底座。
+- 实验 106: branch-BCE `0.18` refinement；它是 exp110 的直接结构起点，但 heavy full-batch 口径不再是默认 runner。
 - 实验 109: 新记录的低成本双塔边界候选；`dual64x32 + branchBCE=0.18` 四 seed mean `0.777674`、peak CUDA `8.85GB`，比 single64 稳定正向但低于 104/106，不是默认提升。
-- 实验 110: 当前最清晰的 `~7GB` 级 pure-CDM 信号；`dual64x80 + branchBCE=0.18 + recompute_minibatch batch=65536 lr=3e-4` 四 seed mean `0.778321`、peak CUDA `6.19GB`，几乎贴住实验 104 且显存低很多。
+- 实验 110: 当前默认 pure-CDM trial 口径；`dual64x80 + branchBCE=0.18 + recompute_minibatch batch=65536 lr=3e-4` 四 seed mean `0.778321`、peak CUDA `6.19GB`，几乎贴住实验 104 且显存低很多。
 - 当前 practical target: `test_auc >= 0.778`；`0.780` 仍是 desirable headroom。
-- 当前探索重点: 双塔路线已过线但显存约 `11.76GB`，后续优先找 `~7GB` 级别更稳定的 pure-CDM 信号或更高峰值；不要把 104 后的一串实验误读成默认主线连续 promote。
+- 当前探索重点: 以实验 110 这个 `~7GB` 默认 runner 为基准，继续找更稳定或更高峰值的 pure-CDM 机制；不要把 hybrid stacker、checkpoint average、或 exp111 的单 seed near-tie 当作默认训练主线。
 
 ## 当前 Trial 主线
 
@@ -24,32 +25,34 @@
 bash scripts/run_assist09_history_alignment_trial.sh
 ```
 
-该 runner 当前编码实验 104:
+该 runner 当前编码实验 110:
 
 - 底座: 实验 81 baseline runner。
 - 训练目标: 实验 95/103 系列的 `loss_only` history-evidence cognitive alignment，不加 output-logit sidecar。
-- 结构: 实验 104 双塔 `DecoupledCDMEnsemble`，primary `concept_dim=64`，secondary `concept_dim=80`。
-- branch BCE: `dual_cdm_branch_bce_weight=0.10`。
-- 四 seed AUC: `0.778773/0.778250/0.778508/0.777948`。
-- mean AUC: `0.778370`，stdev `0.000306`。
+- 结构: 实验 110 双塔 `DecoupledCDMEnsemble`，primary `concept_dim=64`，secondary `concept_dim=80`。
+- branch BCE: `dual_cdm_branch_bce_weight=0.18`。
+- 训练协议: `recompute_minibatch`，`batch_size=65536`，`learning_rate=0.0003`。
+- 四 seed AUC: `0.778252/0.778263/0.777449/0.779321`。
+- mean AUC: `0.778321`，stdev `0.000665`，peak CUDA `6.19GB`。
 - 约束: 单次训练、单 checkpoint、pure CDM；没有 fixed checkpoint average、valid-trained combiner、hybrid train-history tabular side channel。
 
-新的 pure-CDM single-checkpoint 想法默认应对比当前 active runner，也就是实验 104 mean `0.778370`。如果要把实验 106 作为新 baseline，需要先明确 promote runner/default contract。
+新的 pure-CDM single-checkpoint 想法默认应对比当前 active runner，也就是实验 110 mean `0.778321`。如果为了论文 ablation 做 seed2027 paired comparison，默认使用实验 110 `seed2027 baseline_reproduce`，AUC `0.7793212012`。
 
 ## 已记录但未提升为默认的候选
 
+- 实验 104 heavy dual-tower: `dual64x80 + branchBCE=0.10`，四 seed mean `0.778370`，peak CUDA 约 `11.76GB`；现为历史对照，不再是 default runner。
 - 实验 106 branch-BCE refinement: 在实验 104 双塔 `64x80` 底座上把 `dual_cdm_branch_bce_weight` 从 `0.10` 提到 `0.18`。
 - 实验 106 四 seed AUC: `0.778890/0.778552/0.778256/0.778618`，mean `0.778579`，stdev `0.000226`。
-- 这比实验 104 mean 高 `+0.000209`，但当前代码默认 runner/spec 仍保持实验 104；不要把实验 106 写成 active default，除非本轮任务明确要求 promote。
+- 这比实验 104 mean 高 `+0.000209`，但仍是 heavy full-batch 口径；实验 110 继承这个 branch-BCE 设置并通过 recompute minibatch 成为当前默认。
 - 实验 109 low-cost dual tower: `dual64x32 + branchBCE=0.18` 四 seed AUC `0.779241/0.776995/0.777735/0.776727`，mean `0.777674`，peak CUDA `8.85GB`。它比 exp105 single64 mean 高 `+0.000938` 且四 seed 全正，但低于 exp104/106；适合作为低成本候选，不是 0.778+ replacement。
-- 实验 110 low-memory recompute: `dual64x80 + branchBCE=0.18` 改用 `recompute_minibatch batch=65536 lr=3e-4`，四 seed AUC `0.778252/0.778263/0.777449/0.779321`，mean `0.778321`，peak CUDA `6.19GB`。它比 exp109 mean 高 `+0.000647`，只比 exp104 mean 低 `0.000049`，是当前最好的 `~7GB` 候选。
+- 实验 110 low-memory recompute: `dual64x80 + branchBCE=0.18` 改用 `recompute_minibatch batch=65536 lr=3e-4`，四 seed AUC `0.778252/0.778263/0.777449/0.779321`，mean `0.778321`，peak CUDA `6.19GB`。它比 exp109 mean 高 `+0.000647`，只比 exp104 mean 低 `0.000049`，已提升为当前默认 trial 口径。
 
 ## 为什么 104 后还有实验
 
 104 的问题不是 AUC 没过线，而是路线太重:
 
 - 104/106 双塔 `64x80` peak CUDA 约 `11.76GB`；实验 109 的 `64x32` 把 peak 降到约 `8.85GB`，但 mean 只有 `0.777674`；实验 110 保留 `64x80`，通过 `recompute_minibatch batch=65536 lr=3e-4` 把 peak 降到 `6.19GB`，mean `0.778321`。
-- 用户想让后续 Codex 继续找的是 `~7GB` 显存水平下更稳定的信号，或能给出更高峰值的新机制。
+- 用户已将默认口径切到实验 110；后续 Codex 继续找的是以 `~7GB` 默认 runner 为基准的更稳定信号，或能给出更高峰值的新机制。
 - 实验 105-108 因此主要是 low-VRAM / single-tower / shared-branch / schedule / trigger follow-up，不是默认 runner promotion 链。
 - 这些 follow-up 当前大多判负: single64 是轻量参考但四 seed mean 只有 `0.776736`；shared-branch、single72、dim64 output alignment、checkpoint smoothing、soft difficulty regularization、trigger threshold 收紧、cognitive focusing、validation `brier` checkpoint selection、teacher distillation 都没形成可替代 104 的稳定路线。实验 109 说明窄副塔比 shared-branch 更有效，但 `64x16` 才接近 `~8GB` 且 AUC 不稳，`64x32` 稳但仍是 `8.85GB`。实验 110 说明真正的显存瓶颈主要是 full-batch target activation；recompute minibatch 是目前最有效的低显存机制。
 
@@ -57,7 +60,7 @@ bash scripts/run_assist09_history_alignment_trial.sh
 
 ## 不是默认主线的高分路线
 
-- 实验 106 branch-BCE `0.18`: pure-CDM single-run refinement 候选；当前不是 HEAD runner 默认。
+- 实验 106 branch-BCE `0.18`: pure-CDM single-run refinement，是 exp110 的前序 heavy full-batch 结构起点；当前不是默认 runner。
 - 实验 99 hybrid stacker: 三 seed mean `0.786910`，是当前最高绝对 AUC 信号；但它是 valid-trained hybrid evaluator，不是默认 CDM runner。
 - 实验 102 checkpoint average: 四 seed mean `0.778872`，是 pure-CDM evaluator 上界；但它是 two-checkpoint inference evaluator，不是 single-run/default-training 答案。
 - 实验 105 single64: seed2024 `0.778379`、显存约 `6.33GB`；但历史四 seed mean `0.776736`，只作为轻量参考，不替代实验 104。
@@ -65,7 +68,7 @@ bash scripts/run_assist09_history_alignment_trial.sh
 ## 当前不要再混淆的路线
 
 - 不要把 `scripts/run_assist09_baseline.sh` 改成 trial runner；baseline 是实验 81。
-- 不要把实验 106 写成当前默认 runner，除非同时显式修改 runner/spec 并确认 promote 决策。
+- 不要把实验 104/106 写成当前默认 runner；当前默认 runner 是实验 110。
 - 不要把 hybrid stacker 或 checkpoint average 写成默认训练主线。
 - 不要把实验 76/78 deterministic evidence-prior 旧伪主线当作当前 trial 默认组件；它们已因 seed 退化回退。
 - 不要继续围绕实验 100/103 的 dim80 / output-alignment / smooth loss / reliability weighting 做局部参数小扫，除非有新的机制假设。
@@ -74,10 +77,9 @@ bash scripts/run_assist09_history_alignment_trial.sh
 
 ## 后续优先级
 
-- 若继续 heavy pure-CDM 论文路线: 从当前 active runner 实验 104 出发；如果采用实验 106，需要先确认 promote。
-- Heavy-route ablation: `64x64/64x80/80x80`、branch 单独 AUC、融合 AUC、branch BCE 邻域、`cognitive/guess/slip` 组件语义稳定性。
-- 若继续用户当前更关心的低显存路线: 以实验 105 single64 作为轻量参考，目标是 `~7GB` 下找到比 `0.776736` 四 seed mean 更稳定、且尽量接近或超过 104/106 的新机制。
-- 若继续实验 110: 先测 `batch=131072` smoke/full seed2026 看是否能更接近 full-batch 语义且仍在约 `7GB`；或围绕 `batch=65536` 扫 `lr=4e-4/5e-4`。不要优先回到普通 teacher distillation 或 `64x8`。
+- 若继续默认 pure-CDM 论文路线: 从当前 active runner 实验 110 出发。
+- Paper ablation: 默认使用实验 110 `seed2027 baseline_reproduce`；不要把 `c_prior_start001` 的 `+0.000055` single-seed near-tie 当作默认。
+- 若继续提升实验 110: 可测 `batch=131072` smoke/full seed2026 看是否能更接近 full-batch 语义且显存可接受；或围绕 `batch=65536` 扫 `lr=4e-4/5e-4`。不要优先回到普通 teacher distillation 或 `64x8`。
 - 若沿实验 109 继续低成本双塔: `64x32` 是 full-batch 稳定边界，`64x16` 是接近显存边界但 AUC 不稳的边界；在实验 110 后，这条路线优先级低于 recompute minibatch。
 - 不要继续围绕 105-108 已判负的小旋钮拉长实验链；下一步需要机制级假设，例如更轻的双视角共享、蒸馏/一致性训练、低成本表示交互，或更可靠的 checkpoint/validation 选择语义。
 - 若继续最高绝对 AUC: 从实验 99 hybrid stacker 出发，但必须明确标注为 hybrid evaluator / model-integration task。

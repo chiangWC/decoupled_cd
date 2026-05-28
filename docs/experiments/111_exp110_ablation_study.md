@@ -22,7 +22,7 @@ The strongest single-seed AUC in this full matrix is
 `0.7783169685`, essentially tied with the exp110 baseline and not a promoted
 route.
 
-Best low-memory candidate remains exp110 itself:
+The default low-memory route remains exp110 itself:
 
 ```text
 baseline_reproduce: mean AUC 0.7783213434, peak CUDA 6.190541GB
@@ -212,7 +212,7 @@ selection unless noted by the variant name.
 ## Decision
 
 - Keep exp110 (`batch=65536`, `lr=3e-4`, secondary dim `80`, branch BCE `0.18`)
-  as the best low-memory pure-CDM training candidate.
+  as the default low-memory pure-CDM training route.
 - Record `b_batch131072_lr3e4` as the best mean-AUC ablation candidate if a
   higher memory band is acceptable.
 - Do not promote `c_prior_start001` despite the strongest single-seed AUC,
