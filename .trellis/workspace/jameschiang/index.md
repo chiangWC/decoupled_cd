@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
-- **Last Active**: 2026-05-25
+- **Total Sessions**: 14
+- **Last Active**: 2026-05-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~451 | Active |
+| `journal-1.md` | ~485 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-05-28 | Optimize Junyi propagation runtime | `816fc8e`, `4dcd318` | `exp/trellis-trial` |
 | 13 | 2026-05-25 | Record exp114 cross-dataset runs | `e900a94` | `exp/trellis-trial` |
 | 12 | 2026-05-25 | exp110 coarse module ablation | `09a1823` | `exp/trellis-trial` |
 | 11 | 2026-05-24 | exp110 seed2027 component ablation | `76815ec` | `exp/trellis-trial` |

@@ -449,3 +449,37 @@ Recorded exp114 cross-dataset ASSIST17, NIPS34, and Junyi runs, including Junyi 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: Optimize Junyi propagation runtime
+
+**Date**: 2026-05-28
+**Task**: Optimize Junyi propagation runtime
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Added student-subset propagation and student_recompute_minibatch training mode for Junyi-scale runtime optimization; validated remote compile, unit tests, and Junyi smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `816fc8e` | (see git log) |
+| `4dcd318` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
