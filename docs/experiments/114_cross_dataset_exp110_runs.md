@@ -124,11 +124,50 @@ dataset default `16`. The run summary is the source of truth:
 
 ## Seed2024 Results
 
-| dataset | variant | test AUC | test ACC | RMSE | Brier | ECE | best val AUC | best epoch | peak CUDA GB | result JSON |
+| dataset | variant | test AUC | test ACC | RMSE | Brier | ECE | best val AUC | best epoch | run-summary CUDA GB | result JSON |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | ASSIST17 | exp110 `dual64x80` | 0.7799261764 | 0.7132497415 | 0.4345909466 | 0.1888692909 | 0.0091661134 | 0.7792912392 | 58 | 3.867387 | `results/exp110_cross_dataset/assist_17_seed2024_exp110.json` |
 | NIPS34 | exp110 `dual64x80` | 0.7847075505 | 0.7149568448 | 0.4329188996 | 0.1874187736 | 0.0172906271 | 0.7819392372 | 61 | 3.853576 | `results/exp110_cross_dataset/nips34_seed2024_exp110.json` |
 | Junyi | exp110-near `dual16x32` | 0.8213176536 | 0.7615823927 | 0.4043068619 | 0.1634640386 | 0.0312580187 | 0.8144277655 | 168 | 16.198913 | `results/junyi_memory_trials/junyi_seed2024_exp110_dual32x32_300ep.json` |
+
+## Junyi Student-Subset Validation
+
+After adding target-student subset propagation, Junyi was re-run with the same
+exp110-style feature stack and `dual16x32` capacity, but with
+`--training-mode student_recompute_minibatch --student-batch-size 2048`.
+This is not the original exp110 `recompute_minibatch` protocol; it is a
+runtime/training-mode optimization for datasets where dense
+`students x concepts x dim` propagation dominates.
+
+The optimized full Junyi run completed on `cuda:2` in `1084s` (`18m04s`),
+stopping at epoch `136` after best epoch `131`. A follow-up same-command
+memory-check rerun with per-second `nvidia-smi --query-compute-apps` sampling
+completed in `1152s` (`19m12s`) and reproduced the same metrics and best
+epoch. Each epoch used five student-batched optimizer steps. The run summary
+records
+`num_students=10000`, `num_exercises=706`, `num_concepts=706`,
+`concept_dim=16`, and `dual_cdm_secondary_concept_dim=32`.
+
+| dataset | variant | test AUC | test ACC | RMSE | Brier | ECE | best val AUC | best epoch | peak `nvidia-smi` process GiB | wall time | result JSON |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| Junyi | `dual16x32` + `student_recompute_minibatch`, student batch 2048 | 0.8245031558 | 0.7655935464 | 0.4011424020 | 0.1609152267 | 0.0145228535 | 0.8181139402 | 131 | 13.076172 | 18m04s original, 19m12s memcheck | `results/junyi_memory_trials/junyi_seed2024_student_recompute2048_dual16x32_300ep.json`; memcheck: `results/junyi_memory_trials/junyi_seed2024_student_recompute2048_dual16x32_300ep_memcheck.json` |
+
+Compared with the old Junyi `recompute_minibatch` record, wall-clock improved
+from about `5342s` (`1h29m`) to `1084s`, or about `4.9x` faster end-to-end.
+Rough per-epoch time improved from about `30.9s` to `8.0s`, about `3.9x`
+faster. The memcheck rerun measured a `nvidia-smi` process-memory peak of
+`13390 MiB` (`13.08 GiB`) for the optimized run. The old Junyi run did not
+collect this `nvidia-smi` peak, so the old run's process-memory peak is unknown
+unless the old mode is rerun with the same sampler. The optimized run also
+improved the recorded test metrics:
+test AUC `0.824503` versus `0.821318`, ACC `0.765594` versus `0.761582`,
+RMSE `0.401142` versus `0.404307`, Brier `0.160915` versus `0.163464`, and
+ECE `0.014523` versus `0.031258`.
+
+This follow-up does not change the ASSIST17 or NIPS34 exp114 records. Those
+datasets still report the original exp110 `dual64x80` + `recompute_minibatch`
+protocol. The student-subset mode is only recorded here as a practical Junyi
+path for future full-dataset experiments.
 
 ## Junyi Runtime Note
 
@@ -155,7 +194,10 @@ Follow-up optimization note:
 - The default `full_batch` and `recompute_minibatch` modes remain available for
   protocol comparisons. Treat `student_recompute_minibatch` as a runtime
   optimization/training-mode change and record it explicitly in any Junyi result
-  summary.
+  summary. The validated full-run setting was `--student-batch-size 2048`,
+  which reduced Junyi wall-clock from about `1h29m` to `18m04s`. A
+  same-command memcheck rerun measured `13.08 GiB` peak `nvidia-smi` process
+  memory.
 
 ## Junyi Memory Findings
 
@@ -205,7 +247,8 @@ much smaller tower configuration without model-level propagation chunking.
 - Treat Junyi full-run checks as long-running jobs: the successful reduced
   run took about `1h29m` on `cuda:1` and stopped at epoch `173` after best
   epoch `168`.
-- If Junyi becomes important, the next useful task is a model-side memory
-  optimization: build propagation only for the active student batch or chunk the
-  dense student-concept propagation path. CLI-only dimensionality reduction is
-  enough to run but changes the capacity question.
+- For future Junyi experiments, prefer the validated
+  `student_recompute_minibatch` mode when the question does not require an
+  old-mode runtime comparison. The seed2024 `dual16x32` follow-up ran in
+  `18m04s`; a same-command memcheck rerun measured `13.08 GiB` peak
+  `nvidia-smi` process memory; the run produced test AUC `0.824503`.
