@@ -46,12 +46,12 @@ evaluation, while preserving the current model semantics for existing runs.
 
 ## Acceptance Criteria
 
-- [ ] Unit tests prove subset propagation predictions match full propagation
+- [x] Unit tests prove subset propagation predictions match full propagation
       for the same target interactions.
-- [ ] Unit tests cover dual-tower ensemble subset forwarding if applicable.
-- [ ] Existing training-mode and CLI tests pass.
-- [ ] A small smoke command runs successfully after the change.
-- [ ] Documentation or experiment notes are updated if the runtime path changes
+- [x] Unit tests cover dual-tower ensemble subset forwarding if applicable.
+- [x] Existing training-mode and CLI tests pass.
+- [x] A small smoke command runs successfully after the change.
+- [x] Documentation or experiment notes are updated if the runtime path changes
       user-visible behavior.
 
 ## Definition of Done

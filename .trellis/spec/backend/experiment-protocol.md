@@ -315,6 +315,79 @@ Report those as evaluator/diagnostic routes and keep experiment 104 as the defau
 - Keep evaluation/model loading shims for rejected probes after the active CLI and runner surface has already dropped them.
 - Treat historical reproduction as a reason to preserve every retired branch in current HEAD.
 
+## Student-Subset Propagation Training Mode
+
+### 1. Scope / Trigger
+
+- Trigger: `scripts/train.py --training-mode student_recompute_minibatch`.
+- Purpose: runtime optimization for large student-concept grids such as Junyi,
+  where interaction minibatches repeatedly recompute dense all-student
+  propagation.
+
+### 2. Signatures
+
+```bash
+python scripts/train.py \
+  --training-mode student_recompute_minibatch \
+  --student-batch-size <positive-int> \
+  [normal train.py model/data flags]
+```
+
+### 3. Contracts
+
+- `student_recompute_minibatch` groups optimizer steps by student IDs, then
+  trains on all interactions belonging to the selected student chunk.
+- Model forward may use `use_student_subset=True` to compute propagation states
+  only for the target students in that step.
+- Default `full_batch` and `recompute_minibatch` contracts remain unchanged.
+- Result JSON and summary CSV must record `student_batch_size` whenever the
+  field exists, so this training mode is not confused with exp110's original
+  interaction-minibatch protocol.
+
+### 4. Validation & Error Matrix
+
+- `training_mode=student_recompute_minibatch` without
+  `--student-batch-size` -> `ValueError`.
+- `training_mode=student_recompute_minibatch` with `--batch-size` ->
+  `ValueError`.
+- Non-positive `--student-batch-size` -> `ValueError`.
+- `full_batch` with `--student-batch-size` -> `ValueError`.
+- `recompute_minibatch` with `--student-batch-size` -> `ValueError`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Junyi smoke or exploratory run records
+  `training_mode=student_recompute_minibatch` and `student_batch_size=N`.
+- Base: exp110 original ASSIST09 low-memory protocol remains
+  `training_mode=recompute_minibatch`, `batch_size=65536`.
+- Bad: reporting a `student_recompute_minibatch` run as if it were exp110's
+  original interaction-minibatch protocol.
+
+### 6. Tests Required
+
+- Unit test that subset propagation predictions match full propagation for the
+  same target interactions.
+- Unit test that dual-tower subset forwarding matches full forwarding.
+- Training-mode validation tests for required and incompatible flags.
+- Script-level smoke that writes a summary with `student_batch_size`.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```text
+Use student_recompute_minibatch for Junyi and omit the mode from the experiment
+record because the model architecture is unchanged.
+```
+
+Correct:
+
+```text
+Record student_recompute_minibatch as a training-mode/runtime optimization,
+including student_batch_size, and compare it separately from exp110's original
+recompute_minibatch protocol.
+```
+
 ---
 
 ## Experiment Design Rules
