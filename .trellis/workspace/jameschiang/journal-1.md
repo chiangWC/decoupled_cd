@@ -516,3 +516,36 @@ Updated exp114 with the Junyi student-subset full-run validation, including nvid
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Promote exp110 default reporting baseline
+
+**Date**: 2026-05-28
+**Task**: Promote exp110 default reporting baseline
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Promoted exp110 as the default pure-CDM experiment reporting baseline, updated runner defaults and experiment ledger docs, verified shell syntax, Python compilation, and experiment index JSONL, then synced a sanitized GitHub copy to chiangWC/decoupled_cd.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1d4d129` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

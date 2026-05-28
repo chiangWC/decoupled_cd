@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-05-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~518 | Active |
+| `journal-1.md` | ~551 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-05-28 | Promote exp110 default reporting baseline | `1d4d129` | `exp/trellis-trial` |
 | 15 | 2026-05-28 | Record exp114 Junyi memcheck result | `a6c5864` | `exp/trellis-trial` |
 | 14 | 2026-05-28 | Optimize Junyi propagation runtime | `816fc8e`, `4dcd318` | `exp/trellis-trial` |
 | 13 | 2026-05-25 | Record exp114 cross-dataset runs | `e900a94` | `exp/trellis-trial` |
