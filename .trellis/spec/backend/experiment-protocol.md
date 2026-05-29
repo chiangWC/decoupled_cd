@@ -216,6 +216,84 @@ Correct:
 Report experiment 102 as an opt-in pure-CDM checkpoint-average evaluator and keep the single-checkpoint default-training question separate.
 ```
 
+## History Hiding Stress Evaluator Contract
+
+### 1. Scope / Trigger
+
+- Trigger: `scripts/evaluate_history_hiding_stress.py` evaluates trained
+  checkpoints after masking student train-history interactions.
+- This is an evaluation-only robustness diagnostic. It must not retrain models,
+  change checkpoint weights, or alter runner defaults.
+
+### 2. Signatures
+
+```bash
+python scripts/evaluate_history_hiding_stress.py \
+  --dataset-name <name> \
+  --summary <summary.json> [--model-name <label>] \
+  [--summary <summary.json> --model-name <label> ...] \
+  --hide-ratios 0.2,0.4,0.6,0.8 \
+  --mask-seeds 11,13,17 \
+  --output <report.json>
+```
+
+### 3. Contracts
+
+- `--summary` paths must be training summary JSON files with
+  `best_checkpoint_path` and train/valid/test split paths.
+- The evaluator rebuilds student-side history tensors from a masked train
+  frame: student-exercise mask, TKC/UKC masks, response matrix, and
+  student-concept evidence.
+- By default, exercise-level evidence stays tied to the original train split
+  through `--keep-exercise-evidence`. This isolates incomplete student
+  observation history from global exercise-statistic perturbation.
+- `delta_auc = original_auc - hidden_auc`.
+- Each hide ratio should use multiple mask seeds when the result is used as an
+  experiment conclusion.
+
+### 4. Validation & Error Matrix
+
+- Empty `--hide-ratios` or `--mask-seeds` -> `ValueError`.
+- Hide ratios outside `(0, 1)` -> `ValueError`.
+- `--model-name` count not matching `--summary` count -> `ValueError`.
+- Legacy `concept_evidence_prior_apply_mode` values are normalized only when
+  concept evidence prior is disabled; unsupported enabled legacy modes ->
+  `ValueError`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: compare Exp81 and Exp110 checkpoints on the same split with the same
+  hide ratios and mask seeds, reporting both hidden AUC and delta AUC.
+- Base: unperturbed checkpoint evaluation from the same summary and split.
+- Bad: calling this a retrained robustness model or tuning hyperparameters on
+  the hidden-history evaluation.
+- Bad: hiding exercise evidence by default and interpreting the result as
+  student-history robustness.
+
+### 6. Tests Required
+
+- Unit test that interaction masking is deterministic for a fixed mask seed.
+- Unit test that masked bundles change student-side history tensors while
+  keeping exercise evidence unchanged by default.
+- Unit test for legacy disabled-prior summary normalization.
+- Remote `py_compile` and focused `unittest` before reporting results.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```text
+Report a lower delta AUC after also rebuilding exercise evidence from the
+masked history as evidence of student-history robustness.
+```
+
+Correct:
+
+```text
+Keep exercise evidence fixed by default and report the perturbation as
+student-side history hiding.
+```
+
 ## Current Pure-CDM Trial Runner Contract
 
 ### 1. Scope / Trigger

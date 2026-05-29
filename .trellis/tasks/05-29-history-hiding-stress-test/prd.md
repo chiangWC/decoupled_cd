@@ -68,17 +68,17 @@ holdout split and the default ASSIST09 ordered split.
 
 ## Acceptance Criteria
 
-- [ ] The evaluator script can run from summaries without retraining.
-- [ ] The evaluator masks only student-side train history by default; exercise
+- [x] The evaluator script can run from summaries without retraining.
+- [x] The evaluator masks only student-side train history by default; exercise
   evidence remains based on the original train split.
-- [ ] Both holdout and default ordered datasets are evaluated for seed2027.
-- [ ] Results include Exp81 baseline, Exp110 full, w/o cognitive alignment, and
+- [x] Both holdout and default ordered datasets are evaluated for seed2027.
+- [x] Results include Exp81 baseline, Exp110 full, w/o cognitive alignment, and
   w/o dual tower for both datasets where checkpoints exist.
-- [ ] Each hide ratio uses multiple mask seeds and reports mean/std delta AUC.
-- [ ] The report states whether Exp110 has smaller delta AUC and/or higher
+- [x] Each hide ratio uses multiple mask seeds and reports mean/std delta AUC.
+- [x] The report states whether Exp110 has smaller delta AUC and/or higher
   hidden AUC than Exp81 and ablations.
-- [ ] Remote artifacts are recorded with paths.
-- [ ] Local experiment ledger docs are updated.
+- [x] Remote artifacts are recorded with paths.
+- [x] Local experiment ledger docs are updated.
 
 ## Out Of Scope
 
