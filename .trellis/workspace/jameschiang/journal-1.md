@@ -617,3 +617,38 @@ Added a history-hiding stress evaluator, ran seed2027 evaluation perturbations o
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: Cross-dataset coverage and history stress
+
+**Date**: 2026-05-29
+**Task**: Cross-dataset coverage and history stress
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Extended Exp116/Exp117 to ASSIST17 and NIPS34 with reusable coverage evaluator, remote seed2024 training/evaluation artifacts, docs, and evaluator spec contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `08c3aeb` | (see git log) |
+| `fccac3d` | (see git log) |
+| `8cbd1e8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
