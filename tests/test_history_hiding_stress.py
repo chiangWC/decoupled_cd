@@ -6,10 +6,34 @@ import pandas as pd
 import torch
 
 from data import prepare_experiment_split_bundles
-from scripts.evaluate_history_hiding_stress import build_hidden_bundle, mask_train_history_interactions
+from scripts.evaluate_history_hiding_stress import (
+    build_hidden_bundle,
+    mask_train_history_interactions,
+    normalize_summary_for_current_loader,
+)
 
 
 class HistoryHidingStressTest(unittest.TestCase):
+    def test_normalize_summary_allows_legacy_disabled_concept_prior_mode(self) -> None:
+        summary = {
+            "concept_evidence_prior_residual": False,
+            "concept_evidence_prior_apply_mode": "cognitive",
+        }
+
+        normalized = normalize_summary_for_current_loader(summary)
+
+        self.assertEqual(normalized["concept_evidence_prior_apply_mode"], "all")
+        self.assertEqual(summary["concept_evidence_prior_apply_mode"], "cognitive")
+
+    def test_normalize_summary_rejects_legacy_enabled_concept_prior_mode(self) -> None:
+        summary = {
+            "concept_evidence_prior_residual": True,
+            "concept_evidence_prior_apply_mode": "cognitive",
+        }
+
+        with self.assertRaisesRegex(ValueError, "Unsupported concept_evidence_prior_apply_mode"):
+            normalize_summary_for_current_loader(summary)
+
     def test_mask_train_history_interactions_is_deterministic(self) -> None:
         train_frame = pd.DataFrame(
             [

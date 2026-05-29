@@ -108,6 +108,19 @@ def load_summary(path: str) -> dict[str, Any]:
         return json.load(handle)
 
 
+def normalize_summary_for_current_loader(summary: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(summary)
+    apply_mode = str(normalized.get("concept_evidence_prior_apply_mode", "all"))
+    if apply_mode not in {"all", "eval_only", "train_only"}:
+        if bool(normalized.get("concept_evidence_prior_residual", False)):
+            raise ValueError(
+                "Unsupported concept_evidence_prior_apply_mode in an enabled concept-prior summary: "
+                f"{apply_mode}"
+            )
+        normalized["concept_evidence_prior_apply_mode"] = "all"
+    return normalized
+
+
 def prepare_bundles(summary: dict[str, Any]) -> dict[str, Any]:
     return prepare_experiment_split_bundles(
         train_interactions_path=summary["train_interactions"],
@@ -233,7 +246,7 @@ def main() -> None:
 
     rows: list[dict[str, Any]] = []
     for summary_path, model_name in zip(summary_paths, model_names, strict=True):
-        summary = load_summary(summary_path)
+        summary = normalize_summary_for_current_loader(load_summary(summary_path))
         bundles = prepare_bundles(summary)
         target_bundle = bundles[args.split]
         model = load_model(
