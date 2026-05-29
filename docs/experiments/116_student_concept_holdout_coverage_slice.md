@@ -31,7 +31,10 @@ UKC-heavy stress split`, not to the default random interaction split.
 
 The same seed2024 holdout protocol was extended to ASSIST17 and NIPS34. Both
 datasets reproduce the core pattern: low-coverage interactions are harder, and
-Exp110 improves low-coverage AUC while reducing the coverage gap.
+Exp110 improves low-coverage AUC while reducing the coverage gap. Junyi was
+also added as a reduced-capacity supplement; its generated holdout split is a
+pure zero-coverage stress set, so it supports low-coverage absolute-performance
+comparison but not a full-vs-low coverage-gap comparison.
 
 ## Split
 
@@ -181,6 +184,7 @@ Remote source/split roots:
 ```text
 /home/xph/jwc/research/local_data/cross_dataset_exp116_117/assist_17_holdout_seed2024
 /home/xph/jwc/research/local_data/cross_dataset_exp116_117/nips34_holdout_seed2024
+/home/xph/jwc/research/local_data/cross_dataset_exp116_117/junyi_holdout_seed2024
 ```
 
 Remote result directory:
@@ -195,6 +199,7 @@ Split summaries:
 |---|---:|---:|---:|---:|---:|---:|
 | ASSIST17 | 271713 | 39527 | 79041 | 840 | 43213 | 35828 |
 | NIPS34 | 962172 | 140160 | 280395 | 2444 | 143041 | 134849 |
+| Junyi reduced-capacity | 247235 | 35913 | 70687 | 2240 | 70687 | 0 |
 
 Coverage-slice artifacts:
 
@@ -204,6 +209,7 @@ Coverage-slice artifacts:
 - `nips34_holdout_seed2024_coverage_report.json`
 - `nips34_holdout_seed2024_coverage_report_summary.csv`
 - `nips34_holdout_seed2024_coverage_report_slices.csv`
+- `junyi_holdout_seed2024_coverage_report.json`
 
 Seed2024 cross-dataset summary:
 
@@ -213,6 +219,26 @@ Seed2024 cross-dataset summary:
 | ASSIST17 | Exp110 full | 0.755751 | 33212 | 0.743160 | 30413 | 0.780608 | 0.037447 | 0.213228 | 0.097672 |
 | NIPS34 | Exp81 baseline | 0.755259 | 143041 | 0.746311 | 134849 | 0.773741 | 0.027429 | 0.204529 | 0.035942 |
 | NIPS34 | Exp110 full | 0.772583 | 143041 | 0.766900 | 134849 | 0.780103 | 0.013203 | 0.195253 | 0.025829 |
+
+Junyi is not included in the table above because the feasible run family is not
+the original Exp110 `dual64x80` configuration, and its holdout split has no
+full-coverage test rows. The comparable Junyi supplement uses
+student-recompute training with `concept_dim=16`; the Exp110-near row uses
+`dual16x32`.
+
+| dataset | model | overall AUC | zero/low count | zero/low AUC | full count | full AUC | coverage gap | low Brier | low ECE |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Junyi reduced-capacity | Exp81-style baseline (single16) | 0.815124 | 70687 | 0.815124 | 0 | n/a | n/a | 0.161928 | 0.021536 |
+| Junyi reduced-capacity | Exp110-near dual16x32 | 0.819972 | 70687 | 0.819972 | 0 | n/a | n/a | 0.159767 | 0.018256 |
+
+Junyi reduced-capacity delta, Exp110-near minus baseline:
+
+| metric | delta |
+|---|---:|
+| overall AUC | +0.004848 |
+| zero/low AUC | +0.004848 |
+| low Brier | -0.002162 |
+| low ECE | -0.003280 |
 
 Cross-dataset deltas, Exp110 full minus Exp81 baseline:
 
@@ -295,6 +321,9 @@ The fractional low bucket is now usable as a diagnostic (`446` rows instead of
 - ASSIST17 and NIPS34 seed2024 extensions reproduce the same direction with
   enough low/full support: Exp110 raises low-coverage AUC and narrows the
   coverage gap on both datasets.
+- Junyi reduced-capacity supplement also favors the Exp110-near dual16x32
+  model on its pure zero-coverage holdout test set, but it should be cited as
+  low-coverage stress evidence only, not coverage-gap evidence.
 - Seed2027 ablations suggest cognitive alignment and dual tower both help
   low-coverage AUC, while branch BCE is critical for avoiding collapse on this
   stress split.

@@ -32,7 +32,10 @@ higher hidden AUC and better Brier/ECE under hidden histories, but delta AUC is
 roughly tied on ASSIST17 and slightly worse at NIPS34 hide `80%`. The
 cross-dataset robustness claim should therefore emphasize original-split
 robustness plus better hidden-history absolute performance on holdout splits,
-not a universal lower-delta statement on every stress split.
+not a universal lower-delta statement on every stress split. Junyi was added as
+a reduced-capacity supplement; on both its original split and zero-coverage
+holdout split, Exp110-near `dual16x32` has higher hidden AUC and smaller
+delta AUC at every hide ratio than the single16 baseline.
 
 ## Design
 
@@ -170,6 +173,8 @@ Artifacts:
 - `nips34_holdout_seed2024_history_hiding_report.json`
 - `nips34_holdout_seed2024_history_hiding_report_summary.csv`
 - `nips34_holdout_seed2024_history_hiding_report_per_run.csv`
+- `junyi_original_seed2024_history_hiding_report.json`
+- `junyi_holdout_seed2024_history_hiding_report.json`
 
 Overall AUCs before hiding:
 
@@ -205,6 +210,58 @@ Cross-dataset read:
   NIPS34 hide `80%` hidden ECE improves from `0.046035` to `0.021949`, and
   hidden Brier improves from `0.213995` to `0.205920`.
 
+## Junyi Reduced-Capacity Supplement
+
+Junyi does not run the original Exp110 `dual64x80` configuration on the
+available 24GB GPU. These rows compare an Exp81-style `single16` baseline with
+the feasible Exp110-near `dual16x32` student-recompute family. They are
+therefore a Junyi robustness supplement, not a direct ASSIST17/NIPS34-equivalent
+Exp110 transfer.
+
+Training summaries:
+
+- `results/cross_dataset_exp116_117/junyi_original_seed2024_exp81_baseline_student_recompute2048.json`
+- `results/junyi_memory_trials/junyi_seed2024_student_recompute2048_dual16x32_300ep.json`
+- `results/cross_dataset_exp116_117/junyi_holdout_seed2024_exp81_baseline_student_recompute2048.json`
+- `results/cross_dataset_exp116_117/junyi_holdout_seed2024_exp110_dual16x32_student_recompute2048.json`
+
+Overall AUCs before hiding:
+
+| dataset | split | baseline AUC | Exp110-near AUC | delta |
+|---|---|---:|---:|---:|
+| Junyi reduced-capacity | original | 0.819085 | 0.824503 | +0.005418 |
+| Junyi reduced-capacity | zero-coverage holdout | 0.815124 | 0.819972 | +0.004848 |
+
+Original split:
+
+| model | hide | original AUC | hidden AUC | delta AUC | hidden Brier | hidden ECE |
+|---|---:|---:|---:|---:|---:|---:|
+| Exp81-style baseline (single16) | 0.2 | 0.819085 | 0.815059 | 0.004026 | 0.165939 | 0.031871 |
+| Exp81-style baseline (single16) | 0.4 | 0.819085 | 0.807594 | 0.011491 | 0.168860 | 0.032101 |
+| Exp81-style baseline (single16) | 0.6 | 0.819085 | 0.793961 | 0.025125 | 0.174556 | 0.033365 |
+| Exp81-style baseline (single16) | 0.8 | 0.819085 | 0.764977 | 0.054108 | 0.187405 | 0.048699 |
+| Exp110-near dual16x32 | 0.2 | 0.824503 | 0.821455 | 0.003048 | 0.162226 | 0.013810 |
+| Exp110-near dual16x32 | 0.4 | 0.824503 | 0.815909 | 0.008594 | 0.164565 | 0.010817 |
+| Exp110-near dual16x32 | 0.6 | 0.824503 | 0.806271 | 0.018233 | 0.168693 | 0.011837 |
+| Exp110-near dual16x32 | 0.8 | 0.824503 | 0.782792 | 0.041711 | 0.178663 | 0.023877 |
+
+Zero-coverage holdout split:
+
+| model | hide | original AUC | hidden AUC | delta AUC | hidden Brier | hidden ECE |
+|---|---:|---:|---:|---:|---:|---:|
+| Exp81-style baseline (single16) | 0.2 | 0.815124 | 0.810419 | 0.004705 | 0.163775 | 0.021022 |
+| Exp81-style baseline (single16) | 0.4 | 0.815124 | 0.802448 | 0.012676 | 0.166885 | 0.019981 |
+| Exp81-style baseline (single16) | 0.6 | 0.815124 | 0.788530 | 0.026594 | 0.172851 | 0.021691 |
+| Exp81-style baseline (single16) | 0.8 | 0.815124 | 0.757700 | 0.057425 | 0.187570 | 0.055921 |
+| Exp110-near dual16x32 | 0.2 | 0.819972 | 0.816698 | 0.003274 | 0.161138 | 0.016856 |
+| Exp110-near dual16x32 | 0.4 | 0.819972 | 0.811047 | 0.008925 | 0.163455 | 0.014771 |
+| Exp110-near dual16x32 | 0.6 | 0.819972 | 0.800934 | 0.019038 | 0.167750 | 0.014197 |
+| Exp110-near dual16x32 | 0.8 | 0.819972 | 0.776974 | 0.042998 | 0.177918 | 0.029197 |
+
+Junyi is the cleanest cross-dataset stress-test supplement for the delta-AUC
+robustness claim: the Exp110-near reduced-capacity model has smaller AUC drop
+at every hide ratio on both the original and zero-coverage holdout split.
+
 ## Interpretation
 
 - Exp110 full is consistently more robust than Exp81 under incomplete
@@ -223,4 +280,5 @@ Cross-dataset read:
 - Cross-dataset evidence supports the stress-test diagnostic, but the wording
   should be precise: Exp110 is consistently better under hidden histories in
   absolute AUC/error terms, while "smaller AUC drop" is clean on original
-  splits and mixed on holdout splits.
+  splits, mixed on ASSIST17/NIPS34 holdout splits, and clean again in the
+  Junyi reduced-capacity supplement.
