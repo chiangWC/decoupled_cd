@@ -549,3 +549,36 @@ Promoted exp110 as the default pure-CDM experiment reporting baseline, updated r
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: Coverage slice holdout validation
+
+**Date**: 2026-05-29
+**Task**: Coverage slice holdout validation
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Ran ASSIST09 coverage-slice diagnostics, expanded the student-concept holdout comparison to four seeds for Exp81 vs Exp110 full, and recorded experiment 115/116 ledger updates.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7077c34` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
