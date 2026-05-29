@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-05-29
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~584 | Active |
+| `journal-1.md` | ~619 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-05-29 | History hiding stress evaluation | `2f2e2f7`, `fb438a1`, `e2df711` | `exp/trellis-trial` |
 | 17 | 2026-05-29 | Coverage slice holdout validation | `7077c34` | `exp/trellis-trial` |
 | 16 | 2026-05-28 | Promote exp110 default reporting baseline | `1d4d129` | `exp/trellis-trial` |
 | 15 | 2026-05-28 | Record exp114 Junyi memcheck result | `a6c5864` | `exp/trellis-trial` |

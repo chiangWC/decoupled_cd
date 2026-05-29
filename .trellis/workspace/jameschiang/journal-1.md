@@ -582,3 +582,38 @@ Ran ASSIST09 coverage-slice diagnostics, expanded the student-concept holdout co
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: History hiding stress evaluation
+
+**Date**: 2026-05-29
+**Task**: History hiding stress evaluation
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Added a history-hiding stress evaluator, ran seed2027 evaluation perturbations on holdout and ordered ASSIST09 splits, and recorded experiment 117 plus evaluator contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2f2e2f7` | (see git log) |
+| `fb438a1` | (see git log) |
+| `e2df711` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
