@@ -294,6 +294,89 @@ Keep exercise evidence fixed by default and report the perturbation as
 student-side history hiding.
 ```
 
+## Coverage Slice Evaluator Contract
+
+### 1. Scope / Trigger
+
+- Trigger: `scripts/evaluate_coverage_slice.py` evaluates trained checkpoints
+  by target concept coverage against train history.
+- This is an evaluation-only diagnostic. It must not retrain models, change
+  checkpoint weights, or tune hyperparameters from slice metrics.
+
+### 2. Signatures
+
+```bash
+python scripts/evaluate_coverage_slice.py \
+  --dataset-name <name> \
+  --summary <summary.json> [--model-name <label>] \
+  [--summary <summary.json> --model-name <label> ...] \
+  --output <report.json> \
+  [--train-interactions <train.csv>] \
+  [--valid-interactions <valid.csv>] \
+  [--test-interactions <test.csv>] \
+  [--q-matrix <Q_matrix.csv>]
+```
+
+### 3. Contracts
+
+- `target_coverage = |Q_e ∩ Seen_s| / |Q_e|`, where `Q_e` comes from the
+  Q-matrix and `Seen_s` comes only from the train split.
+- `low_coverage` means `target_coverage < 0.5`, including `coverage == 0`.
+- `full_coverage` means `target_coverage == 1`.
+- `coverage_gap = full_coverage_auc - low_coverage_auc`.
+- The evaluator also reports original buckets: `zero`, `low`, `partial`,
+  `full`, and `no_concepts`.
+- Valid/test bundles must reuse train-history propagation inputs; target split
+  rows must not enter history tensors.
+- Split/Q-matrix overrides are allowed for moved datasets such as NIPS34, but
+  every summary in one command should refer to the same split when global
+  overrides are used.
+
+### 4. Validation & Error Matrix
+
+- Missing train/valid/test split path -> `ValueError`.
+- `--model-name` count not matching `--summary` count -> `ValueError`.
+- Missing Q-matrix path may be derived from split `exer_id,cpt_seq` pairs; this
+  is acceptable only when the model was trained with the same derived Q-matrix
+  semantics.
+- Missing checkpoint file -> standard checkpoint load failure.
+- Valid/test history containing target rows -> existing `_validate_history_visibility` `ValueError`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: compare Exp81 and Exp110 checkpoints trained on the same
+  student-concept holdout split and report low/full AUC, gap, low Brier, and
+  low ECE.
+- Base: original ordered split coverage diagnostic used only as a weak
+  diagnostic when low bucket support is small.
+- Bad: deriving `Seen_s` from valid/test rows or using target labels to define
+  coverage.
+- Bad: comparing summaries trained on different splits in one coverage table.
+
+### 6. Tests Required
+
+- Unit test that student seen concepts are built from train history only.
+- Unit test that exercise concept sets are read from Q-matrix rows.
+- Unit test for bucket edge behavior at `0`, `0.5`, and `1`.
+- Remote `py_compile` and focused `unittest` before reporting new evaluator
+  results.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```text
+Report `0 < coverage < 0.5` alone as low coverage when the primary low table
+actually uses `coverage < 0.5`.
+```
+
+Correct:
+
+```text
+State that low coverage includes `coverage == 0`, and keep the raw bucket table
+available for support-size diagnostics.
+```
+
 ## Current Pure-CDM Trial Runner Contract
 
 ### 1. Scope / Trigger
