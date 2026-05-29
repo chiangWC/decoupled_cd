@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from data import StepDataBundle, prepare_experiment_split_bundles
 from data.pipeline import build_history_tensors
 from models import DecoupledCDM, DecoupledCDMEnsemble
-from scripts.analyze_prediction_slices import load_model
+from scripts.analyze_prediction_slices import derive_q_matrix_from_splits_if_needed, load_model
 from trainers.engine import _bundle_tensors, _validate_history_visibility
 from utils import compute_metrics, resolve_device, write_json
 
@@ -36,6 +36,11 @@ def parse_args() -> argparse.Namespace:
         help="Display name for the matching --summary. Repeat the same number of times as --summary.",
     )
     parser.add_argument("--split", choices=["valid", "test"], default="test")
+    parser.add_argument("--train-interactions", default=None, help="Override train split path for every summary.")
+    parser.add_argument("--valid-interactions", default=None, help="Override valid split path for every summary.")
+    parser.add_argument("--test-interactions", default=None, help="Override test split path for every summary.")
+    parser.add_argument("--q-matrix", default=None, help="Override Q-matrix path for every summary.")
+    parser.add_argument("--concept-graph", default=None, help="Override concept graph path for every summary.")
     parser.add_argument("--hide-ratios", default="0.2,0.4,0.6,0.8")
     parser.add_argument("--mask-seeds", default="11,13,17")
     parser.add_argument(
@@ -121,7 +126,47 @@ def normalize_summary_for_current_loader(summary: dict[str, Any]) -> dict[str, A
     return normalized
 
 
-def prepare_bundles(summary: dict[str, Any]) -> dict[str, Any]:
+def resolve_split_paths(summary: dict[str, Any], args: argparse.Namespace) -> dict[str, str | None]:
+    train_path = args.train_interactions or summary.get("train_interactions")
+    valid_path = args.valid_interactions or summary.get("valid_interactions")
+    test_path = args.test_interactions or summary.get("test_interactions")
+    if not all([train_path, valid_path, test_path]):
+        raise ValueError("History hiding stress evaluation requires train/valid/test interaction paths.")
+
+    q_matrix_path = args.q_matrix or summary.get("q_matrix")
+    if q_matrix_path is not None and not Path(str(q_matrix_path)).exists():
+        q_matrix_path = None
+    q_matrix_path = derive_q_matrix_from_splits_if_needed(
+        str(train_path),
+        str(valid_path),
+        str(test_path),
+        None if q_matrix_path is None else str(q_matrix_path),
+    )
+
+    return {
+        "train_interactions": str(train_path),
+        "valid_interactions": str(valid_path),
+        "test_interactions": str(test_path),
+        "q_matrix": str(q_matrix_path),
+        "concept_graph": args.concept_graph or summary.get("concept_graph"),
+        "prerequisite_graph": summary.get("prerequisite_graph"),
+        "similarity_graph": summary.get("similarity_graph"),
+    }
+
+
+def prepare_bundles(summary: dict[str, Any], args: argparse.Namespace | None = None) -> dict[str, Any]:
+    if args is not None:
+        paths = resolve_split_paths(summary, args)
+        return prepare_experiment_split_bundles(
+            train_interactions_path=str(paths["train_interactions"]),
+            valid_interactions_path=str(paths["valid_interactions"]),
+            test_interactions_path=str(paths["test_interactions"]),
+            q_matrix_path=str(paths["q_matrix"]),
+            concept_graph_path=paths.get("concept_graph"),
+            prerequisite_graph_path=paths.get("prerequisite_graph"),
+            similarity_graph_path=paths.get("similarity_graph"),
+        )
+
     return prepare_experiment_split_bundles(
         train_interactions_path=summary["train_interactions"],
         valid_interactions_path=summary["valid_interactions"],
@@ -247,7 +292,7 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for summary_path, model_name in zip(summary_paths, model_names, strict=True):
         summary = normalize_summary_for_current_loader(load_summary(summary_path))
-        bundles = prepare_bundles(summary)
+        bundles = prepare_bundles(summary, args)
         target_bundle = bundles[args.split]
         model = load_model(
             summary=summary,
