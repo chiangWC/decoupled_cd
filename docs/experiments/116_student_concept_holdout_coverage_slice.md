@@ -2,7 +2,7 @@
 
 ## Status
 
-`multiseed_holdout_stress_slice_completed`
+`cross_dataset_holdout_stress_slice_completed`
 
 ## Verdict
 
@@ -28,6 +28,10 @@ Exp110 full full AUC delta vs Exp81    = +0.008317
 This is a better evidence shape for a paper claim than experiment 115. The
 strong claim should be tied to this split as a `student-concept holdout /
 UKC-heavy stress split`, not to the default random interaction split.
+
+The same seed2024 holdout protocol was extended to ASSIST17 and NIPS34. Both
+datasets reproduce the core pattern: low-coverage interactions are harder, and
+Exp110 improves low-coverage AUC while reducing the coverage gap.
 
 ## Split
 
@@ -170,6 +174,59 @@ coverage materially harder than full coverage, and Exp110 improves the
 low-coverage slice by roughly the same magnitude as its overall gain. Exp110
 also narrows the mean coverage gap and improves low-coverage Brier/ECE.
 
+## Cross-Dataset Seed2024 Extension
+
+Remote source/split roots:
+
+```text
+/home/xph/jwc/research/local_data/cross_dataset_exp116_117/assist_17_holdout_seed2024
+/home/xph/jwc/research/local_data/cross_dataset_exp116_117/nips34_holdout_seed2024
+```
+
+Remote result directory:
+
+```text
+results/cross_dataset_exp116_117/
+```
+
+Split summaries:
+
+| dataset | train rows | valid rows | test rows | strict-holdout students | test none_seen | test full_seen |
+|---|---:|---:|---:|---:|---:|---:|
+| ASSIST17 | 271713 | 39527 | 79041 | 840 | 43213 | 35828 |
+| NIPS34 | 962172 | 140160 | 280395 | 2444 | 143041 | 134849 |
+
+Coverage-slice artifacts:
+
+- `assist_17_holdout_seed2024_coverage_report.json`
+- `assist_17_holdout_seed2024_coverage_report_summary.csv`
+- `assist_17_holdout_seed2024_coverage_report_slices.csv`
+- `nips34_holdout_seed2024_coverage_report.json`
+- `nips34_holdout_seed2024_coverage_report_summary.csv`
+- `nips34_holdout_seed2024_coverage_report_slices.csv`
+
+Seed2024 cross-dataset summary:
+
+| dataset | model | overall AUC | low count | low AUC | full count | full AUC | coverage gap | low Brier | low ECE |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ASSIST17 | Exp81 baseline | 0.730791 | 33212 | 0.684796 | 30413 | 0.784395 | 0.099599 | 0.237931 | 0.105130 |
+| ASSIST17 | Exp110 full | 0.755751 | 33212 | 0.743160 | 30413 | 0.780608 | 0.037447 | 0.213228 | 0.097672 |
+| NIPS34 | Exp81 baseline | 0.755259 | 143041 | 0.746311 | 134849 | 0.773741 | 0.027429 | 0.204529 | 0.035942 |
+| NIPS34 | Exp110 full | 0.772583 | 143041 | 0.766900 | 134849 | 0.780103 | 0.013203 | 0.195253 | 0.025829 |
+
+Cross-dataset deltas, Exp110 full minus Exp81 baseline:
+
+| dataset | overall AUC delta | low AUC delta | full AUC delta | coverage gap delta | low Brier delta | low ECE delta |
+|---|---:|---:|---:|---:|---:|---:|
+| ASSIST17 | +0.024960 | +0.058364 | -0.003787 | -0.062151 | -0.024704 | -0.007458 |
+| NIPS34 | +0.017324 | +0.020589 | +0.006362 | -0.014227 | -0.009276 | -0.010113 |
+
+This is stronger than the ASSIST09 four-seed mean on the coverage-bias
+dimension. ASSIST17 in particular shows the desired story clearly: the baseline
+coverage gap is almost `0.10` AUC, while Exp110 cuts it to about `0.04` and
+raises low-coverage AUC by `+0.058`. NIPS34 shows the same direction with a
+smaller but still clean gap reduction.
+
 ## Seed2027 Ablation Metrics
 
 | model | overall AUC | ACC | Brier | ECE | best epoch |
@@ -235,6 +292,9 @@ The fractional low bucket is now usable as a diagnostic (`446` rows instead of
   coverage-bias story.
 - Across four seeds, it shows the desired pattern: low coverage is much harder
   than full coverage, and Exp110 improves the low-coverage slice over Exp81.
+- ASSIST17 and NIPS34 seed2024 extensions reproduce the same direction with
+  enough low/full support: Exp110 raises low-coverage AUC and narrows the
+  coverage gap on both datasets.
 - Seed2027 ablations suggest cognitive alignment and dual tower both help
   low-coverage AUC, while branch BCE is critical for avoiding collapse on this
   stress split.

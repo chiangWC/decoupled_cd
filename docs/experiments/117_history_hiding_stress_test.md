@@ -2,7 +2,7 @@
 
 ## Status
 
-`seed2027_two_split_history_hiding_completed`
+`cross_dataset_history_hiding_completed`
 
 ## Verdict
 
@@ -24,6 +24,15 @@ The component diagnostic is also useful: removing the dual tower makes the
 model substantially more fragile under hidden histories on both splits. On the
 holdout split at hide `80%`, `w/o dual tower` drops `0.051125` AUC, versus
 `0.036198` for Exp110 full.
+
+The seed2024 cross-dataset extension is more nuanced. On original ASSIST17 and
+NIPS34 splits, Exp110 again has higher hidden AUC and smaller delta AUC at all
+hide ratios. On the new student-concept holdout splits, Exp110 keeps a much
+higher hidden AUC and better Brier/ECE under hidden histories, but delta AUC is
+roughly tied on ASSIST17 and slightly worse at NIPS34 hide `80%`. The
+cross-dataset robustness claim should therefore emphasize original-split
+robustness plus better hidden-history absolute performance on holdout splits,
+not a universal lower-delta statement on every stress split.
 
 ## Design
 
@@ -52,6 +61,12 @@ Remote output directory:
 
 ```text
 results/history_hiding_exp117/
+```
+
+Cross-dataset output directory:
+
+```text
+results/cross_dataset_exp116_117/
 ```
 
 Artifacts:
@@ -83,6 +98,15 @@ python -m unittest tests.test_history_hiding_stress
 ```
 
 Passed remotely: 4 tests OK.
+
+The cross-dataset extension also verified:
+
+```bash
+python -m py_compile scripts/evaluate_coverage_slice.py scripts/evaluate_history_hiding_stress.py
+python -m unittest tests.test_coverage_slice tests.test_history_hiding_stress
+```
+
+Passed remotely: 9 tests OK.
 
 ## Holdout Split
 
@@ -130,6 +154,57 @@ Dataset: `data/assist_09_ordered`.
 | w/o dual tower | 0.6 | 0.775119 | 0.741053 (0.000618) | 0.034066 | 0.192899 | 0.060644 |
 | w/o dual tower | 0.8 | 0.775119 | 0.718406 (0.002391) | 0.056712 | 0.203722 | 0.075459 |
 
+## Cross-Dataset Seed2024 Extension
+
+Artifacts:
+
+- `assist_17_original_seed2024_history_hiding_report.json`
+- `assist_17_original_seed2024_history_hiding_report_summary.csv`
+- `assist_17_original_seed2024_history_hiding_report_per_run.csv`
+- `nips34_original_seed2024_history_hiding_report.json`
+- `nips34_original_seed2024_history_hiding_report_summary.csv`
+- `nips34_original_seed2024_history_hiding_report_per_run.csv`
+- `assist_17_holdout_seed2024_history_hiding_report.json`
+- `assist_17_holdout_seed2024_history_hiding_report_summary.csv`
+- `assist_17_holdout_seed2024_history_hiding_report_per_run.csv`
+- `nips34_holdout_seed2024_history_hiding_report.json`
+- `nips34_holdout_seed2024_history_hiding_report_summary.csv`
+- `nips34_holdout_seed2024_history_hiding_report_per_run.csv`
+
+Overall AUCs before hiding:
+
+| dataset | split | Exp81 AUC | Exp110 AUC | delta |
+|---|---|---:|---:|---:|
+| ASSIST17 | original | 0.777001 | 0.779926 | +0.002925 |
+| NIPS34 | original | 0.783783 | 0.784708 | +0.000924 |
+| ASSIST17 | holdout | 0.730791 | 0.755751 | +0.024960 |
+| NIPS34 | holdout | 0.755259 | 0.772583 | +0.017324 |
+
+Hide `80%` summary:
+
+| dataset | split | model | original AUC | hidden AUC | delta AUC | hidden Brier | hidden ECE |
+|---|---|---|---:|---:|---:|---:|---:|
+| ASSIST17 | original | Exp81 baseline | 0.777001 | 0.721476 | 0.055525 | 0.213374 | 0.050534 |
+| ASSIST17 | original | Exp110 full | 0.779926 | 0.732120 | 0.047807 | 0.207714 | 0.031026 |
+| NIPS34 | original | Exp81 baseline | 0.783783 | 0.750299 | 0.033484 | 0.205844 | 0.062779 |
+| NIPS34 | original | Exp110 full | 0.784708 | 0.754391 | 0.030317 | 0.202219 | 0.045086 |
+| ASSIST17 | holdout | Exp81 baseline | 0.730791 | 0.690722 | 0.040070 | 0.225770 | 0.066205 |
+| ASSIST17 | holdout | Exp110 full | 0.755751 | 0.715649 | 0.040103 | 0.215247 | 0.058250 |
+| NIPS34 | holdout | Exp81 baseline | 0.755259 | 0.722845 | 0.032415 | 0.213995 | 0.046035 |
+| NIPS34 | holdout | Exp110 full | 0.772583 | 0.739493 | 0.033091 | 0.205920 | 0.021949 |
+
+Cross-dataset read:
+
+- On original ASSIST17 and NIPS34 splits, Exp110 has smaller delta AUC at every
+  hide ratio and higher hidden AUC, matching the ASSIST09 pattern.
+- On holdout splits, Exp110's absolute hidden AUC remains much higher at every
+  hide ratio. The delta-AUC robustness criterion is mixed: ASSIST17 is tied
+  within about `0.00003` at hide `80%`, and NIPS34 is slightly worse by about
+  `0.00068` at hide `80%`.
+- Holdout calibration/error still favors Exp110 under hidden histories:
+  NIPS34 hide `80%` hidden ECE improves from `0.046035` to `0.021949`, and
+  hidden Brier improves from `0.213995` to `0.205920`.
+
 ## Interpretation
 
 - Exp110 full is consistently more robust than Exp81 under incomplete
@@ -145,3 +220,7 @@ Dataset: `data/assist_09_ordered`.
   paper diagnostic. If the paper needs a primary robustness table, expand
   Exp81 and Exp110 full to multiple training seeds; keep ablations as seed2027
   diagnostics unless component robustness becomes a central claim.
+- Cross-dataset evidence supports the stress-test diagnostic, but the wording
+  should be precise: Exp110 is consistently better under hidden histories in
+  absolute AUC/error terms, while "smaller AUC drop" is clean on original
+  splits and mixed on holdout splits.
