@@ -652,3 +652,36 @@ Extended Exp116/Exp117 to ASSIST17 and NIPS34 with reusable coverage evaluator, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: Junyi coverage and history stress supplement
+
+**Date**: 2026-05-29
+**Task**: Junyi coverage and history stress supplement
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Ran and recorded Junyi reduced-capacity Exp116/Exp117 supplements: generated holdout split, trained missing baseline/holdout models remotely, evaluated coverage slice and history hiding, and updated experiment docs/index with reduced-capacity caveats.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d466ee1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
