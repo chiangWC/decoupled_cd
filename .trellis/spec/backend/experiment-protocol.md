@@ -294,6 +294,89 @@ Keep exercise evidence fixed by default and report the perturbation as
 student-side history hiding.
 ```
 
+## Gate Diagnostic Evaluator Contract
+
+### 1. Scope / Trigger
+
+- Trigger: `scripts/evaluate_gate_diagnostic.py` evaluates trained checkpoints
+  by learned TKC/UKC student fusion gate behavior.
+- This is an evaluation-only interpretability diagnostic. It must not retrain
+  models, change checkpoint weights, or alter propagation semantics.
+
+### 2. Signatures
+
+```bash
+python scripts/evaluate_gate_diagnostic.py \
+  --dataset-name <name> \
+  --summary <summary.json> [--model-name <label>] \
+  [--summary <summary.json> --model-name <label> ...] \
+  --output <report.json> \
+  [--split valid|test] \
+  [--train-interactions <train.csv>] \
+  [--valid-interactions <valid.csv>] \
+  [--test-interactions <test.csv>] \
+  [--q-matrix <Q_matrix.csv>] \
+  [--student-coverage-bins 0,0.05,0.1,0.2,0.4,0.6,0.8,1.0]
+```
+
+### 3. Contracts
+
+- `tkc_weight` is the student-level scalar computed by
+  `sigmoid(student_fusion_gate([student_global_coverage, tkc_mean, ukc_mean]))`.
+- `student_global_coverage` is the direct gate coverage input from the train
+  history TKC mask.
+- `target_coverage` is an interaction-level diagnostic association, not a
+  direct gate input.
+- `effective_tkc_share` is
+  `w * ||tkc_mean|| / (w * ||tkc_mean|| + (1 - w) * ||ukc_mean||)`.
+- Dual-tower checkpoints must report primary, secondary, and mean tower rows.
+- Valid/test bundles must reuse train-history propagation inputs; target split
+  rows must not enter history tensors.
+
+### 4. Validation & Error Matrix
+
+- Missing train/valid/test split path -> `ValueError`.
+- `--model-name` count not matching `--summary` count -> `ValueError`.
+- Fewer than two student coverage bin edges -> `ValueError`.
+- Non-increasing student coverage bin edges -> `ValueError`.
+- Student coverage bin edges outside `[0, 1]` -> `ValueError`.
+- Missing checkpoint file -> standard checkpoint load failure.
+- Valid/test history containing target rows -> existing `_validate_history_visibility` `ValueError`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: report both direct student-global coverage correlations and
+  target-coverage bucket associations, with caveats when they disagree.
+- Base: a single checkpoint diagnostic with JSON plus bin and summary CSVs.
+- Bad: claiming target coverage directly controls the gate.
+- Bad: claiming the learned gate is monotone in student-global coverage when
+  the diagnostic shows otherwise.
+
+### 6. Tests Required
+
+- Unit tests for bin-edge parsing and formatting.
+- Unit tests for degenerate correlation handling.
+- Unit tests for binned row aggregation fields.
+- Model tests proving student-subset forward keeps `tkc_weight` aligned with
+  the corresponding full-forward student rows.
+- Remote `py_compile` and focused `unittest` before reporting results.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```text
+Plot target_coverage against tkc_weight and state that target coverage is a
+gate input.
+```
+
+Correct:
+
+```text
+Describe target_coverage as an interaction-level association and separately
+report the direct student-global coverage diagnostic.
+```
+
 ## Coverage Slice Evaluator Contract
 
 ### 1. Scope / Trigger
