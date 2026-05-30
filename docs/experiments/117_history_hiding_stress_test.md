@@ -25,6 +25,11 @@ model substantially more fragile under hidden histories on both splits. On the
 holdout split at hide `80%`, `w/o dual tower` drops `0.051125` AUC, versus
 `0.036198` for Exp110 full.
 
+The seed2027 `single96` capacity-control supplement does not erase that
+robustness gap. On the holdout split at hide `80%`, `single96` has hidden AUC
+`0.705737` and delta AUC `0.047521`, versus Exp110 full hidden AUC `0.717703`
+and delta AUC `0.036198`.
+
 The seed2024 cross-dataset extension is more nuanced. On original ASSIST17 and
 NIPS34 splits, Exp110 again has higher hidden AUC and smaller delta AUC at all
 hide ratios. On the new student-concept holdout splits, Exp110 keeps a much
@@ -262,6 +267,29 @@ Junyi is the cleanest cross-dataset stress-test supplement for the delta-AUC
 robustness claim: the Exp110-near reduced-capacity model has smaller AUC drop
 at every hide ratio on both the original and zero-coverage holdout split.
 
+## Seed2027 Capacity Control
+
+This is the history-hiding half of the seed2027 capacity-control supplement.
+The `single96` control keeps the Exp110 training protocol and cognitive
+alignment but removes the dual tower and branch BCE.
+
+Remote artifacts:
+
+- `results/paper_robustness_followup/seed2027_capacity_history_hiding_report.json`
+
+Holdout hide `80%` summary:
+
+| model | original AUC | hidden AUC | delta AUC | hidden Brier | hidden ECE |
+|---|---:|---:|---:|---:|---:|
+| Exp110 full | 0.753902 | 0.717703 | 0.036198 | 0.198436 | 0.061857 |
+| w/o dual tower | 0.754154 | 0.703029 | 0.051125 | 0.208222 | 0.078672 |
+| single96 capacity | 0.753259 | 0.705737 | 0.047521 | 0.207829 | 0.088843 |
+
+The result argues against a simple capacity explanation. `single96` nearly
+matches overall AUC, but under hide `80%` it is `-0.011966` hidden AUC behind
+Exp110 full and loses `+0.011323` more AUC. Its hidden ECE is also worse than
+both Exp110 full and the lower-dimensional w/o-dual baseline.
+
 ## Interpretation
 
 - Exp110 full is consistently more robust than Exp81 under incomplete
@@ -273,6 +301,9 @@ at every hide ratio on both the original and zero-coverage holdout split.
   it, although its delta-AUC curve is close to Exp110 full on the default
   ordered split. The robustness claim should therefore emphasize the full
   model first, then use the ablations as component diagnostics.
+- The seed2027 `single96` capacity control supports the dual-tower robustness
+  story: larger single-tower capacity does not recover hide80 hidden AUC,
+  delta AUC, or ECE on the holdout split.
 - Because this is evaluation-only seed2027 evidence, it is suitable as a small
   paper diagnostic. If the paper needs a primary robustness table, expand
   Exp81 and Exp110 full to multiple training seeds; keep ablations as seed2027

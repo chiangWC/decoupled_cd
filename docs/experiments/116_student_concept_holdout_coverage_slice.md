@@ -36,6 +36,12 @@ also added as a reduced-capacity supplement; its generated holdout split is a
 pure zero-coverage stress set, so it supports low-coverage absolute-performance
 comparison but not a full-vs-low coverage-gap comparison.
 
+The seed2027 capacity-control supplement also supports the dual-tower story.
+A larger single-tower `single96` control nearly matches the full model's
+overall AUC, but it does not match low-coverage behavior: low AUC drops to
+`0.722636` versus Exp110 full `0.733135`, and the coverage gap grows to
+`0.052841` versus `0.043443`.
+
 ## Split
 
 Generated on the remote host with:
@@ -312,6 +318,32 @@ this stress split.
 The fractional low bucket is now usable as a diagnostic (`446` rows instead of
 `15` under the random split), but it is still much smaller than `coverage=0`.
 
+## Seed2027 Capacity Control
+
+This staged seed2027 control checks whether Exp110's stress-split advantage is
+only a parameter-count effect. The control removes the dual tower and branch
+BCE, keeps the Exp110 cognitive-alignment and evidence/readout protocol, and
+raises the single tower to `concept_dim=96`.
+
+Remote artifacts:
+
+- `results/paper_robustness_followup/seed2027_exp110_single96_holdout.json`
+- `results/paper_robustness_followup/seed2027_capacity_coverage_report.json`
+- `results/paper_robustness_followup/seed2027_capacity_coverage_summary.csv`
+- `results/paper_robustness_followup/seed2027_capacity_coverage_slices.csv`
+
+| model | overall AUC | low count | low AUC | full count | full AUC | coverage gap | low Brier | low ECE |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Exp110 full | 0.753902 | 21467 | 0.733135 | 28645 | 0.776578 | 0.043443 | 0.189102 | 0.078979 |
+| w/o dual tower | 0.754154 | 21467 | 0.728613 | 28645 | 0.773960 | 0.045347 | 0.186720 | 0.052044 |
+| single96 capacity | 0.753259 | 21467 | 0.722636 | 28645 | 0.775477 | 0.052841 | 0.189765 | 0.062275 |
+
+The control is close on overall AUC but much weaker on the stress slice:
+`single96` is `-0.010499` low AUC behind Exp110 full and has a wider coverage
+gap. This is enough for the seed2027-first gate, so no `single128` or multi-seed
+capacity expansion is needed unless the paper needs a much stronger fairness
+control table.
+
 ## Conclusion
 
 - The student-concept holdout split is the right vehicle for the proposed
@@ -327,6 +359,9 @@ The fractional low bucket is now usable as a diagnostic (`446` rows instead of
 - Seed2027 ablations suggest cognitive alignment and dual tower both help
   low-coverage AUC, while branch BCE is critical for avoiding collapse on this
   stress split.
+- The seed2027 `single96` capacity control does not explain away the dual-tower
+  stress-split advantage: it is close on overall AUC but clearly worse on low
+  AUC and coverage gap.
 - If the paper needs component claims on the stress split, expand the three
   ablations beyond seed2027. The main Exp81-vs-Exp110 coverage-bias claim now
   has multi-seed support.
