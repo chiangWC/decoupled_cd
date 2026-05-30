@@ -16,9 +16,9 @@ on the remote execution host.
 
 ## Acceptance Criteria
 
-* [ ] Remote R or Rscript command is available.
-* [ ] Gate diagnostic plot artifacts are generated remotely.
-* [ ] Final response reports paths and whether installation was needed.
+* [x] Remote R or Rscript command is available.
+* [x] Gate diagnostic plot artifacts are generated remotely.
+* [x] Final response reports paths and whether installation was needed.
 
 ## Out Of Scope
 
