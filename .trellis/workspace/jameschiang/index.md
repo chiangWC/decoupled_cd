@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
+- **Total Sessions**: 22
 - **Last Active**: 2026-05-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~724 | Active |
+| `journal-1.md` | ~758 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-05-30 | Remote R gate diagnostic plotting | `bc25708`, `e9da59e` | `exp/trellis-trial` |
 | 21 | 2026-05-30 | TKC UKC gate diagnostic | `b40e6ff`, `205e131`, `25c7c64`, `2fa0e4b`, `c5468c5` | `exp/trellis-trial` |
 | 20 | 2026-05-29 | Junyi coverage and history stress supplement | `d466ee1` | `exp/trellis-trial` |
 | 19 | 2026-05-29 | Cross-dataset coverage and history stress | `08c3aeb`, `fccac3d`, `8cbd1e8` | `exp/trellis-trial` |

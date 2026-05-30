@@ -722,3 +722,37 @@ Added a gate diagnostic evaluator exposing tkc_weight, ran ASSIST09 ordered and 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: Remote R gate diagnostic plotting
+
+**Date**: 2026-05-30
+**Task**: Remote R gate diagnostic plotting
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Verified remote Rscript availability and generated PNG/PDF gate diagnostic figures from experiment 118 artifacts.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bc25708` | (see git log) |
+| `e9da59e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
