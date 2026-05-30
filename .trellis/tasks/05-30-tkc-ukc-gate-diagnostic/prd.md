@@ -59,13 +59,13 @@ coverage samples tend to rely more on UKC/graph-side state.
 
 ## Acceptance Criteria
 
-* [ ] `PropagationOutput` and `DecoupledForwardOutput` expose `tkc_weight`.
-* [ ] Existing model output consumers remain compatible.
-* [ ] Gate diagnostic script produces JSON and CSV artifacts remotely.
-* [ ] The report distinguishes direct student-coverage gate input from indirect
+* [x] `PropagationOutput` and `DecoupledForwardOutput` expose `tkc_weight`.
+* [x] Existing model output consumers remain compatible.
+* [x] Gate diagnostic script produces JSON and CSV artifacts remotely.
+* [x] The report distinguishes direct student-coverage gate input from indirect
   target-coverage association.
-* [ ] Remote tests pass for the new script and touched model output behavior.
-* [ ] Experiment documentation records artifact paths and the main conclusion.
+* [x] Remote tests pass for the new script and touched model output behavior.
+* [x] Experiment documentation records artifact paths and the main conclusion.
 
 ## Definition Of Done
 
