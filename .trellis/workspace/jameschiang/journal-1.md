@@ -685,3 +685,40 @@ Ran and recorded Junyi reduced-capacity Exp116/Exp117 supplements: generated hol
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: TKC UKC gate diagnostic
+
+**Date**: 2026-05-30
+**Task**: TKC UKC gate diagnostic
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Added a gate diagnostic evaluator exposing tkc_weight, ran ASSIST09 ordered and holdout diagnostics, documented mixed mechanism evidence, and recorded the evaluator contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b40e6ff` | (see git log) |
+| `205e131` | (see git log) |
+| `25c7c64` | (see git log) |
+| `2fa0e4b` | (see git log) |
+| `c5468c5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
