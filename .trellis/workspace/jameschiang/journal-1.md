@@ -790,3 +790,37 @@ Planned staged paper robustness follow-up, ran seed2027 single96 capacity contro
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: Remaining paper robustness experiments
+
+**Date**: 2026-05-30
+**Task**: Remaining paper robustness experiments
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Ran ASSIST09 holdout multiseed component ablations and Exp81-vs-Exp110 full history hiding, recorded stress-split component and hidden-history conclusions.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `be93a3b` | (see git log) |
+| `175d763` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
