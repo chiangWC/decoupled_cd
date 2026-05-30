@@ -756,3 +756,37 @@ Verified remote Rscript availability and generated PNG/PDF gate diagnostic figur
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: Exp110 capacity-control robustness follow-up
+
+**Date**: 2026-05-30
+**Task**: Exp110 capacity-control robustness follow-up
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Planned staged paper robustness follow-up, ran seed2027 single96 capacity control on ASSIST09 holdout, evaluated coverage slices and history hiding, recorded experiment 119 and updated experiment ledgers.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c8381fa` | (see git log) |
+| `12b9547` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
