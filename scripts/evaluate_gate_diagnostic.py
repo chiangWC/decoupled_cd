@@ -103,6 +103,13 @@ def _tower_items(model: DecoupledCDM | DecoupledCDMEnsemble) -> list[tuple[str, 
     return [("single", model)]
 
 
+def _masked_average(node_states: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    weights = mask.to(dtype=node_states.dtype).unsqueeze(-1)
+    total = (node_states * weights).sum(dim=1)
+    denom = weights.sum(dim=1).clamp(min=1.0)
+    return total / denom
+
+
 def _interaction_gate_frame(
     *,
     tower: DecoupledCDM,
@@ -129,11 +136,26 @@ def _interaction_gate_frame(
             student_concept_evidence=tensors["student_concept_evidence"],
             student_indices=unique_students,
         )
-        student_global_coverage = tensors["student_tkc_mask"].index_select(0, unique_students).mean(dim=1)
+        selected_tkc_mask = tensors["student_tkc_mask"].index_select(0, unique_students)
+        selected_ukc_mask = tensors["student_ukc_mask"].index_select(0, unique_students)
+        student_global_coverage = selected_tkc_mask.mean(dim=1)
+        tkc_mean = _masked_average(propagated.tkc_states, selected_tkc_mask)
+        ukc_mean = _masked_average(propagated.ukc_states, selected_ukc_mask)
+        tkc_contribution_norm = propagated.tkc_weight.squeeze(-1) * torch.linalg.vector_norm(tkc_mean, dim=1)
+        ukc_contribution_norm = (1.0 - propagated.tkc_weight.squeeze(-1)) * torch.linalg.vector_norm(
+            ukc_mean, dim=1
+        )
+        effective_tkc_share = tkc_contribution_norm / (
+            tkc_contribution_norm + ukc_contribution_norm
+        ).clamp_min(1e-12)
 
     frame = bundle.interactions.reset_index(drop=True).copy()
-    frame["student_global_coverage"] = student_global_coverage.detach().cpu()[inverse.detach().cpu()].numpy()
-    frame["tkc_weight"] = propagated.tkc_weight.squeeze(-1).detach().cpu()[inverse.detach().cpu()].numpy()
+    inverse_cpu = inverse.detach().cpu()
+    frame["student_global_coverage"] = student_global_coverage.detach().cpu()[inverse_cpu].numpy()
+    frame["tkc_weight"] = propagated.tkc_weight.squeeze(-1).detach().cpu()[inverse_cpu].numpy()
+    frame["tkc_contribution_norm"] = tkc_contribution_norm.detach().cpu()[inverse_cpu].numpy()
+    frame["ukc_contribution_norm"] = ukc_contribution_norm.detach().cpu()[inverse_cpu].numpy()
+    frame["effective_tkc_share"] = effective_tkc_share.detach().cpu()[inverse_cpu].numpy()
     return frame
 
 
@@ -142,6 +164,14 @@ def _add_mean_tower_frame(frames: list[pd.DataFrame]) -> pd.DataFrame | None:
         return None
     mean_frame = frames[0].copy()
     mean_frame["tkc_weight"] = (frames[0]["tkc_weight"].to_numpy() + frames[1]["tkc_weight"].to_numpy()) * 0.5
+    mean_frame["tkc_contribution_norm"] = (
+        frames[0]["tkc_contribution_norm"].to_numpy() + frames[1]["tkc_contribution_norm"].to_numpy()
+    ) * 0.5
+    mean_frame["ukc_contribution_norm"] = (
+        frames[0]["ukc_contribution_norm"].to_numpy() + frames[1]["ukc_contribution_norm"].to_numpy()
+    ) * 0.5
+    denom = mean_frame["tkc_contribution_norm"] + mean_frame["ukc_contribution_norm"]
+    mean_frame["effective_tkc_share"] = mean_frame["tkc_contribution_norm"] / denom.clip(lower=1e-12)
     return mean_frame
 
 
@@ -205,6 +235,9 @@ def _aggregate_grouped_rows(
                 "std_tkc_weight": float(tkc_weight.std(ddof=0)) if len(group) else None,
                 "min_tkc_weight": float(tkc_weight.min()),
                 "max_tkc_weight": float(tkc_weight.max()),
+                "mean_tkc_contribution_norm": float(group["tkc_contribution_norm"].mean()),
+                "mean_ukc_contribution_norm": float(group["ukc_contribution_norm"].mean()),
+                "mean_effective_tkc_share": float(group["effective_tkc_share"].mean()),
                 "mean_student_global_coverage": float(group["student_global_coverage"].mean()),
                 "mean_target_coverage": (
                     float(group["target_coverage"].mean()) if group["target_coverage"].notna().any() else None
@@ -228,6 +261,9 @@ def summary_row(
         "count": int(len(frame)),
         "mean_tkc_weight": float(frame["tkc_weight"].mean()),
         "std_tkc_weight": float(frame["tkc_weight"].std(ddof=0)),
+        "mean_tkc_contribution_norm": float(frame["tkc_contribution_norm"].mean()),
+        "mean_ukc_contribution_norm": float(frame["ukc_contribution_norm"].mean()),
+        "mean_effective_tkc_share": float(frame["effective_tkc_share"].mean()),
         "mean_student_global_coverage": float(frame["student_global_coverage"].mean()),
         "mean_target_coverage": (
             float(frame["target_coverage"].mean()) if frame["target_coverage"].notna().any() else None
@@ -236,6 +272,12 @@ def summary_row(
             frame["student_global_coverage"], frame["tkc_weight"]
         ),
         "corr_target_coverage_tkc_weight": _safe_corr(frame["target_coverage"], frame["tkc_weight"]),
+        "corr_student_global_coverage_effective_tkc_share": _safe_corr(
+            frame["student_global_coverage"], frame["effective_tkc_share"]
+        ),
+        "corr_target_coverage_effective_tkc_share": _safe_corr(
+            frame["target_coverage"], frame["effective_tkc_share"]
+        ),
     }
 
 
@@ -323,6 +365,9 @@ def main() -> None:
         "device": device,
         "gate_definition": (
             "student-level tkc_weight = sigmoid(student_fusion_gate([student_global_coverage, tkc_mean, ukc_mean]))"
+        ),
+        "effective_tkc_share_definition": (
+            "w*||tkc_mean|| / (w*||tkc_mean|| + (1-w)*||ukc_mean||), computed before readout"
         ),
         "target_coverage_note": "target_coverage is an interaction-level association, not a direct gate input.",
         "runs": run_metadata,

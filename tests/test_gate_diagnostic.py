@@ -30,6 +30,9 @@ class GateDiagnosticHelpersTest(unittest.TestCase):
                 "student_global_coverage": [0.5, 0.5, 0.5],
                 "target_coverage": [0.0, 0.5, 1.0],
                 "tkc_weight": [0.7, 0.7, 0.7],
+                "tkc_contribution_norm": [0.7, 0.7, 0.7],
+                "ukc_contribution_norm": [0.3, 0.3, 0.3],
+                "effective_tkc_share": [0.7, 0.7, 0.7],
             }
         )
 
@@ -45,6 +48,9 @@ class GateDiagnosticHelpersTest(unittest.TestCase):
                 "target_coverage": [0.0, 0.5, 1.0],
                 "coverage_bucket": ["zero", "partial", "full"],
                 "tkc_weight": [0.4, 0.6, 0.9],
+                "tkc_contribution_norm": [0.4, 0.6, 0.9],
+                "ukc_contribution_norm": [0.6, 0.4, 0.1],
+                "effective_tkc_share": [0.4, 0.6, 0.9],
             }
         )
 
@@ -61,6 +67,7 @@ class GateDiagnosticHelpersTest(unittest.TestCase):
         student_low = next(row for row in rows if row["axis"] == "student_global_coverage" and row["bin"] == "[0.00,0.50)")
         self.assertEqual(student_low["count"], 2)
         self.assertAlmostEqual(student_low["mean_tkc_weight"], 0.5)
+        self.assertAlmostEqual(student_low["mean_effective_tkc_share"], 0.5)
 
 
 if __name__ == "__main__":
