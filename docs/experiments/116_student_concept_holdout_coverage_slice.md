@@ -97,8 +97,9 @@ Test overlap from the split summary:
 ## Runs
 
 Primary multi-seed runs retrained Exp81 baseline and Exp110 full on the
-holdout split for seeds `2024`, `2025`, `2026`, and `2027`. Seed `2027` also
-includes the three Exp110 component ablations as a staged diagnostic.
+holdout split for seeds `2024`, `2025`, `2026`, and `2027`. Seed `2027`
+originally included the three Exp110 component ablations as a staged
+diagnostic; the ablations were later expanded to all four seeds.
 
 Outputs are on the remote host:
 
@@ -344,6 +345,54 @@ gap. This is enough for the seed2027-first gate, so no `single128` or multi-seed
 capacity expansion is needed unless the paper needs a much stronger fairness
 control table.
 
+## Four-Seed Component Ablation Extension
+
+The stress-split component ablations were expanded beyond seed2027 for the
+paper component claim. Missing seeds `2024`, `2025`, and `2026` were trained
+for all three ablations; seed2027 reuses the existing experiment 116 artifacts.
+
+Remote artifacts:
+
+- `results/paper_robustness_followup/seed{2024,2025,2026}_exp110_no_cog_align_holdout.json`
+- `results/paper_robustness_followup/seed{2024,2025,2026}_exp110_no_dual_tower_holdout.json`
+- `results/paper_robustness_followup/seed{2024,2025,2026}_exp110_no_branch_bce_holdout.json`
+- `results/paper_robustness_followup/assist09_holdout_multiseed_ablation_coverage_report.json`
+- `results/paper_robustness_followup/assist09_holdout_multiseed_ablation_coverage_summary.csv`
+- `results/paper_robustness_followup/assist09_holdout_multiseed_ablation_coverage_summary_by_seed.csv`
+
+Four-seed mean, population stdev in parentheses:
+
+| model | overall AUC | low AUC | full AUC | coverage gap | low Brier | low ECE |
+|---|---:|---:|---:|---:|---:|---:|
+| Exp110 full | 0.755054 (0.003375) | 0.733920 (0.001638) | 0.776789 (0.000520) | 0.042869 (0.001353) | 0.190867 (0.006540) | 0.081303 (0.034149) |
+| w/o cognitive alignment | 0.752972 (0.001524) | 0.731073 (0.003150) | 0.773524 (0.001695) | 0.042451 (0.002548) | 0.192802 (0.002986) | 0.090032 (0.014718) |
+| w/o dual tower | 0.753011 (0.000829) | 0.730243 (0.001721) | 0.773557 (0.001235) | 0.043314 (0.001351) | 0.189528 (0.002172) | 0.068045 (0.018956) |
+| w/o branch BCE | 0.688579 (0.110439) | 0.671777 (0.101100) | 0.704759 (0.119465) | 0.032983 (0.018448) | 0.208739 (0.027518) | 0.108776 (0.049172) |
+
+Mean deltas relative to Exp110 full:
+
+| ablation | overall AUC delta | low AUC delta | full AUC delta | low Brier delta | low ECE delta |
+|---|---:|---:|---:|---:|---:|
+| w/o cognitive alignment | -0.002082 | -0.002847 | -0.003265 | +0.001935 | +0.008729 |
+| w/o dual tower | -0.002043 | -0.003677 | -0.003232 | -0.001339 | -0.013258 |
+| w/o branch BCE | -0.066475 | -0.062143 | -0.072030 | +0.017872 | +0.027473 |
+
+Per-seed low AUC:
+
+| seed | full | w/o cognitive alignment | w/o dual tower | w/o branch BCE |
+|---:|---:|---:|---:|---:|
+| 2024 | 0.732680 | 0.732087 | 0.732896 | 0.729276 |
+| 2025 | 0.736739 | 0.733845 | 0.730635 | 0.732423 |
+| 2026 | 0.733127 | 0.732630 | 0.728827 | 0.728725 |
+| 2027 | 0.733135 | 0.725731 | 0.728613 | 0.496684 |
+
+The component story is now stronger for cognitive alignment and dual tower:
+both reduce mean overall, low, and full AUC when removed. The branch BCE result
+needs careful wording. Seeds 2024-2026 do not reproduce the near-random
+seed2027 collapse, but the four-seed distribution shows branch BCE removal can
+catastrophically destabilize this stress split. Treat branch BCE as a stability
+component, not as a uniformly large per-seed AUC contributor.
+
 ## Conclusion
 
 - The student-concept holdout split is the right vehicle for the proposed
@@ -359,9 +408,13 @@ control table.
 - Seed2027 ablations suggest cognitive alignment and dual tower both help
   low-coverage AUC, while branch BCE is critical for avoiding collapse on this
   stress split.
+- Four-seed ablation extension confirms that removing cognitive alignment or
+  the dual tower lowers mean low/full/overall AUC. Removing branch BCE is not a
+  uniform near-random failure across seeds, but it has a catastrophic seed2027
+  failure and a much worse four-seed mean, so it should be framed as a
+  stability component.
 - The seed2027 `single96` capacity control does not explain away the dual-tower
   stress-split advantage: it is close on overall AUC but clearly worse on low
   AUC and coverage gap.
-- If the paper needs component claims on the stress split, expand the three
-  ablations beyond seed2027. The main Exp81-vs-Exp110 coverage-bias claim now
-  has multi-seed support.
+- The main Exp81-vs-Exp110 coverage-bias claim and the core component
+  diagnostics now have multi-seed support on this stress split.

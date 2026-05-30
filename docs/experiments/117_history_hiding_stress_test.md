@@ -30,6 +30,12 @@ robustness gap. On the holdout split at hide `80%`, `single96` has hidden AUC
 `0.705737` and delta AUC `0.047521`, versus Exp110 full hidden AUC `0.717703`
 and delta AUC `0.036198`.
 
+The ASSIST09 holdout Exp81-vs-Exp110 full comparison was later expanded to the
+four available training seeds. The multi-seed result preserves the hidden-AUC
+and calibration story but changes the delta-AUC wording: Exp110 has higher
+hidden AUC and better hidden Brier/ECE at hide `80%`, while mean delta AUC is
+slightly larger than Exp81 on the holdout split.
+
 The seed2024 cross-dataset extension is more nuanced. On original ASSIST17 and
 NIPS34 splits, Exp110 again has higher hidden AUC and smaller delta AUC at all
 hide ratios. On the new student-concept holdout splits, Exp110 keeps a much
@@ -290,6 +296,46 @@ matches overall AUC, but under hide `80%` it is `-0.011966` hidden AUC behind
 Exp110 full and loses `+0.011323` more AUC. Its hidden ECE is also worse than
 both Exp110 full and the lower-dimensional w/o-dual baseline.
 
+## ASSIST09 Holdout Multi-Seed Full-Model Extension
+
+This extension evaluates existing Exp81 and Exp110 full holdout checkpoints for
+seeds `2024`, `2025`, `2026`, and `2027`. It is evaluation-only: no checkpoint
+weights are changed.
+
+Remote artifacts:
+
+- `results/paper_robustness_followup/assist09_holdout_multiseed_exp81_exp110_history_hiding_report.json`
+- `results/paper_robustness_followup/assist09_holdout_multiseed_exp81_exp110_history_hiding_report_summary.csv`
+- `results/paper_robustness_followup/assist09_holdout_multiseed_exp81_exp110_history_hiding_report_per_run.csv`
+- `results/paper_robustness_followup/assist09_holdout_multiseed_exp81_exp110_history_hiding_summary_by_seed.csv`
+
+Hide `80%`, mean over four training seeds after averaging mask seeds
+`11/13/17` within each training seed:
+
+| model | original AUC | hidden AUC | delta AUC | hidden Brier | hidden ECE |
+|---|---:|---:|---:|---:|---:|
+| Exp81 baseline | 0.744564 | 0.707375 | 0.037188 | 0.209758 | 0.100899 |
+| Exp110 full | 0.755054 | 0.716900 | 0.038154 | 0.199971 | 0.068623 |
+
+Per-seed hide `80%`:
+
+| seed | model | original AUC | hidden AUC | delta AUC | hidden Brier | hidden ECE |
+|---:|---|---:|---:|---:|---:|---:|
+| 2024 | Exp81 baseline | 0.737375 | 0.701052 | 0.036323 | 0.209043 | 0.091845 |
+| 2024 | Exp110 full | 0.750079 | 0.715422 | 0.034656 | 0.203649 | 0.089069 |
+| 2025 | Exp81 baseline | 0.748482 | 0.711554 | 0.036928 | 0.207808 | 0.096979 |
+| 2025 | Exp110 full | 0.757517 | 0.718734 | 0.038783 | 0.199817 | 0.070851 |
+| 2026 | Exp81 baseline | 0.745260 | 0.707710 | 0.037550 | 0.211107 | 0.105959 |
+| 2026 | Exp110 full | 0.758717 | 0.715740 | 0.042977 | 0.197981 | 0.052715 |
+| 2027 | Exp81 baseline | 0.747137 | 0.709184 | 0.037952 | 0.211076 | 0.108814 |
+| 2027 | Exp110 full | 0.753902 | 0.717703 | 0.036198 | 0.198436 | 0.061857 |
+
+The robust wording is: Exp110 is better under hidden histories in absolute
+performance and calibration on the holdout split. Do not claim the holdout
+multi-seed mean delta AUC is smaller; it is slightly larger (`0.038154` vs
+`0.037188`) because seeds 2025 and 2026 lose more AUC from their stronger
+original checkpoints.
+
 ## Interpretation
 
 - Exp110 full is consistently more robust than Exp81 under incomplete
@@ -304,10 +350,9 @@ both Exp110 full and the lower-dimensional w/o-dual baseline.
 - The seed2027 `single96` capacity control supports the dual-tower robustness
   story: larger single-tower capacity does not recover hide80 hidden AUC,
   delta AUC, or ECE on the holdout split.
-- Because this is evaluation-only seed2027 evidence, it is suitable as a small
-  paper diagnostic. If the paper needs a primary robustness table, expand
-  Exp81 and Exp110 full to multiple training seeds; keep ablations as seed2027
-  diagnostics unless component robustness becomes a central claim.
+- ASSIST09 holdout Exp81-vs-Exp110 full now has four-seed history-hiding
+  support. It supports higher hidden AUC and better hidden Brier/ECE for
+  Exp110, but not a smaller mean delta AUC on the holdout split.
 - Cross-dataset evidence supports the stress-test diagnostic, but the wording
   should be precise: Exp110 is consistently better under hidden histories in
   absolute AUC/error terms, while "smaller AUC drop" is clean on original
