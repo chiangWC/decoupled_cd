@@ -72,7 +72,7 @@ def parse_bin_edges(value: str) -> list[float]:
         raise ValueError("--student-coverage-bins must include at least two edges.")
     if edges[0] < 0.0 or edges[-1] > 1.0:
         raise ValueError("--student-coverage-bins edges must stay within [0, 1].")
-    for left, right in zip(edges, edges[1:], strict=True):
+    for left, right in zip(edges[:-1], edges[1:], strict=True):
         if right <= left:
             raise ValueError("--student-coverage-bins edges must be strictly increasing.")
     return edges
@@ -83,7 +83,7 @@ def format_coverage_bin(value: float, edges: list[float]) -> str:
         return "missing"
     if value < edges[0] or value > edges[-1]:
         return "out_of_range"
-    for index, (left, right) in enumerate(zip(edges, edges[1:], strict=True)):
+    for index, (left, right) in enumerate(zip(edges[:-1], edges[1:], strict=True)):
         if value < right or index == len(edges) - 2:
             close = "]" if index == len(edges) - 2 else ")"
             return f"[{left:.2f},{right:.2f}{close}"
