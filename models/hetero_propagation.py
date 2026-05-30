@@ -11,6 +11,7 @@ class PropagationOutput:
     tkc_states: torch.Tensor
     ukc_states: torch.Tensor
     student_state: torch.Tensor
+    tkc_weight: torch.Tensor
 
 
 class HeterogeneousGraphPropagation(nn.Module):
@@ -156,7 +157,12 @@ class HeterogeneousGraphPropagation(nn.Module):
         fusion_inputs = torch.cat([coverage, tkc_mean, ukc_mean], dim=-1)
         tkc_weight = torch.sigmoid(self.student_fusion_gate(fusion_inputs))
         student_state = tkc_weight * tkc_mean + (1.0 - tkc_weight) * ukc_mean
-        return PropagationOutput(tkc_states=tkc_states, ukc_states=ukc_states, student_state=student_state)
+        return PropagationOutput(
+            tkc_states=tkc_states,
+            ukc_states=ukc_states,
+            student_state=student_state,
+            tkc_weight=tkc_weight,
+        )
 
     def _fuse_dual_graph_messages(
         self,

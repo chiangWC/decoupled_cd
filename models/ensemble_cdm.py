@@ -48,6 +48,7 @@ class DecoupledCDMEnsemble(nn.Module):
             student_state=primary_output.student_state,
             tkc_states=primary_output.tkc_states,
             ukc_states=primary_output.ukc_states,
+            tkc_weight=primary_output.tkc_weight,
             concept_embeddings=primary_output.concept_embeddings,
             exercise_embeddings=primary_output.exercise_embeddings,
             cognitive_probs=cognitive_probs,

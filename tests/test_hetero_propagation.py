@@ -100,6 +100,29 @@ class StudentGatePriorInitializationTest(unittest.TestCase):
 
         self.assertAlmostEqual(propagation.student_fusion_gate[-1].bias.item(), _logit(0.75), places=6)
 
+    def test_forward_returns_student_tkc_weight(self) -> None:
+        propagation = HeterogeneousGraphPropagation(
+            concept_dim=2,
+            student_gate_prior_alpha=3.0,
+            student_gate_prior_beta=1.0,
+        )
+
+        output = propagation(
+            concept_embeddings=torch.eye(2, dtype=torch.float32),
+            exercise_embeddings=torch.ones(2, 2, dtype=torch.float32),
+            q_matrix=torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32),
+            concept_graph=torch.eye(2, dtype=torch.float32),
+            prerequisite_graph=None,
+            similarity_graph=None,
+            student_exercise_mask=torch.ones(2, 2, dtype=torch.float32),
+            response_matrix=torch.ones(2, 2, dtype=torch.float32),
+            student_tkc_mask=torch.tensor([[1.0, 0.0], [1.0, 1.0]], dtype=torch.float32),
+            student_ukc_mask=torch.tensor([[0.0, 1.0], [0.0, 0.0]], dtype=torch.float32),
+        )
+
+        self.assertEqual(tuple(output.tkc_weight.shape), (2, 1))
+        torch.testing.assert_close(output.tkc_weight, torch.full((2, 1), 0.75))
+
 
 if __name__ == "__main__":
     unittest.main()

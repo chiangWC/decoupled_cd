@@ -12,6 +12,7 @@ class DecoupledForwardOutput:
     student_state: torch.Tensor
     tkc_states: torch.Tensor
     ukc_states: torch.Tensor
+    tkc_weight: torch.Tensor
     concept_embeddings: torch.Tensor
     exercise_embeddings: torch.Tensor
     cognitive_probs: torch.Tensor
@@ -504,6 +505,7 @@ class DecoupledCDM(nn.Module):
             student_state=propagated.student_state,
             tkc_states=propagated.tkc_states,
             ukc_states=propagated.ukc_states,
+            tkc_weight=propagated.tkc_weight,
             concept_embeddings=concept_embeddings,
             exercise_embeddings=exercise_embeddings,
             cognitive_probs=cognitive_probs,

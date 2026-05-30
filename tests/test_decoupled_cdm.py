@@ -144,6 +144,8 @@ class DualTowerCDMEnsembleTest(unittest.TestCase):
         torch.testing.assert_close(subset_output.probs, full_output.probs)
         torch.testing.assert_close(subset_output.primary_probs, full_output.primary_probs)
         torch.testing.assert_close(subset_output.secondary_probs, full_output.secondary_probs)
+        unique_students = torch.unique(inputs["target_student_ids"], sorted=True)
+        torch.testing.assert_close(subset_output.tkc_weight, full_output.tkc_weight[unique_students])
 
 
 class StudentSubsetForwardTest(unittest.TestCase):
@@ -172,6 +174,8 @@ class StudentSubsetForwardTest(unittest.TestCase):
         torch.testing.assert_close(subset_output.cognitive_probs, full_output.cognitive_probs)
         torch.testing.assert_close(subset_output.guess_probs, full_output.guess_probs)
         torch.testing.assert_close(subset_output.slip_probs, full_output.slip_probs)
+        unique_students = torch.unique(inputs["target_student_ids"], sorted=True)
+        torch.testing.assert_close(subset_output.tkc_weight, full_output.tkc_weight[unique_students])
 
 
 class InterpretableReadoutExpertAdapterTest(unittest.TestCase):
