@@ -824,3 +824,36 @@ Ran ASSIST09 holdout multiseed component ablations and Exp81-vs-Exp110 full hist
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: Set up paper LaTeX repo
+
+**Date**: 2026-06-01
+**Task**: Set up paper LaTeX repo
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Installed user-local TinyTeX for remote Chinese LaTeX builds and initialized sibling paper repository at ../decoupled_cd_paper.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2cc5349` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

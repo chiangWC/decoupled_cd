@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
-- **Last Active**: 2026-05-30
+- **Total Sessions**: 25
+- **Last Active**: 2026-06-01
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~826 | Active |
+| `journal-1.md` | ~859 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-06-01 | Set up paper LaTeX repo | `2cc5349` | `exp/trellis-trial` |
 | 24 | 2026-05-30 | Remaining paper robustness experiments | `be93a3b`, `175d763` | `exp/trellis-trial` |
 | 23 | 2026-05-30 | Exp110 capacity-control robustness follow-up | `c8381fa`, `12b9547` | `exp/trellis-trial` |
 | 22 | 2026-05-30 | Remote R gate diagnostic plotting | `bc25708`, `e9da59e` | `exp/trellis-trial` |
