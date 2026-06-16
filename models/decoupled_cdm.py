@@ -65,6 +65,7 @@ class DecoupledCDM(nn.Module):
         num_concepts: int,
         concept_dim: int = 32,
         graph_mode: str = "single",
+        student_fusion_mode: str = "adaptive",
         student_gate_prior_alpha: float | None = None,
         student_gate_prior_beta: float | None = None,
         alpha: float | None = None,
@@ -264,6 +265,7 @@ class DecoupledCDM(nn.Module):
         self.propagation = HeterogeneousGraphPropagation(
             concept_dim=concept_dim,
             graph_mode=graph_mode,
+            student_fusion_mode=student_fusion_mode,
             student_gate_prior_alpha=student_gate_prior_alpha,
             student_gate_prior_beta=student_gate_prior_beta,
             alpha=alpha,

@@ -25,6 +25,7 @@ class HeterogeneousGraphPropagation(nn.Module):
         self,
         concept_dim: int,
         graph_mode: str = "single",
+        student_fusion_mode: str = "adaptive",
         student_gate_prior_alpha: float | None = None,
         student_gate_prior_beta: float | None = None,
         alpha: float | None = None,
@@ -33,7 +34,10 @@ class HeterogeneousGraphPropagation(nn.Module):
         super().__init__()
         if graph_mode not in {"single", "dual"}:
             raise ValueError(f"Unsupported graph_mode: {graph_mode}")
+        if student_fusion_mode not in {"adaptive", "tkc_only", "ukc_only", "mean"}:
+            raise ValueError(f"Unsupported student_fusion_mode: {student_fusion_mode}")
         self.graph_mode = graph_mode
+        self.student_fusion_mode = student_fusion_mode
         self.correct_exercise_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.incorrect_exercise_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
         self.tkc_concept_to_concept = nn.Linear(concept_dim, concept_dim, bias=False)
@@ -154,8 +158,11 @@ class HeterogeneousGraphPropagation(nn.Module):
         tkc_mean = _masked_average(tkc_states, student_tkc_mask)
         ukc_mean = _masked_average(ukc_states, student_ukc_mask)
         coverage = student_tkc_mask.to(dtype=tkc_mean.dtype).mean(dim=1, keepdim=True)
-        fusion_inputs = torch.cat([coverage, tkc_mean, ukc_mean], dim=-1)
-        tkc_weight = torch.sigmoid(self.student_fusion_gate(fusion_inputs))
+        tkc_weight = self._build_student_tkc_weight(
+            coverage=coverage,
+            tkc_mean=tkc_mean,
+            ukc_mean=ukc_mean,
+        )
         student_state = tkc_weight * tkc_mean + (1.0 - tkc_weight) * ukc_mean
         return PropagationOutput(
             tkc_states=tkc_states,
@@ -163,6 +170,22 @@ class HeterogeneousGraphPropagation(nn.Module):
             student_state=student_state,
             tkc_weight=tkc_weight,
         )
+
+    def _build_student_tkc_weight(
+        self,
+        *,
+        coverage: torch.Tensor,
+        tkc_mean: torch.Tensor,
+        ukc_mean: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.student_fusion_mode == "tkc_only":
+            return torch.ones_like(coverage)
+        if self.student_fusion_mode == "ukc_only":
+            return torch.zeros_like(coverage)
+        if self.student_fusion_mode == "mean":
+            return torch.full_like(coverage, 0.5)
+        fusion_inputs = torch.cat([coverage, tkc_mean, ukc_mean], dim=-1)
+        return torch.sigmoid(self.student_fusion_gate(fusion_inputs))
 
     def _fuse_dual_graph_messages(
         self,

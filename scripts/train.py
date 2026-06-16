@@ -150,6 +150,12 @@ def parse_args() -> argparse.Namespace:
         help="UKC prior used only to initialize the student fusion gate; training remains adaptive.",
     )
     parser.add_argument(
+        "--student-fusion-mode",
+        choices=["adaptive", "tkc_only", "ukc_only", "mean"],
+        default="adaptive",
+        help="Student-level TKC/UKC fusion mode. Use tkc_only/ukc_only/mean for direct ablations.",
+    )
+    parser.add_argument(
         "--alpha",
         dest="legacy_alpha",
         type=float,
@@ -585,6 +591,7 @@ def main() -> None:
         num_concepts=train_bundle.num_concepts,
         concept_dim=args.concept_dim,
         graph_mode=args.graph_mode,
+        student_fusion_mode=args.student_fusion_mode,
         student_gate_prior_alpha=args.student_gate_prior_alpha,
         student_gate_prior_beta=args.student_gate_prior_beta,
         gs_mode=args.gs_mode,
@@ -716,6 +723,7 @@ def main() -> None:
         "best_validation_score": result.best_validation_score,
         "gs_mode": args.gs_mode,
         "graph_mode": args.graph_mode,
+        "student_fusion_mode": args.student_fusion_mode,
         "student_gate_prior_alpha": args.student_gate_prior_alpha,
         "student_gate_prior_beta": args.student_gate_prior_beta,
         "high_concept_logit_adapter": args.high_concept_logit_adapter,
@@ -810,6 +818,7 @@ def main() -> None:
         "dual_cdm_branch_bce_weight": args.dual_cdm_branch_bce_weight,
         "gs_mode": args.gs_mode,
         "graph_mode": args.graph_mode,
+        "student_fusion_mode": args.student_fusion_mode,
         "student_gate_prior_alpha": args.student_gate_prior_alpha,
         "student_gate_prior_beta": args.student_gate_prior_beta,
         "high_concept_logit_adapter": args.high_concept_logit_adapter,

@@ -124,5 +124,41 @@ class StudentGatePriorInitializationTest(unittest.TestCase):
         torch.testing.assert_close(output.tkc_weight, torch.full((2, 1), 0.75))
 
 
+class StudentFusionModeTest(unittest.TestCase):
+    def _run_forward(self, mode: str):
+        propagation = HeterogeneousGraphPropagation(concept_dim=2, student_fusion_mode=mode)
+        return propagation(
+            concept_embeddings=torch.eye(2, dtype=torch.float32),
+            exercise_embeddings=torch.ones(2, 2, dtype=torch.float32),
+            q_matrix=torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32),
+            concept_graph=torch.eye(2, dtype=torch.float32),
+            prerequisite_graph=None,
+            similarity_graph=None,
+            student_exercise_mask=torch.ones(2, 2, dtype=torch.float32),
+            response_matrix=torch.ones(2, 2, dtype=torch.float32),
+            student_tkc_mask=torch.tensor([[1.0, 0.0], [1.0, 1.0]], dtype=torch.float32),
+            student_ukc_mask=torch.tensor([[0.0, 1.0], [0.0, 0.0]], dtype=torch.float32),
+        )
+
+    def test_tkc_only_uses_only_tkc_state(self) -> None:
+        output = self._run_forward("tkc_only")
+        expected_tkc_mean = output.tkc_states.sum(dim=1) / torch.tensor([[1.0], [2.0]], dtype=torch.float32)
+
+        torch.testing.assert_close(output.tkc_weight, torch.ones_like(output.tkc_weight))
+        torch.testing.assert_close(output.student_state, expected_tkc_mean)
+
+    def test_ukc_only_uses_only_ukc_state(self) -> None:
+        output = self._run_forward("ukc_only")
+        expected_ukc_mean = output.ukc_states.sum(dim=1) / torch.tensor([[1.0], [1.0]], dtype=torch.float32)
+
+        torch.testing.assert_close(output.tkc_weight, torch.zeros_like(output.tkc_weight))
+        torch.testing.assert_close(output.student_state, expected_ukc_mean)
+
+    def test_mean_uses_fixed_half_weight(self) -> None:
+        output = self._run_forward("mean")
+
+        torch.testing.assert_close(output.tkc_weight, torch.full_like(output.tkc_weight, 0.5))
+
+
 if __name__ == "__main__":
     unittest.main()

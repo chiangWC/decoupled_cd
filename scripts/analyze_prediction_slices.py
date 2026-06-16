@@ -79,6 +79,7 @@ def load_model(
         num_concepts=train_bundle.num_concepts,
         concept_dim=concept_dim,
         graph_mode=str(summary.get("graph_mode", "single")),
+        student_fusion_mode=str(summary.get("student_fusion_mode", "adaptive")),
         student_gate_prior_alpha=float(summary.get("student_gate_prior_alpha", 1.0)),
         student_gate_prior_beta=float(summary.get("student_gate_prior_beta", 1.0)),
         gs_mode=str(summary.get("gs_mode", "conditional")),
