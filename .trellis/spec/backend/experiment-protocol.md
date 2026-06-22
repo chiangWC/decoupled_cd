@@ -92,6 +92,79 @@ bash scripts/run_assist09_baseline.sh
 
 ---
 
+## PyEdmine CD Baseline Runner Contract
+
+### 1. Scope / Trigger
+
+- Trigger: `scripts/pyedmine_cd_baselines.py` prepares and schedules external
+  PyEdmine CD baselines for paper comparison tables.
+- This runner is an external-baseline orchestration utility, not the default
+  DecoupledCDM training path.
+
+### 2. Signatures
+
+```bash
+python scripts/pyedmine_cd_baselines.py \
+  --pyedmine-root <path> \
+  --work-dir <path> \
+  run --datasets <keys|all> --models <names|all> \
+  [--max-epoch N] [--max-parallel N] [--min-free-gb GB] \
+  [--train-batch-size N] [--evaluate-batch-size N] [--learning-rate LR] \
+  [--force] [--cpu] [--dry-run]
+```
+
+### 3. Contracts
+
+- `--train-batch-size`, `--evaluate-batch-size`, and `--learning-rate` are
+  optional PyEdmine passthroughs. Omitting them preserves PyEdmine script
+  defaults and the original baseline口径.
+- Job JSON output must record any non-default passthrough values so runtime
+  rescue runs are distinguishable from published default rows.
+- Dataset preparation must preserve the current train/valid/test CSV splits and
+  must not re-split data inside PyEdmine.
+
+### 4. Validation & Error Matrix
+
+- Unknown dataset key -> `ValueError`.
+- Unknown model name -> `ValueError`.
+- Missing prepared dataset in the manifest -> `ValueError`.
+- PyEdmine train/evaluate failure -> nonzero job status and the full log path in
+  `status.jsonl`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Run RCD with explicit large batch and learning-rate rescue settings, and
+  report it as a runtime probe or refreshed baseline口径.
+- Base: Omit passthroughs to reproduce the original PyEdmine defaults.
+- Bad: Mix a learning-rate rescue run into the published default table without
+  updating the table口径 and artifact paths.
+
+### 6. Tests Required
+
+- For CLI-only passthrough changes, run `py_compile` and verify both `run
+  --help` and `_run_one --help` expose the new flag.
+- Before using changed runner behavior for paper metrics, run the corresponding
+  remote PyEdmine job and record train time, model dir, and test metrics in the
+  experiment ledger.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```text
+Report `--learning-rate 0.001 --train-batch-size 65536` as if it were the old
+default PyEdmine RCD row.
+```
+
+Correct:
+
+```text
+Treat it as an explicitly refreshed RCD runtime-rescue setting and record the
+changed optimizer/batch-size口径 with the result.
+```
+
+---
+
 ## Hybrid Stacker Evaluation Contract
 
 ### 1. Scope / Trigger

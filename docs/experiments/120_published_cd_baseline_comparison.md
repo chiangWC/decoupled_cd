@@ -70,6 +70,36 @@ SCD values in the table use the best AUC written across recorded epochs. PyEdmin
 
 The SVGCD JSON files above were overwritten on 2026-06-08 with the new uploaded script `/home/xph/jwc/svgcd.py`. The run logs and source JSONs are under `/home/xph/jwc/research/local_data/svgcd_new_baselines`; the previous SVGCD JSONs were backed up to `/home/xph/jwc/research/local_data/svgcd_baselines/job_outputs_backup_before_svgcd_py_20260608_110751`.
 
+## RCD Runtime Probe
+
+PyEdmine RCD is slow mainly because its forward pass recomputes full
+user/question/concept graph fusion for every mini-batch. The original runner
+used PyEdmine's default `train_batch_size=1024`; on NIPS34 this produced about
+one hour per epoch because the train split has nearly one million rows.
+
+On 2026-06-22, a speed probe used the same seed and NIPS34 graph artifacts with
+`train_batch_size=65536`, `evaluate_batch_size=65536`, and
+`learning_rate=1e-3`. This keeps the model and data fixed but changes the
+optimizer schedule, so treat it as a runtime-rescue setting rather than the
+published default row unless the table is explicitly refreshed.
+
+| Dataset split | Original train time | Original test AUC | Probe train time | Probe test AUC | Probe model dir |
+|---|---:|---:|---:|---:|---|
+| nips34_standard | 11.48 h | 0.77893 | 849 s | 0.77810 | `RCD@@paper_cd_baselines@@paper_nips34_standard_train@@seed_2024@@2026-06-22@14-23-25` |
+| nips34_holdout | 8.05 h | 0.77323 | 788 s | 0.77289 | `RCD@@paper_cd_baselines@@paper_nips34_holdout_train@@seed_2024@@2026-06-22@14-38-14` |
+
+The runner now exposes `--learning-rate` so future RCD rescue runs can use:
+
+```bash
+cd /home/xph/jwc/research/decoupled_cd
+/home/xph/anaconda3/envs/hyperbolic_cd/bin/python scripts/pyedmine_cd_baselines.py \
+  --pyedmine-root /home/xph/jwc/pyedmine \
+  --work-dir /home/xph/jwc/research/local_data/pyedmine_cd_baselines \
+  run --datasets nips34_standard,nips34_holdout --models RCD \
+  --max-epoch 10 --train-batch-size 65536 --evaluate-batch-size 65536 \
+  --learning-rate 0.001
+```
+
 ## Holdout Coverage Slice Supplement
 
 This supplement reuses already trained PyEdmine NCD/RCD checkpoints and does

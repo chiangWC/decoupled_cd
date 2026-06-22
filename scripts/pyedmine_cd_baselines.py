@@ -172,6 +172,7 @@ def parse_args() -> argparse.Namespace:
     run.add_argument("--cpu", action="store_true", help="Run training/evaluation in CPU mode.")
     run.add_argument("--train-batch-size", type=int)
     run.add_argument("--evaluate-batch-size", type=int)
+    run.add_argument("--learning-rate", type=float)
     run.add_argument("--dry-run", action="store_true")
 
     status = subparsers.add_parser("status", help="Print scheduler status summary.")
@@ -571,6 +572,8 @@ def launch_job(args: argparse.Namespace, job: JobState) -> subprocess.Popen[str]
         command.extend(["--train-batch-size", str(args.train_batch_size)])
     if args.evaluate_batch_size is not None:
         command.extend(["--evaluate-batch-size", str(args.evaluate_batch_size)])
+    if args.learning_rate is not None:
+        command.extend(["--learning-rate", str(args.learning_rate)])
     if args.cpu:
         command.append("--cpu")
 
@@ -601,6 +604,7 @@ def run_one_from_args(argv: list[str]) -> int:
     parser.add_argument("--max-epoch", type=int, required=True)
     parser.add_argument("--train-batch-size", type=int)
     parser.add_argument("--evaluate-batch-size", type=int)
+    parser.add_argument("--learning-rate", type=float)
     parser.add_argument("--cpu", action="store_true")
     args = parser.parse_args(argv)
 
@@ -646,6 +650,8 @@ def run_one(args: argparse.Namespace, dataset: dict[str, Any]) -> None:
         train_cmd.extend(["--train_batch_size", str(args.train_batch_size)])
     if args.evaluate_batch_size is not None:
         train_cmd.extend(["--evaluate_batch_size", str(args.evaluate_batch_size)])
+    if args.learning_rate is not None:
+        train_cmd.extend(["--learning_rate", str(args.learning_rate)])
     run_command(train_cmd, args.pyedmine_root, env)
 
     after = matching_model_dirs(model_root, model_prefix)
@@ -683,6 +689,7 @@ def run_one(args: argparse.Namespace, dataset: dict[str, Any]) -> None:
             "test_file_name": dataset["test_file_name"],
             "train_batch_size": args.train_batch_size,
             "evaluate_batch_size": args.evaluate_batch_size,
+            "learning_rate": args.learning_rate,
             "test_metrics": parse_eval_metrics(eval_output),
         },
     )
