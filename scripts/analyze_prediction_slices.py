@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles
 from data.q_matrix import normalize_concept_sequence
-from models import DecoupledCDM, DecoupledCDMEnsemble
+from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2
 from trainers.engine import _bundle_tensors, _validate_history_visibility
 from utils import compute_metrics, resolve_device, write_json
 
@@ -71,8 +71,38 @@ def load_model(
     bundles: dict[str, Any],
     concept_dim: int,
     device: str,
-) -> DecoupledCDM | DecoupledCDMEnsemble:
+) -> DecoupledCDM | DecoupledCDMEnsemble | DecoupledCDMV2 | CountPriorBaseline:
     train_bundle = bundles["train"]
+    model_variant = str(summary.get("model", "v1"))
+    if model_variant == "v2":
+        model = DecoupledCDMV2(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            concept_dim=concept_dim,
+            student_fusion_mode=str(summary.get("student_fusion_mode", "adaptive")),
+            student_gate_prior_alpha=float(summary.get("student_gate_prior_alpha", 1.0)),
+            student_gate_prior_beta=float(summary.get("student_gate_prior_beta", 1.0)),
+            gs_mode=str(summary.get("gs_mode", "conditional")),
+            ukc_propagation=bool(summary.get("v2_ukc_propagation", False)),
+            ukc_propagation_layers=int(summary.get("v2_ukc_layers", 1)),
+            ukc_evidence_cap=float(summary.get("v2_ukc_evidence_cap", 20.0)),
+            target_aware_readout=bool(summary.get("v2_target_aware_readout", False)),
+            monotonic_readout=bool(summary.get("v2_monotonic_readout", False)),
+            bounded_gs=bool(summary.get("v2_bounded_gs", False)),
+            gs_max_guess=float(summary.get("v2_gs_max_guess", 0.3)),
+            gs_max_slip=float(summary.get("v2_gs_max_slip", 0.3)),
+        )
+        return _finalize_loaded_model(model, checkpoint_path=checkpoint_path, device=device)
+    if model_variant == "b0":
+        model = CountPriorBaseline(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            prior_weight=float(summary.get("b0_prior_weight", 5.0)),
+            component_cap=float(summary.get("b0_component_cap", 3.0)),
+        )
+        return _finalize_loaded_model(model, checkpoint_path=checkpoint_path, device=device)
     model_kwargs = dict(
         num_students=train_bundle.num_students,
         num_exercises=train_bundle.num_exercises,
@@ -148,6 +178,10 @@ def load_model(
         model = DecoupledCDMEnsemble(**model_kwargs)
     else:
         model = DecoupledCDM(**model_kwargs)
+    return _finalize_loaded_model(model, checkpoint_path=checkpoint_path, device=device)
+
+
+def _finalize_loaded_model(model, *, checkpoint_path: str, device: str):
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(state)
     model.to(torch.device(device))

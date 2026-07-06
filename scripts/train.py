@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles, prepare_step_data_bundle
-from models import DecoupledCDM, DecoupledCDMEnsemble
+from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2
 from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
@@ -37,6 +37,52 @@ def _max_cuda_memory_allocated_gb(device: str) -> float | None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the minimal decoupled CDM pipeline.")
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
+    parser.add_argument(
+        "--model",
+        choices=["v1", "v2", "b0"],
+        default="v1",
+        help=(
+            "Model variant. v1 is the frozen mainline (adapters allowed). v2 is the clean core with "
+            "independent module flags for single-module attribution runs. b0 is the count-prior "
+            "logistic baseline over train-history statistics."
+        ),
+    )
+    parser.add_argument(
+        "--v2-ukc-propagation",
+        action="store_true",
+        help="V2 module 1: student-conditioned TKC->UKC propagation (zero-init residual on the static UKC).",
+    )
+    parser.add_argument(
+        "--v2-ukc-layers",
+        type=int,
+        default=1,
+        help="Propagation hops for --v2-ukc-propagation.",
+    )
+    parser.add_argument(
+        "--v2-ukc-evidence-cap",
+        type=float,
+        default=20.0,
+        help="Attempt-count cap for the evidence confidence weighting in v2 modules.",
+    )
+    parser.add_argument(
+        "--v2-target-aware-readout",
+        action="store_true",
+        help="V2 module 2: per-concept mastery head plus target-concept-aware readout.",
+    )
+    parser.add_argument(
+        "--v2-monotonic-readout",
+        action="store_true",
+        help="V2 module 3a: monotone-in-mastery interaction. Requires --v2-target-aware-readout.",
+    )
+    parser.add_argument(
+        "--v2-bounded-gs",
+        action="store_true",
+        help="V2 module 3b: bounded guess/slip conditioned only on the exercise representation.",
+    )
+    parser.add_argument("--v2-gs-max-guess", type=float, default=0.3)
+    parser.add_argument("--v2-gs-max-slip", type=float, default=0.3)
+    parser.add_argument("--b0-prior-weight", type=float, default=5.0)
+    parser.add_argument("--b0-component-cap", type=float, default=3.0)
     parser.add_argument("--interactions", default=None, help="Single interaction CSV with stu_id/exer_id/cpt_seq/label.")
     parser.add_argument("--train-interactions", default=None, help="Train split CSV.")
     parser.add_argument("--valid-interactions", default=None, help="Validation split CSV.")
@@ -481,6 +527,52 @@ def resolve_student_gate_prior_arg(
     return float(default)
 
 
+V1_ONLY_FLAG_ATTRS = (
+    "dual_cdm_ensemble",
+    "high_concept_logit_adapter",
+    "pairwise_history_interaction_adapter",
+    "gs_difficulty_adapter",
+    "interpretable_readout_expert_adapter",
+    "student_conditioned_ukc_readout_residual",
+    "concept_evidence_readout_residual",
+    "concept_evidence_prior_residual",
+    "history_evidence_logit_prior_residual",
+)
+
+V2_ONLY_FLAG_ATTRS = (
+    "v2_ukc_propagation",
+    "v2_target_aware_readout",
+    "v2_monotonic_readout",
+    "v2_bounded_gs",
+)
+
+
+def validate_model_args(args: argparse.Namespace) -> None:
+    if args.model != "v1":
+        enabled_v1_flags = [name for name in V1_ONLY_FLAG_ATTRS if getattr(args, name)]
+        if enabled_v1_flags:
+            raise ValueError(
+                f"--model {args.model} does not accept v1 adapter flags (keep attribution clean): "
+                + ", ".join(enabled_v1_flags)
+            )
+        if args.history_evidence_cognitive_alignment_weight > 0.0:
+            raise ValueError(f"--model {args.model} does not support history evidence alignment losses.")
+        if args.graph_mode != "single":
+            raise ValueError(f"--model {args.model} supports single-graph mode only.")
+    if args.model != "v2":
+        enabled_v2_flags = [name for name in V2_ONLY_FLAG_ATTRS if getattr(args, name)]
+        if enabled_v2_flags:
+            raise ValueError(
+                f"v2 module flags require --model v2: " + ", ".join(enabled_v2_flags)
+            )
+    if args.v2_monotonic_readout and not args.v2_target_aware_readout:
+        raise ValueError("--v2-monotonic-readout requires --v2-target-aware-readout.")
+    if args.v2_ukc_layers < 1:
+        raise ValueError("--v2-ukc-layers must be positive.")
+    if args.v2_ukc_evidence_cap <= 0.0:
+        raise ValueError("--v2-ukc-evidence-cap must be positive.")
+
+
 def validate_graph_args(args: argparse.Namespace) -> None:
     has_prerequisite_graph = args.prerequisite_graph is not None
     has_similarity_graph = args.similarity_graph is not None
@@ -540,6 +632,7 @@ def materialize_subset_if_needed(interactions_path: str, max_rows: int | None) -
 def main() -> None:
     args = parse_args()
     validate_graph_args(args)
+    validate_model_args(args)
     set_global_seed(args.seed)
     logger, log_path = setup_logging(args.log_dir, name="train")
     resolved_device = str(resolve_device(args.device, args.gpus))
@@ -635,7 +728,34 @@ def main() -> None:
         history_evidence_logit_prior_prior_weight=args.history_evidence_logit_prior_prior_weight,
         history_evidence_logit_prior_mastery_confidence_cap=args.history_evidence_logit_prior_mastery_confidence_cap,
     )
-    if args.dual_cdm_ensemble:
+    if args.model == "v2":
+        model = DecoupledCDMV2(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            concept_dim=args.concept_dim,
+            student_fusion_mode=args.student_fusion_mode,
+            student_gate_prior_alpha=args.student_gate_prior_alpha,
+            student_gate_prior_beta=args.student_gate_prior_beta,
+            gs_mode=args.gs_mode,
+            ukc_propagation=args.v2_ukc_propagation,
+            ukc_propagation_layers=args.v2_ukc_layers,
+            ukc_evidence_cap=args.v2_ukc_evidence_cap,
+            target_aware_readout=args.v2_target_aware_readout,
+            monotonic_readout=args.v2_monotonic_readout,
+            bounded_gs=args.v2_bounded_gs,
+            gs_max_guess=args.v2_gs_max_guess,
+            gs_max_slip=args.v2_gs_max_slip,
+        )
+    elif args.model == "b0":
+        model = CountPriorBaseline(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            prior_weight=args.b0_prior_weight,
+            component_cap=args.b0_component_cap,
+        )
+    elif args.dual_cdm_ensemble:
         model_kwargs["secondary_concept_dim"] = args.dual_cdm_secondary_concept_dim
         model = DecoupledCDMEnsemble(**model_kwargs)
     else:
@@ -695,8 +815,22 @@ def main() -> None:
     )
     max_cuda_memory_allocated_gb = _max_cuda_memory_allocated_gb(resolved_device)
 
+    v2_flag_snapshot = {
+        "model": args.model,
+        "v2_ukc_propagation": args.v2_ukc_propagation,
+        "v2_ukc_layers": args.v2_ukc_layers,
+        "v2_ukc_evidence_cap": args.v2_ukc_evidence_cap,
+        "v2_target_aware_readout": args.v2_target_aware_readout,
+        "v2_monotonic_readout": args.v2_monotonic_readout,
+        "v2_bounded_gs": args.v2_bounded_gs,
+        "v2_gs_max_guess": args.v2_gs_max_guess,
+        "v2_gs_max_slip": args.v2_gs_max_slip,
+        "b0_prior_weight": args.b0_prior_weight,
+        "b0_component_cap": args.b0_component_cap,
+    }
     output = {
         "dataset": args.dataset,
+        **v2_flag_snapshot,
         "train_interactions": args.train_interactions or args.interactions,
         "valid_interactions": args.valid_interactions,
         "test_interactions": args.test_interactions or args.interactions,
@@ -799,6 +933,9 @@ def main() -> None:
 
     summary_row = {
         "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+        # v1 keeps the historical experiment_results.csv column set unchanged;
+        # v2/b0 rows carry the model/module columns and go to a separate CSV.
+        **(v2_flag_snapshot if args.model != "v1" else {}),
         "train_interactions": args.train_interactions or args.interactions,
         "valid_interactions": args.valid_interactions,
         "test_interactions": args.test_interactions or args.interactions,
@@ -890,7 +1027,10 @@ def main() -> None:
     if valid_metrics is not None:
         summary_row["valid_brier"] = valid_metrics["brier"]
         summary_row["valid_ece"] = valid_metrics["ece"]
-    append_summary_csv(summary_row, "results/experiment_results.csv")
+    summary_csv_path = (
+        "results/experiment_results.csv" if args.model == "v1" else "results/experiment_results_v2.csv"
+    )
+    append_summary_csv(summary_row, summary_csv_path)
     logger.info(
         "Finished run: best_val_auc=%s test_auc=%.6f test_acc=%.6f test_rmse=%.6f test_brier=%.6f test_ece=%.6f",
         result.best_val_auc,

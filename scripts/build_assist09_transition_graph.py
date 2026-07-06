@@ -18,8 +18,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build an RCD-style concept transition graph from ordered ASSIST09 data.")
     parser.add_argument(
         "--interactions",
-        default="data/assist_09_ordered/data.csv",
-        help="Ordered unsplit interaction file.",
+        default="data/assist_09_ordered/train.csv",
+        help=(
+            "Ordered interaction file used to count transitions. Must be the TRAIN split only: "
+            "building from unsplit data leaks valid/test labels into the graph."
+        ),
+    )
+    parser.add_argument(
+        "--concept-universe",
+        nargs="*",
+        default=None,
+        help=(
+            "Optional interaction CSVs (e.g. train/valid/test) used only to size the concept set. "
+            "Without this, concepts absent from --interactions shrink the matrix below the model's "
+            "Q-matrix dimension and downstream K x K matmuls misalign."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -29,18 +42,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _max_concept_id(frames: list[pd.DataFrame]) -> int:
+    return max(
+        int(token)
+        for frame in frames
+        for text in frame["cpt_seq"].tolist()
+        for token in str(text).split(",")
+        if str(token).strip()
+    )
+
+
 def main() -> None:
     args = parse_args()
     interactions = pd.read_csv(args.interactions)
-    num_concepts = int(
-        max(
-            int(token)
-            for text in interactions["cpt_seq"].tolist()
-            for token in str(text).split(",")
-            if str(token).strip()
+    universe_frames = [interactions]
+    if args.concept_universe:
+        universe_frames += [pd.read_csv(path) for path in args.concept_universe]
+    num_concepts = _max_concept_id(universe_frames) + 1
+    if not args.concept_universe:
+        print(
+            f"[warn] num_concepts={num_concepts} inferred from --interactions only; "
+            "pass --concept-universe train.csv valid.csv test.csv to match the model's Q-matrix dimension.",
         )
-        + 1
-    )
     outputs = build_transition_matrices(interactions=interactions, num_concepts=num_concepts)
 
     output_dir = Path(args.output_dir)
@@ -54,6 +77,7 @@ def main() -> None:
 
     summary = {
         "interactions_path": str(Path(args.interactions).resolve()),
+        "concept_universe": [str(Path(p).resolve()) for p in (args.concept_universe or [])],
         "num_concepts": num_concepts,
         "threshold": outputs["threshold"],
         "num_prerequisite_edges": outputs["num_prerequisite_edges"],

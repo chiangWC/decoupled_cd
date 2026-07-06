@@ -38,11 +38,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-student-concepts", type=int, default=5)
     parser.add_argument("--min-train-interactions", type=int, default=10)
     parser.add_argument(
-        "--no-copy-transition-graph",
+        "--copy-transition-graph",
         action="store_true",
         help=(
-            "Do not copy source transition_graph. By default it is copied as an external "
-            "course/knowledge prior, not rebuilt from the new train split."
+            "Copy the source transition_graph into the holdout split. Default is NOT to copy: "
+            "the source graph is built from data that includes the held-out interactions' labels, "
+            "so reusing it leaks evaluation signal. Rebuild the graph from this split's train.csv "
+            "via scripts/build_assist09_transition_graph.py instead."
         ),
     )
     parser.add_argument("--overwrite", action="store_true")
@@ -298,8 +300,8 @@ def build_summary(
         "min_student_concepts": args.min_student_concepts,
         "min_train_interactions": args.min_train_interactions,
         "transition_graph_policy": "copied_external_prior"
-        if not args.no_copy_transition_graph
-        else "not_copied",
+        if args.copy_transition_graph
+        else "not_copied_rebuild_from_train",
         "rows": {
             "data": int(total_rows),
             "train": int(len(train_frame)),
@@ -380,7 +382,7 @@ def main() -> None:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
     source_graph_dir = source_dir / "transition_graph"
-    if not args.no_copy_transition_graph and source_graph_dir.exists():
+    if args.copy_transition_graph and source_graph_dir.exists():
         shutil.copytree(source_graph_dir, output_dir / "transition_graph")
 
 
