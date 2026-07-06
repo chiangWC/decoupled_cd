@@ -857,3 +857,37 @@ Installed user-local TinyTeX for remote Chinese LaTeX builds and initialized sib
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: PyEdmine CD baseline wrap-up
+
+**Date**: 2026-07-06
+**Task**: PyEdmine CD baseline wrap-up
+**Branch**: `exp/trellis-trial`
+
+### Summary
+
+Recorded PyEdmine published CD baseline comparisons, documented RCD runtime behavior, added learning-rate passthrough for RCD rescue runs, and archived the completed pyedmine-cd-baselines task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a2a11b2` | (see git log) |
+| `7794c3b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

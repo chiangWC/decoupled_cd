@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 25
-- **Last Active**: 2026-06-01
+- **Total Sessions**: 26
+- **Last Active**: 2026-07-06
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~859 | Active |
+| `journal-1.md` | ~893 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 26 | 2026-07-06 | PyEdmine CD baseline wrap-up | `a2a11b2`, `7794c3b` | `exp/trellis-trial` |
 | 25 | 2026-06-01 | Set up paper LaTeX repo | `2cc5349` | `exp/trellis-trial` |
 | 24 | 2026-05-30 | Remaining paper robustness experiments | `be93a3b`, `175d763` | `exp/trellis-trial` |
 | 23 | 2026-05-30 | Exp110 capacity-control robustness follow-up | `c8381fa`, `12b9547` | `exp/trellis-trial` |
