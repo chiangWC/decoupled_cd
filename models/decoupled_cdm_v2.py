@@ -23,6 +23,12 @@ class DecoupledCDMV2(nn.Module):
     - ``bounded_gs`` (module 3b): bounded guess/slip conditioned only on the
       exercise representation, with no per-student parameters and no cognitive
       state input.
+    - ``hybrid_readout`` (module 2h): keeps the pooled NCF match and adds a
+      zero-initialized target-concept-aware residual head plus the mastery
+      head. Starts exactly equivalent to the base readout.
+    - ``target_fusion`` (module 2f): adds a zero-initialized parallel match
+      head over a target-local TKC/UKC state fused per exercise by its own
+      concept composition (addresses the saturated global fusion gate).
 
     The forward signature is a superset of DecoupledCDM's so the training
     engine drives both models unchanged. Dual-graph inputs are rejected.
@@ -45,6 +51,8 @@ class DecoupledCDMV2(nn.Module):
         target_aware_readout: bool = False,
         monotonic_readout: bool = False,
         bounded_gs: bool = False,
+        hybrid_readout: bool = False,
+        target_fusion: bool = False,
         gs_max_guess: float = 0.3,
         gs_max_slip: float = 0.3,
     ):
@@ -53,6 +61,8 @@ class DecoupledCDMV2(nn.Module):
             raise ValueError(f"Unsupported gs_mode: {gs_mode}")
         if monotonic_readout and not target_aware_readout:
             raise ValueError("monotonic_readout requires target_aware_readout.")
+        if hybrid_readout and target_aware_readout:
+            raise ValueError("hybrid_readout and target_aware_readout are mutually exclusive.")
         if not 0.0 < gs_max_guess < 1.0 or not 0.0 < gs_max_slip < 1.0:
             raise ValueError("gs_max_guess and gs_max_slip must be in (0, 1).")
         self.gs_mode = gs_mode
@@ -60,6 +70,8 @@ class DecoupledCDMV2(nn.Module):
         self.target_aware_readout = target_aware_readout
         self.monotonic_readout = monotonic_readout
         self.bounded_gs = bounded_gs
+        self.hybrid_readout = hybrid_readout
+        self.target_fusion = target_fusion
         self.gs_max_guess = float(gs_max_guess)
         self.gs_max_slip = float(gs_max_slip)
         self.ukc_evidence_cap = float(ukc_evidence_cap)
@@ -88,7 +100,7 @@ class DecoupledCDMV2(nn.Module):
             ukc_evidence_cap=ukc_evidence_cap,
         )
 
-        if target_aware_readout:
+        if target_aware_readout or hybrid_readout:
             self.mastery_head = nn.Linear(concept_dim, 1)
             self.concept_attention = nn.Linear(concept_dim + 2, 1)
             if monotonic_readout:
@@ -107,7 +119,10 @@ class DecoupledCDMV2(nn.Module):
                     nn.ReLU(),
                     nn.Linear(concept_dim, 1),
                 )
-            self.cognitive_match_mlp = None
+                if hybrid_readout:
+                    # Zero-init so the hybrid model starts exactly at the base readout.
+                    nn.init.zeros_(self.concept_score_mlp[-1].weight)
+                    nn.init.zeros_(self.concept_score_mlp[-1].bias)
         else:
             self.mastery_head = None
             self.concept_attention = None
@@ -115,11 +130,33 @@ class DecoupledCDMV2(nn.Module):
             self.exercise_discrimination = None
             self.mono_scale_raw = None
             self.concept_score_mlp = None
+
+        if target_aware_readout:
+            self.cognitive_match_mlp = None
+        else:
             self.cognitive_match_mlp = nn.Sequential(
                 nn.Linear(concept_dim * 4, concept_dim),
                 nn.ReLU(),
                 nn.Linear(concept_dim, 1),
             )
+
+        if target_fusion:
+            self.target_fusion_gate = nn.Sequential(
+                nn.Linear(concept_dim * 2 + 1, concept_dim),
+                nn.ReLU(),
+                nn.Linear(concept_dim, 1),
+            )
+            self.target_fusion_match_mlp = nn.Sequential(
+                nn.Linear(concept_dim * 4, concept_dim),
+                nn.ReLU(),
+                nn.Linear(concept_dim, 1),
+            )
+            # Zero-init so target fusion starts as an exact no-op residual.
+            nn.init.zeros_(self.target_fusion_match_mlp[-1].weight)
+            nn.init.zeros_(self.target_fusion_match_mlp[-1].bias)
+        else:
+            self.target_fusion_gate = None
+            self.target_fusion_match_mlp = None
 
         if bounded_gs:
             self.guess_logit = None
@@ -204,9 +241,10 @@ class DecoupledCDMV2(nn.Module):
         difficulty = self.exercise_difficulty(target_exercise_ids).squeeze(-1)
 
         mastery = None
-        if self.target_aware_readout:
+        if self.target_aware_readout or self.hybrid_readout:
             per_concept_states = propagated.tkc_states + propagated.ukc_states
             mastery = torch.sigmoid(self.mastery_head(per_concept_states).squeeze(-1))
+        if self.target_aware_readout:
             cognitive_logits = self._build_target_aware_logits(
                 q_vectors=q_vectors,
                 mastery=mastery,
@@ -225,6 +263,30 @@ class DecoupledCDMV2(nn.Module):
                 dim=-1,
             )
             cognitive_logits = self.cognitive_match_mlp(match_inputs).squeeze(-1) - difficulty
+            if self.hybrid_readout:
+                cognitive_logits = cognitive_logits + self._build_target_aware_logits(
+                    q_vectors=q_vectors,
+                    mastery=mastery,
+                    per_concept_states=per_concept_states,
+                    concept_embeddings=concept_embeddings,
+                    state_target_student_ids=state_target_student_ids,
+                    target_student_ids=target_student_ids,
+                    target_exercise_ids=target_exercise_ids,
+                    student_concept_evidence=student_concept_evidence,
+                    student_tkc_mask=student_tkc_mask,
+                    difficulty=difficulty,
+                    residual_only=True,
+                )
+        if self.target_fusion:
+            cognitive_logits = cognitive_logits + self._build_target_fusion_residual(
+                q_vectors=q_vectors,
+                q_repr=q_repr,
+                tkc_states=propagated.tkc_states,
+                ukc_states=propagated.ukc_states,
+                student_tkc_mask=student_tkc_mask,
+                state_target_student_ids=state_target_student_ids,
+                target_student_ids=target_student_ids,
+            )
         cognitive_probs = torch.sigmoid(cognitive_logits)
 
         if self.bounded_gs:
@@ -283,6 +345,7 @@ class DecoupledCDMV2(nn.Module):
         student_concept_evidence: torch.Tensor | None,
         student_tkc_mask: torch.Tensor,
         difficulty: torch.Tensor,
+        residual_only: bool = False,
     ) -> torch.Tensor:
         q_mask = q_vectors > 0
         max_concepts = max(int(q_mask.sum(dim=1).max().item()), 1)
@@ -316,6 +379,8 @@ class DecoupledCDMV2(nn.Module):
         attention = attention / attention.sum(dim=1, keepdim=True).clamp_min(1e-6)
 
         if self.monotonic_readout:
+            if residual_only:
+                raise ValueError("monotonic readout cannot be used as a residual head.")
             concept_difficulty = self.concept_difficulty(safe_indices).squeeze(-1)
             item_difficulty = torch.sigmoid(difficulty.unsqueeze(1) + concept_difficulty)
             per_concept_signal = gathered_mastery - item_difficulty
@@ -336,4 +401,44 @@ class DecoupledCDMV2(nn.Module):
             dim=-1,
         )
         per_concept_scores = self.concept_score_mlp(score_inputs).squeeze(-1)
-        return (attention * per_concept_scores).sum(dim=1) - difficulty
+        aggregated = (attention * per_concept_scores).sum(dim=1)
+        return aggregated if residual_only else aggregated - difficulty
+
+    def _build_target_fusion_residual(
+        self,
+        *,
+        q_vectors: torch.Tensor,
+        q_repr: torch.Tensor,
+        tkc_states: torch.Tensor,
+        ukc_states: torch.Tensor,
+        student_tkc_mask: torch.Tensor,
+        state_target_student_ids: torch.Tensor,
+        target_student_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        dtype = q_repr.dtype
+        q_mask = q_vectors > 0
+        max_concepts = max(int(q_mask.sum(dim=1).max().item()), 1)
+        scores, indices = q_vectors.topk(k=max_concepts, dim=1)
+        valid = (scores > 0).to(dtype)
+        safe_indices = torch.where(scores > 0, indices, indices.new_zeros(indices.shape))
+
+        state_rows = state_target_student_ids.unsqueeze(1)
+        gathered_tkc = tkc_states[state_rows, safe_indices]
+        gathered_ukc = ukc_states[state_rows, safe_indices]
+        # Seen flags come from the full-size mask, indexed by original student ids.
+        seen = student_tkc_mask[target_student_ids.unsqueeze(1), safe_indices].to(dtype) * valid
+        unseen = (1.0 - student_tkc_mask[target_student_ids.unsqueeze(1), safe_indices].to(dtype)) * valid
+
+        tkc_local = (gathered_tkc * seen.unsqueeze(-1)).sum(dim=1) / seen.sum(dim=1, keepdim=True).clamp_min(1.0)
+        ukc_local = (gathered_ukc * unseen.unsqueeze(-1)).sum(dim=1) / unseen.sum(dim=1, keepdim=True).clamp_min(1.0)
+        target_coverage = seen.sum(dim=1, keepdim=True) / valid.sum(dim=1, keepdim=True).clamp_min(1.0)
+
+        gate = torch.sigmoid(
+            self.target_fusion_gate(torch.cat([target_coverage, tkc_local, ukc_local], dim=-1))
+        )
+        local_state = gate * tkc_local + (1.0 - gate) * ukc_local
+        fusion_inputs = torch.cat(
+            [local_state, q_repr, local_state * q_repr, torch.abs(local_state - q_repr)],
+            dim=-1,
+        )
+        return self.target_fusion_match_mlp(fusion_inputs).squeeze(-1)

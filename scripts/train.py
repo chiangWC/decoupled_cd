@@ -79,6 +79,22 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="V2 module 3b: bounded guess/slip conditioned only on the exercise representation.",
     )
+    parser.add_argument(
+        "--v2-hybrid-readout",
+        action="store_true",
+        help=(
+            "V2 module 2h: keep the pooled NCF match and add a zero-init target-concept-aware "
+            "residual head plus the mastery head. Mutually exclusive with --v2-target-aware-readout."
+        ),
+    )
+    parser.add_argument(
+        "--v2-target-fusion",
+        action="store_true",
+        help=(
+            "V2 module 2f: zero-init parallel match head over a target-local TKC/UKC state fused "
+            "per exercise by its own concept composition."
+        ),
+    )
     parser.add_argument("--v2-gs-max-guess", type=float, default=0.3)
     parser.add_argument("--v2-gs-max-slip", type=float, default=0.3)
     parser.add_argument("--b0-prior-weight", type=float, default=5.0)
@@ -544,6 +560,8 @@ V2_ONLY_FLAG_ATTRS = (
     "v2_target_aware_readout",
     "v2_monotonic_readout",
     "v2_bounded_gs",
+    "v2_hybrid_readout",
+    "v2_target_fusion",
 )
 
 
@@ -569,6 +587,8 @@ def validate_model_args(args: argparse.Namespace) -> None:
             )
     if args.v2_monotonic_readout and not args.v2_target_aware_readout:
         raise ValueError("--v2-monotonic-readout requires --v2-target-aware-readout.")
+    if args.v2_hybrid_readout and args.v2_target_aware_readout:
+        raise ValueError("--v2-hybrid-readout and --v2-target-aware-readout are mutually exclusive.")
     if args.v2_ukc_layers < 1:
         raise ValueError("--v2-ukc-layers must be positive.")
     if args.v2_ukc_evidence_cap <= 0.0:
@@ -746,6 +766,8 @@ def main() -> None:
             target_aware_readout=args.v2_target_aware_readout,
             monotonic_readout=args.v2_monotonic_readout,
             bounded_gs=args.v2_bounded_gs,
+            hybrid_readout=args.v2_hybrid_readout,
+            target_fusion=args.v2_target_fusion,
             gs_max_guess=args.v2_gs_max_guess,
             gs_max_slip=args.v2_gs_max_slip,
         )
@@ -825,6 +847,8 @@ def main() -> None:
         "v2_target_aware_readout": args.v2_target_aware_readout,
         "v2_monotonic_readout": args.v2_monotonic_readout,
         "v2_bounded_gs": args.v2_bounded_gs,
+        "v2_hybrid_readout": args.v2_hybrid_readout,
+        "v2_target_fusion": args.v2_target_fusion,
         "v2_gs_max_guess": args.v2_gs_max_guess,
         "v2_gs_max_slip": args.v2_gs_max_slip,
         "b0_prior_weight": args.b0_prior_weight,

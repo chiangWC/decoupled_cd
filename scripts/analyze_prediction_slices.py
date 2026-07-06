@@ -90,6 +90,8 @@ def load_model(
             target_aware_readout=bool(summary.get("v2_target_aware_readout", False)),
             monotonic_readout=bool(summary.get("v2_monotonic_readout", False)),
             bounded_gs=bool(summary.get("v2_bounded_gs", False)),
+            hybrid_readout=bool(summary.get("v2_hybrid_readout", False)),
+            target_fusion=bool(summary.get("v2_target_fusion", False)),
             gs_max_guess=float(summary.get("v2_gs_max_guess", 0.3)),
             gs_max_slip=float(summary.get("v2_gs_max_slip", 0.3)),
         )
