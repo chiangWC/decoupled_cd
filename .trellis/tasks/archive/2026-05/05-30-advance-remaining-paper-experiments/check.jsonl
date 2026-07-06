@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/backend/experiment-protocol.md", "reason": "Check remote artifacts, history-hiding semantics, and ledger update completeness."}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality gate for experiment conclusions and docs."}

@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/backend/experiment-protocol.md", "reason": "Check results against remote execution, evaluator, and ledger-update contracts."}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality gate for tests, documentation, and experiment conclusions."}
