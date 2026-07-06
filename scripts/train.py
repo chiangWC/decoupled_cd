@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles, prepare_step_data_bundle
-from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2
+from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2, KaNCDBaseline
 from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
@@ -39,13 +39,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
     parser.add_argument(
         "--model",
-        choices=["v1", "v2", "b0"],
+        choices=["v1", "v2", "b0", "kancd"],
         default="v1",
         help=(
             "Model variant. v1 is the frozen mainline (adapters allowed). v2 is the clean core with "
             "independent module flags for single-module attribution runs. b0 is the count-prior "
-            "logistic baseline over train-history statistics."
+            "logistic baseline over train-history statistics. kancd is a faithful in-harness "
+            "KaNCD reimplementation (low-rank mastery extrapolation baseline)."
         ),
+    )
+    parser.add_argument(
+        "--kancd-latent-dim",
+        type=int,
+        default=64,
+        help="Latent dimension for the KaNCD baseline's low-rank factorization.",
     )
     parser.add_argument(
         "--v2-ukc-propagation",
@@ -805,6 +812,13 @@ def main() -> None:
             prior_weight=args.b0_prior_weight,
             component_cap=args.b0_component_cap,
         )
+    elif args.model == "kancd":
+        model = KaNCDBaseline(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            latent_dim=args.kancd_latent_dim,
+        )
     elif args.dual_cdm_ensemble:
         model_kwargs["secondary_concept_dim"] = args.dual_cdm_secondary_concept_dim
         model = DecoupledCDMEnsemble(**model_kwargs)
@@ -883,6 +897,7 @@ def main() -> None:
         "v2_gs_max_slip": args.v2_gs_max_slip,
         "b0_prior_weight": args.b0_prior_weight,
         "b0_component_cap": args.b0_component_cap,
+        "kancd_latent_dim": args.kancd_latent_dim,
     }
     output = {
         "dataset": args.dataset,

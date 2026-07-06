@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles
 from data.q_matrix import normalize_concept_sequence
-from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2
+from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2, KaNCDBaseline
 from trainers.engine import _bundle_tensors, _validate_history_visibility
 from utils import compute_metrics, resolve_device, write_json
 
@@ -103,6 +103,14 @@ def load_model(
             num_concepts=train_bundle.num_concepts,
             prior_weight=float(summary.get("b0_prior_weight", 5.0)),
             component_cap=float(summary.get("b0_component_cap", 3.0)),
+        )
+        return _finalize_loaded_model(model, checkpoint_path=checkpoint_path, device=device)
+    if model_variant == "kancd":
+        model = KaNCDBaseline(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            latent_dim=int(summary.get("kancd_latent_dim", 64)),
         )
         return _finalize_loaded_model(model, checkpoint_path=checkpoint_path, device=device)
     model_kwargs = dict(
