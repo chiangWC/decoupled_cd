@@ -97,6 +97,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--v2-gs-max-guess", type=float, default=0.3)
     parser.add_argument("--v2-gs-max-slip", type=float, default=0.3)
+    parser.add_argument(
+        "--v2-ukc-consistency-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "V2 module 4 (weak form): weight of the masked-concept state consistency loss. "
+            "Demotes random tested concepts to pseudo-UKC and pulls the inferred state toward the "
+            "stop-gradient observed TKC state. No response labels are used. Requires "
+            "--v2-ukc-propagation and full_batch training."
+        ),
+    )
+    parser.add_argument(
+        "--v2-ukc-consistency-drop-frac",
+        type=float,
+        default=0.2,
+        help="Fraction of each student's tested concepts demoted per epoch for the consistency loss.",
+    )
     parser.add_argument("--b0-prior-weight", type=float, default=5.0)
     parser.add_argument("--b0-component-cap", type=float, default=3.0)
     parser.add_argument("--interactions", default=None, help="Single interaction CSV with stu_id/exer_id/cpt_seq/label.")
@@ -589,6 +606,15 @@ def validate_model_args(args: argparse.Namespace) -> None:
         raise ValueError("--v2-monotonic-readout requires --v2-target-aware-readout.")
     if args.v2_hybrid_readout and args.v2_target_aware_readout:
         raise ValueError("--v2-hybrid-readout and --v2-target-aware-readout are mutually exclusive.")
+    if args.v2_ukc_consistency_weight < 0.0:
+        raise ValueError("--v2-ukc-consistency-weight must be non-negative.")
+    if args.v2_ukc_consistency_weight > 0.0:
+        if args.model != "v2" or not args.v2_ukc_propagation:
+            raise ValueError("--v2-ukc-consistency-weight requires --model v2 with --v2-ukc-propagation.")
+        if args.training_mode != "full_batch":
+            raise ValueError("--v2-ukc-consistency-weight is only implemented for full_batch training.")
+    if not 0.0 < args.v2_ukc_consistency_drop_frac < 1.0:
+        raise ValueError("--v2-ukc-consistency-drop-frac must be in (0, 1).")
     if args.v2_ukc_layers < 1:
         raise ValueError("--v2-ukc-layers must be positive.")
     if args.v2_ukc_evidence_cap <= 0.0:
@@ -817,6 +843,8 @@ def main() -> None:
         dual_tower_branch_bce_weight=args.dual_cdm_branch_bce_weight,
         concept_evidence_prior_train_start_epoch=args.concept_evidence_prior_train_start_epoch,
         concept_evidence_prior_train_warmup_epochs=args.concept_evidence_prior_train_warmup_epochs,
+        ukc_consistency_weight=args.v2_ukc_consistency_weight,
+        ukc_consistency_drop_frac=args.v2_ukc_consistency_drop_frac,
     )
     evaluation_student_batch_size = (
         args.student_batch_size if args.training_mode == "student_recompute_minibatch" else None
@@ -849,6 +877,8 @@ def main() -> None:
         "v2_bounded_gs": args.v2_bounded_gs,
         "v2_hybrid_readout": args.v2_hybrid_readout,
         "v2_target_fusion": args.v2_target_fusion,
+        "v2_ukc_consistency_weight": args.v2_ukc_consistency_weight,
+        "v2_ukc_consistency_drop_frac": args.v2_ukc_consistency_drop_frac,
         "v2_gs_max_guess": args.v2_gs_max_guess,
         "v2_gs_max_slip": args.v2_gs_max_slip,
         "b0_prior_weight": args.b0_prior_weight,

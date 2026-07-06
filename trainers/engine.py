@@ -263,9 +263,17 @@ def train_model(
     dual_tower_branch_bce_weight: float = 0.0,
     concept_evidence_prior_train_start_epoch: int = 1,
     concept_evidence_prior_train_warmup_epochs: int = 0,
+    ukc_consistency_weight: float = 0.0,
+    ukc_consistency_drop_frac: float = 0.2,
 ) -> TrainResult:
     if training_mode not in {"full_batch", "recompute_minibatch", "student_recompute_minibatch"}:
         raise ValueError(f"Unsupported training_mode: {training_mode}")
+    if ukc_consistency_weight < 0.0:
+        raise ValueError("ukc_consistency_weight must be non-negative.")
+    if ukc_consistency_weight > 0.0 and training_mode != "full_batch":
+        raise ValueError("ukc_consistency_weight is only implemented for full_batch training.")
+    if ukc_consistency_weight > 0.0 and not hasattr(model, "compute_ukc_consistency_loss"):
+        raise ValueError("ukc_consistency_weight requires a model with compute_ukc_consistency_loss.")
     if batch_size is not None and batch_size <= 0:
         raise ValueError("batch_size must be positive when provided.")
     if student_batch_size is not None and student_batch_size <= 0:
@@ -466,6 +474,8 @@ def train_model(
                     model=model,
                     tensors=train_tensors,
                     optimizer=optimizer,
+                    ukc_consistency_weight=ukc_consistency_weight,
+                    ukc_consistency_drop_frac=ukc_consistency_drop_frac,
                     exercise_evidence_difficulty_regularization_weight=exercise_evidence_difficulty_regularization_weight,
                     difficulty_prior_target=difficulty_prior_target,
                     difficulty_prior_mask=difficulty_prior_mask,
@@ -766,6 +776,8 @@ def _train_full_batch_epoch(
     checkpoint_distillation_weight: float = 0.0,
     checkpoint_distillation_loss: str = "bce",
     dual_tower_branch_bce_weight: float = 0.0,
+    ukc_consistency_weight: float = 0.0,
+    ukc_consistency_drop_frac: float = 0.2,
 ) -> EpochTrainStats:
     model.train()
     optimizer.zero_grad()
@@ -785,6 +797,16 @@ def _train_full_batch_epoch(
         target_exercise_ids=tensors["interaction_exercise_ids"],
     )
     loss = F.binary_cross_entropy(output.probs, tensors["interaction_labels"])
+    if ukc_consistency_weight > 0.0:
+        loss = loss + ukc_consistency_weight * model.compute_ukc_consistency_loss(
+            q_matrix=tensors["q_matrix"],
+            concept_graph=tensors["concept_graph"],
+            student_exercise_mask=tensors["student_exercise_mask"],
+            response_matrix=tensors["response_matrix"],
+            student_tkc_mask=tensors["student_tkc_mask"],
+            student_concept_evidence=tensors["student_concept_evidence"],
+            drop_frac=ukc_consistency_drop_frac,
+        )
     if dual_tower_branch_bce_weight > 0.0:
         loss = loss + _dual_tower_branch_bce_loss(
             output=output,

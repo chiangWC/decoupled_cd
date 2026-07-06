@@ -318,6 +318,83 @@ class DecoupledCDMV2(nn.Module):
             mastery=mastery,
         )
 
+    def compute_ukc_consistency_loss(
+        self,
+        *,
+        q_matrix: torch.Tensor,
+        concept_graph: torch.Tensor,
+        student_exercise_mask: torch.Tensor,
+        response_matrix: torch.Tensor,
+        student_tkc_mask: torch.Tensor,
+        student_concept_evidence: torch.Tensor | None,
+        drop_frac: float = 0.2,
+    ) -> torch.Tensor:
+        """
+        Module 4 (weak form): masked-concept state consistency. Randomly demote a
+        fraction of each student's tested concepts to pseudo-UKC, re-run
+        propagation, and pull the inferred UKC state toward the (stop-gradient)
+        observed TKC state, weighted by evidence confidence. Response labels are
+        never used as targets, so UKC states receive no direct behaviour
+        supervision — the training pressure is purely state-level.
+
+        The masked pass keeps the full response matrix, so multi-concept
+        exercises shared with a dropped concept still inform its neighbors;
+        only the dropped concept's own TKC state is hidden.
+        """
+        if not self.ukc_propagation:
+            raise ValueError("compute_ukc_consistency_loss requires ukc_propagation=True.")
+        if not 0.0 < drop_frac < 1.0:
+            raise ValueError("drop_frac must be in (0, 1).")
+
+        with torch.no_grad():
+            reference = self.propagation(
+                concept_embeddings=self.concept_embedding.weight,
+                exercise_embeddings=self.exercise_embedding.weight,
+                q_matrix=q_matrix,
+                concept_graph=concept_graph,
+                student_exercise_mask=student_exercise_mask,
+                response_matrix=response_matrix,
+                student_tkc_mask=student_tkc_mask,
+                student_ukc_mask=(1.0 - student_tkc_mask).clamp(min=0.0, max=1.0),
+                student_concept_evidence=student_concept_evidence,
+            )
+            targets = reference.tkc_states
+
+        drop_mask = (
+            (torch.rand_like(student_tkc_mask) < drop_frac) & (student_tkc_mask > 0)
+        ).to(student_tkc_mask.dtype)
+        if float(drop_mask.sum().item()) < 1.0:
+            return student_tkc_mask.new_zeros(())
+
+        masked_tkc = student_tkc_mask * (1.0 - drop_mask)
+        masked_ukc = (1.0 - masked_tkc).clamp(min=0.0, max=1.0)
+        masked_pass = self.propagation(
+            concept_embeddings=self.concept_embedding.weight,
+            exercise_embeddings=self.exercise_embedding.weight,
+            q_matrix=q_matrix,
+            concept_graph=concept_graph,
+            student_exercise_mask=student_exercise_mask,
+            response_matrix=response_matrix,
+            student_tkc_mask=masked_tkc,
+            student_ukc_mask=masked_ukc,
+            student_concept_evidence=student_concept_evidence,
+        )
+        inferred = masked_pass.ukc_states
+
+        if student_concept_evidence is not None:
+            attempts = student_concept_evidence[..., 0].to(dtype=targets.dtype)
+            confidence = (
+                torch.log1p(attempts)
+                / torch.log1p(torch.tensor(self.ukc_evidence_cap, dtype=targets.dtype, device=targets.device))
+            ).clamp(min=0.0, max=1.0)
+        else:
+            confidence = torch.ones_like(student_tkc_mask)
+
+        weight = drop_mask * confidence
+        squared_error = (inferred - targets.detach()).square().sum(dim=-1)
+        concept_dim = targets.size(-1)
+        return (squared_error * weight).sum() / (weight.sum().clamp_min(1.0) * float(concept_dim))
+
     def _build_exercise_q_representation(
         self,
         *,
