@@ -14,7 +14,10 @@ class PositiveLinear(nn.Module):
         super().__init__()
         self.raw_weight = nn.Parameter(torch.empty(out_features, in_features))
         self.bias = nn.Parameter(torch.zeros(out_features))
-        nn.init.xavier_uniform_(self.raw_weight)
+        # Initialize so softplus(raw) is small (~0.02): xavier-style magnitudes
+        # would make every effective weight ~0.5, saturating downstream sigmoids
+        # over hundreds of inputs and collapsing the model to constant output.
+        nn.init.normal_(self.raw_weight, mean=-4.0, std=0.5)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         return F.linear(inputs, F.softplus(self.raw_weight), self.bias)
