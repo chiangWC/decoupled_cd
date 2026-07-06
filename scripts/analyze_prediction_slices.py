@@ -92,6 +92,8 @@ def load_model(
             bounded_gs=bool(summary.get("v2_bounded_gs", False)),
             hybrid_readout=bool(summary.get("v2_hybrid_readout", False)),
             target_fusion=bool(summary.get("v2_target_fusion", False)),
+            lowrank_mastery=bool(summary.get("v2_lowrank_mastery", False)),
+            lowrank_dim=int(summary.get("v2_lowrank_dim", 64)),
             gs_max_guess=float(summary.get("v2_gs_max_guess", 0.3)),
             gs_max_slip=float(summary.get("v2_gs_max_slip", 0.3)),
         )

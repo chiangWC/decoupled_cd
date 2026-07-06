@@ -53,6 +53,8 @@ class DecoupledCDMV2(nn.Module):
         bounded_gs: bool = False,
         hybrid_readout: bool = False,
         target_fusion: bool = False,
+        lowrank_mastery: bool = False,
+        lowrank_dim: int = 64,
         gs_max_guess: float = 0.3,
         gs_max_slip: float = 0.3,
     ):
@@ -63,6 +65,10 @@ class DecoupledCDMV2(nn.Module):
             raise ValueError("monotonic_readout requires target_aware_readout or hybrid_readout.")
         if hybrid_readout and target_aware_readout:
             raise ValueError("hybrid_readout and target_aware_readout are mutually exclusive.")
+        if lowrank_mastery and not (target_aware_readout or hybrid_readout):
+            raise ValueError("lowrank_mastery requires target_aware_readout or hybrid_readout.")
+        if lowrank_dim < 1:
+            raise ValueError("lowrank_dim must be positive.")
         if not 0.0 < gs_max_guess < 1.0 or not 0.0 < gs_max_slip < 1.0:
             raise ValueError("gs_max_guess and gs_max_slip must be in (0, 1).")
         self.gs_mode = gs_mode
@@ -72,6 +78,7 @@ class DecoupledCDMV2(nn.Module):
         self.bounded_gs = bounded_gs
         self.hybrid_readout = hybrid_readout
         self.target_fusion = target_fusion
+        self.lowrank_mastery = lowrank_mastery
         self.gs_max_guess = float(gs_max_guess)
         self.gs_max_slip = float(gs_max_slip)
         self.ukc_evidence_cap = float(ukc_evidence_cap)
@@ -103,6 +110,18 @@ class DecoupledCDMV2(nn.Module):
         if target_aware_readout or hybrid_readout:
             self.mastery_head = nn.Linear(concept_dim, 1)
             self.concept_attention = nn.Linear(concept_dim + 2, 1)
+            if lowrank_mastery:
+                # Mastery = sigma(<u_s, c_k> + w * h_{s,k}): a KaNCD-style low-rank
+                # extrapolation base plus a zero-init graph-state correction, so the
+                # head starts as pure low-rank and the decoupled propagation refines it.
+                self.mastery_student_latent = nn.Embedding(num_students, lowrank_dim)
+                self.mastery_concept_latent = nn.Parameter(torch.empty(num_concepts, lowrank_dim))
+                nn.init.xavier_uniform_(self.mastery_concept_latent)
+                nn.init.zeros_(self.mastery_head.weight)
+                nn.init.zeros_(self.mastery_head.bias)
+            else:
+                self.mastery_student_latent = None
+                self.mastery_concept_latent = None
             if monotonic_readout:
                 self.concept_difficulty = nn.Embedding(num_concepts, 1)
                 nn.init.zeros_(self.concept_difficulty.weight)
@@ -133,6 +152,8 @@ class DecoupledCDMV2(nn.Module):
             self.exercise_discrimination = None
             self.mono_scale_raw = None
             self.concept_score_mlp = None
+            self.mastery_student_latent = None
+            self.mastery_concept_latent = None
 
         if target_aware_readout:
             self.cognitive_match_mlp = None
@@ -157,6 +178,11 @@ class DecoupledCDMV2(nn.Module):
             # Zero-init so target fusion starts as an exact no-op residual.
             nn.init.zeros_(self.target_fusion_match_mlp[-1].weight)
             nn.init.zeros_(self.target_fusion_match_mlp[-1].bias)
+            # Start the local gate near the observed TKC-saturated regime
+            # (w ~ 0.88); a mid-range random gate destabilizes training when
+            # combined with the personalized UKC residual (1/3 diverged seeds).
+            nn.init.zeros_(self.target_fusion_gate[-1].weight)
+            nn.init.constant_(self.target_fusion_gate[-1].bias, 2.0)
         else:
             self.target_fusion_gate = None
             self.target_fusion_match_mlp = None
@@ -246,7 +272,14 @@ class DecoupledCDMV2(nn.Module):
         mastery = None
         if self.target_aware_readout or self.hybrid_readout:
             per_concept_states = propagated.tkc_states + propagated.ukc_states
-            mastery = torch.sigmoid(self.mastery_head(per_concept_states).squeeze(-1))
+            mastery_logits = self.mastery_head(per_concept_states).squeeze(-1)
+            if self.lowrank_mastery:
+                if student_indices is not None:
+                    student_latent = self.mastery_student_latent(student_indices)
+                else:
+                    student_latent = self.mastery_student_latent.weight
+                mastery_logits = mastery_logits + student_latent @ self.mastery_concept_latent.t()
+            mastery = torch.sigmoid(mastery_logits)
         if self.target_aware_readout:
             cognitive_logits = self._build_target_aware_logits(
                 q_vectors=q_vectors,

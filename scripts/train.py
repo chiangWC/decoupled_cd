@@ -95,6 +95,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--v2-lowrank-mastery",
+        action="store_true",
+        help=(
+            "V2 mastery-head surgery: low-rank student x concept extrapolation base plus a "
+            "zero-init graph-state correction. Requires a mastery head "
+            "(--v2-target-aware-readout or --v2-hybrid-readout)."
+        ),
+    )
+    parser.add_argument("--v2-lowrank-dim", type=int, default=64)
+    parser.add_argument(
         "--v2-target-fusion",
         action="store_true",
         help=(
@@ -586,6 +596,7 @@ V2_ONLY_FLAG_ATTRS = (
     "v2_bounded_gs",
     "v2_hybrid_readout",
     "v2_target_fusion",
+    "v2_lowrank_mastery",
 )
 
 
@@ -613,6 +624,10 @@ def validate_model_args(args: argparse.Namespace) -> None:
         raise ValueError("--v2-monotonic-readout requires --v2-target-aware-readout or --v2-hybrid-readout.")
     if args.v2_hybrid_readout and args.v2_target_aware_readout:
         raise ValueError("--v2-hybrid-readout and --v2-target-aware-readout are mutually exclusive.")
+    if args.v2_lowrank_mastery and not (args.v2_target_aware_readout or args.v2_hybrid_readout):
+        raise ValueError("--v2-lowrank-mastery requires --v2-target-aware-readout or --v2-hybrid-readout.")
+    if args.v2_lowrank_dim < 1:
+        raise ValueError("--v2-lowrank-dim must be positive.")
     if args.v2_ukc_consistency_weight < 0.0:
         raise ValueError("--v2-ukc-consistency-weight must be non-negative.")
     if args.v2_ukc_consistency_weight > 0.0:
@@ -801,6 +816,8 @@ def main() -> None:
             bounded_gs=args.v2_bounded_gs,
             hybrid_readout=args.v2_hybrid_readout,
             target_fusion=args.v2_target_fusion,
+            lowrank_mastery=args.v2_lowrank_mastery,
+            lowrank_dim=args.v2_lowrank_dim,
             gs_max_guess=args.v2_gs_max_guess,
             gs_max_slip=args.v2_gs_max_slip,
         )
@@ -893,6 +910,8 @@ def main() -> None:
         "v2_target_fusion": args.v2_target_fusion,
         "v2_ukc_consistency_weight": args.v2_ukc_consistency_weight,
         "v2_ukc_consistency_drop_frac": args.v2_ukc_consistency_drop_frac,
+        "v2_lowrank_mastery": args.v2_lowrank_mastery,
+        "v2_lowrank_dim": args.v2_lowrank_dim,
         "v2_gs_max_guess": args.v2_gs_max_guess,
         "v2_gs_max_slip": args.v2_gs_max_slip,
         "b0_prior_weight": args.b0_prior_weight,
