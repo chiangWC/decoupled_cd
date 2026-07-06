@@ -557,6 +557,8 @@ def validate_model_args(args: argparse.Namespace) -> None:
             )
         if args.history_evidence_cognitive_alignment_weight > 0.0:
             raise ValueError(f"--model {args.model} does not support history evidence alignment losses.")
+        if args.dual_cdm_branch_bce_weight > 0.0:
+            raise ValueError(f"--model {args.model} does not accept --dual-cdm-branch-bce-weight.")
         if args.graph_mode != "single":
             raise ValueError(f"--model {args.model} supports single-graph mode only.")
     if args.model != "v2":

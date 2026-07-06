@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data import build_transition_matrices, save_concept_graph_csv
+from data.mappings import _normalize_concept_sequence, build_concept_id_map
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,28 +43,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _max_concept_id(frames: list[pd.DataFrame]) -> int:
-    return max(
-        int(token)
-        for frame in frames
-        for text in frame["cpt_seq"].tolist()
-        for token in str(text).split(",")
-        if str(token).strip()
-    )
-
-
 def main() -> None:
     args = parse_args()
     interactions = pd.read_csv(args.interactions)
     universe_frames = [interactions]
     if args.concept_universe:
         universe_frames += [pd.read_csv(path) for path in args.concept_universe]
-    num_concepts = _max_concept_id(universe_frames) + 1
+    # Index the graph in the SAME concept order the training pipeline uses
+    # (build_concept_id_map sorts concept tokens lexicographically as strings);
+    # raw integer ids would misalign rows against the model's Q-matrix indices.
+    concept_id_map = build_concept_id_map(pd.concat(universe_frames, ignore_index=True))
+    num_concepts = len(concept_id_map)
     if not args.concept_universe:
         print(
-            f"[warn] num_concepts={num_concepts} inferred from --interactions only; "
-            "pass --concept-universe train.csv valid.csv test.csv to match the model's Q-matrix dimension.",
+            f"[warn] concept universe ({num_concepts} concepts) inferred from --interactions only; "
+            "pass --concept-universe train.csv valid.csv test.csv so it matches the model's Q-matrix dimension.",
         )
+    interactions = interactions.copy()
+    interactions["cpt_seq"] = interactions["cpt_seq"].map(
+        lambda raw: ",".join(str(concept_id_map[token]) for token in _normalize_concept_sequence(raw))
+    )
     outputs = build_transition_matrices(interactions=interactions, num_concepts=num_concepts)
 
     output_dir = Path(args.output_dir)
@@ -75,9 +74,13 @@ def main() -> None:
     save_concept_graph_csv(outputs["prerequisite_graph"], output_dir / "prerequisite_graph.csv")
     save_concept_graph_csv(outputs["similarity_graph"], output_dir / "similarity_graph.csv")
 
+    with open(output_dir / "concept_id_map.json", "w", encoding="utf-8") as f:
+        json.dump(concept_id_map, f, indent=2, ensure_ascii=False)
+
     summary = {
         "interactions_path": str(Path(args.interactions).resolve()),
         "concept_universe": [str(Path(p).resolve()) for p in (args.concept_universe or [])],
+        "concept_index_order": "pipeline_lexicographic_string_sort",
         "num_concepts": num_concepts,
         "threshold": outputs["threshold"],
         "num_prerequisite_edges": outputs["num_prerequisite_edges"],

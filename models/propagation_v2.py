@@ -88,6 +88,8 @@ class DecoupledPropagationV2(nn.Module):
         exercise_embeddings: torch.Tensor,
         q_matrix: torch.Tensor,
         concept_graph: torch.Tensor,
+        prerequisite_graph: torch.Tensor | None = None,
+        similarity_graph: torch.Tensor | None = None,
         student_exercise_mask: torch.Tensor,
         response_matrix: torch.Tensor,
         student_tkc_mask: torch.Tensor,
@@ -95,6 +97,8 @@ class DecoupledPropagationV2(nn.Module):
         student_concept_evidence: torch.Tensor | None = None,
         student_indices: torch.Tensor | None = None,
     ) -> PropagationOutput:
+        if prerequisite_graph is not None or similarity_graph is not None:
+            raise ValueError("DecoupledPropagationV2 supports single-graph mode only.")
         if student_indices is not None:
             if student_indices.dim() != 1:
                 raise ValueError("student_indices must be a 1D tensor.")

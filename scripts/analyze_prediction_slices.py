@@ -204,6 +204,7 @@ def predict_bundle(*, bundle: Any, model: DecoupledCDM | DecoupledCDMEnsemble, d
             student_tkc_mask=tensors["student_tkc_mask"],
             student_ukc_mask=tensors["student_ukc_mask"],
             student_concept_evidence=tensors["student_concept_evidence"],
+            exercise_evidence=tensors["exercise_evidence"],
             target_student_ids=tensors["interaction_student_ids"],
             target_exercise_ids=tensors["interaction_exercise_ids"],
             use_student_subset=True,
