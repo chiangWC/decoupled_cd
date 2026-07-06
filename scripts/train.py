@@ -609,8 +609,8 @@ def validate_model_args(args: argparse.Namespace) -> None:
             raise ValueError(
                 f"v2 module flags require --model v2: " + ", ".join(enabled_v2_flags)
             )
-    if args.v2_monotonic_readout and not args.v2_target_aware_readout:
-        raise ValueError("--v2-monotonic-readout requires --v2-target-aware-readout.")
+    if args.v2_monotonic_readout and not (args.v2_target_aware_readout or args.v2_hybrid_readout):
+        raise ValueError("--v2-monotonic-readout requires --v2-target-aware-readout or --v2-hybrid-readout.")
     if args.v2_hybrid_readout and args.v2_target_aware_readout:
         raise ValueError("--v2-hybrid-readout and --v2-target-aware-readout are mutually exclusive.")
     if args.v2_ukc_consistency_weight < 0.0:

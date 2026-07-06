@@ -59,8 +59,8 @@ class DecoupledCDMV2(nn.Module):
         super().__init__()
         if gs_mode not in {"constant", "conditional"}:
             raise ValueError(f"Unsupported gs_mode: {gs_mode}")
-        if monotonic_readout and not target_aware_readout:
-            raise ValueError("monotonic_readout requires target_aware_readout.")
+        if monotonic_readout and not (target_aware_readout or hybrid_readout):
+            raise ValueError("monotonic_readout requires target_aware_readout or hybrid_readout.")
         if hybrid_readout and target_aware_readout:
             raise ValueError("hybrid_readout and target_aware_readout are mutually exclusive.")
         if not 0.0 < gs_max_guess < 1.0 or not 0.0 < gs_max_slip < 1.0:
@@ -108,7 +108,10 @@ class DecoupledCDMV2(nn.Module):
                 nn.init.zeros_(self.concept_difficulty.weight)
                 self.exercise_discrimination = nn.Embedding(num_exercises, 1)
                 nn.init.zeros_(self.exercise_discrimination.weight)
-                self.mono_scale_raw = nn.Parameter(torch.tensor(1.5))
+                # Replace mode carries the whole prediction (scale ~ softplus(1.5) = 1.7);
+                # hybrid mode is a residual and starts near zero (softplus(-4) = 0.018)
+                # while keeping the scale positive, hence monotone in mastery.
+                self.mono_scale_raw = nn.Parameter(torch.tensor(-4.0 if hybrid_readout else 1.5))
                 self.concept_score_mlp = None
             else:
                 self.concept_difficulty = None
@@ -456,8 +459,6 @@ class DecoupledCDMV2(nn.Module):
         attention = attention / attention.sum(dim=1, keepdim=True).clamp_min(1e-6)
 
         if self.monotonic_readout:
-            if residual_only:
-                raise ValueError("monotonic readout cannot be used as a residual head.")
             concept_difficulty = self.concept_difficulty(safe_indices).squeeze(-1)
             item_difficulty = torch.sigmoid(difficulty.unsqueeze(1) + concept_difficulty)
             per_concept_signal = gathered_mastery - item_difficulty
