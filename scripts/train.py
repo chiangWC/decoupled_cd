@@ -124,6 +124,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--v2-rg-layers", type=int, default=2)
     parser.add_argument(
+        "--v2-rg-mastery",
+        action="store_true",
+        help=(
+            "Deep response-graph integration: K-dim student/exercise embeddings propagated over "
+            "the train-only right/wrong response graphs directly form the mastery logit base "
+            "(replacement, not residual). Requires a mastery head."
+        ),
+    )
+    parser.add_argument(
         "--v2-target-fusion",
         action="store_true",
         help=(
@@ -617,6 +626,7 @@ V2_ONLY_FLAG_ATTRS = (
     "v2_target_fusion",
     "v2_lowrank_mastery",
     "v2_response_graph",
+    "v2_rg_mastery",
 )
 
 
@@ -646,6 +656,10 @@ def validate_model_args(args: argparse.Namespace) -> None:
         raise ValueError("--v2-hybrid-readout and --v2-target-aware-readout are mutually exclusive.")
     if args.v2_lowrank_mastery and not (args.v2_target_aware_readout or args.v2_hybrid_readout):
         raise ValueError("--v2-lowrank-mastery requires --v2-target-aware-readout or --v2-hybrid-readout.")
+    if args.v2_rg_mastery and not (args.v2_target_aware_readout or args.v2_hybrid_readout):
+        raise ValueError("--v2-rg-mastery requires --v2-target-aware-readout or --v2-hybrid-readout.")
+    if args.v2_rg_mastery and args.v2_lowrank_mastery:
+        raise ValueError("--v2-rg-mastery and --v2-lowrank-mastery are mutually exclusive.")
     if args.v2_lowrank_dim < 1:
         raise ValueError("--v2-lowrank-dim must be positive.")
     if args.v2_mastery_aux_weight < 0.0:
@@ -848,6 +862,7 @@ def main() -> None:
             mastery_aux_head=args.v2_mastery_aux_weight > 0.0,
             response_graph_encoder=args.v2_response_graph,
             response_graph_layers=args.v2_rg_layers,
+            rg_mastery=args.v2_rg_mastery,
             gs_max_guess=args.v2_gs_max_guess,
             gs_max_slip=args.v2_gs_max_slip,
         )
@@ -946,6 +961,7 @@ def main() -> None:
         "v2_mastery_aux_weight": args.v2_mastery_aux_weight,
         "v2_response_graph": args.v2_response_graph,
         "v2_rg_layers": args.v2_rg_layers,
+        "v2_rg_mastery": args.v2_rg_mastery,
         "v2_gs_max_guess": args.v2_gs_max_guess,
         "v2_gs_max_slip": args.v2_gs_max_slip,
         "b0_prior_weight": args.b0_prior_weight,

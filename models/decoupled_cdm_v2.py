@@ -58,6 +58,7 @@ class DecoupledCDMV2(nn.Module):
         mastery_aux_head: bool = False,
         response_graph_encoder: bool = False,
         response_graph_layers: int = 2,
+        rg_mastery: bool = False,
         gs_max_guess: float = 0.3,
         gs_max_slip: float = 0.3,
     ):
@@ -72,6 +73,10 @@ class DecoupledCDMV2(nn.Module):
             raise ValueError("lowrank_mastery requires target_aware_readout or hybrid_readout.")
         if mastery_aux_head and not monotonic_readout:
             raise ValueError("mastery_aux_head requires monotonic_readout (it reuses the monotone scoring path).")
+        if rg_mastery and not (target_aware_readout or hybrid_readout):
+            raise ValueError("rg_mastery requires target_aware_readout or hybrid_readout.")
+        if rg_mastery and lowrank_mastery:
+            raise ValueError("rg_mastery and lowrank_mastery are mutually exclusive.")
         if lowrank_dim < 1:
             raise ValueError("lowrank_dim must be positive.")
         if not 0.0 < gs_max_guess < 1.0 or not 0.0 < gs_max_slip < 1.0:
@@ -86,6 +91,7 @@ class DecoupledCDMV2(nn.Module):
         self.lowrank_mastery = lowrank_mastery
         self.mastery_aux_head = mastery_aux_head
         self.response_graph_encoder = response_graph_encoder
+        self.rg_mastery = rg_mastery
         self.gs_max_guess = float(gs_max_guess)
         self.gs_max_slip = float(gs_max_slip)
         self.ukc_evidence_cap = float(ukc_evidence_cap)
@@ -212,6 +218,24 @@ class DecoupledCDMV2(nn.Module):
             self.rg_exercise_proj = None
             self.rg_student_proj = None
 
+        if rg_mastery:
+            # ORCDF-style mastery base: K-dim student/exercise embeddings propagated
+            # over the train-only right/wrong response graphs. The propagated K-dim
+            # student state IS the mastery logit base (replacement, not residual);
+            # the graph-state head (zero-init) becomes the decoupled correction.
+            self.rgm_encoder = ResponseGraphEncoder(
+                num_students=num_students,
+                num_exercises=num_exercises,
+                dim=num_concepts,
+                layers=response_graph_layers,
+            )
+            self.rgm_exercise_base = nn.Embedding(num_exercises, num_concepts)
+            nn.init.zeros_(self.mastery_head.weight)
+            nn.init.zeros_(self.mastery_head.bias)
+        else:
+            self.rgm_encoder = None
+            self.rgm_exercise_base = None
+
         if bounded_gs:
             self.guess_logit = None
             self.slip_logit = None
@@ -314,6 +338,15 @@ class DecoupledCDMV2(nn.Module):
                 else:
                     student_latent = self.mastery_student_latent.weight
                 mastery_logits = mastery_logits + student_latent @ self.mastery_concept_latent.t()
+            if self.rg_mastery:
+                rgm_student, _ = self.rgm_encoder(
+                    student_exercise_mask=student_exercise_mask,
+                    response_matrix=response_matrix,
+                    exercise_embeddings=self.rgm_exercise_base.weight,
+                )
+                if student_indices is not None:
+                    rgm_student = rgm_student[student_indices]
+                mastery_logits = mastery_logits + rgm_student
             mastery = torch.sigmoid(mastery_logits)
         if self.target_aware_readout:
             cognitive_logits = self._build_target_aware_logits(
