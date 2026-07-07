@@ -115,6 +115,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--v2-response-graph",
+        action="store_true",
+        help=(
+            "V2 encoder upgrade: ORCDF-style right/wrong response-graph LightGCN encoder feeding "
+            "zero-init residuals into the exercise embeddings and the fused student state."
+        ),
+    )
+    parser.add_argument("--v2-rg-layers", type=int, default=2)
+    parser.add_argument(
         "--v2-target-fusion",
         action="store_true",
         help=(
@@ -607,6 +616,7 @@ V2_ONLY_FLAG_ATTRS = (
     "v2_hybrid_readout",
     "v2_target_fusion",
     "v2_lowrank_mastery",
+    "v2_response_graph",
 )
 
 
@@ -836,6 +846,8 @@ def main() -> None:
             lowrank_mastery=args.v2_lowrank_mastery,
             lowrank_dim=args.v2_lowrank_dim,
             mastery_aux_head=args.v2_mastery_aux_weight > 0.0,
+            response_graph_encoder=args.v2_response_graph,
+            response_graph_layers=args.v2_rg_layers,
             gs_max_guess=args.v2_gs_max_guess,
             gs_max_slip=args.v2_gs_max_slip,
         )
@@ -932,6 +944,8 @@ def main() -> None:
         "v2_lowrank_mastery": args.v2_lowrank_mastery,
         "v2_lowrank_dim": args.v2_lowrank_dim,
         "v2_mastery_aux_weight": args.v2_mastery_aux_weight,
+        "v2_response_graph": args.v2_response_graph,
+        "v2_rg_layers": args.v2_rg_layers,
         "v2_gs_max_guess": args.v2_gs_max_guess,
         "v2_gs_max_slip": args.v2_gs_max_slip,
         "b0_prior_weight": args.b0_prior_weight,

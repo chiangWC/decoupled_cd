@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .decoupled_cdm import DecoupledForwardOutput
-from .propagation_v2 import DecoupledPropagationV2
+from .propagation_v2 import DecoupledPropagationV2, ResponseGraphEncoder
 
 
 class DecoupledCDMV2(nn.Module):
@@ -56,6 +56,8 @@ class DecoupledCDMV2(nn.Module):
         lowrank_mastery: bool = False,
         lowrank_dim: int = 64,
         mastery_aux_head: bool = False,
+        response_graph_encoder: bool = False,
+        response_graph_layers: int = 2,
         gs_max_guess: float = 0.3,
         gs_max_slip: float = 0.3,
     ):
@@ -83,6 +85,7 @@ class DecoupledCDMV2(nn.Module):
         self.target_fusion = target_fusion
         self.lowrank_mastery = lowrank_mastery
         self.mastery_aux_head = mastery_aux_head
+        self.response_graph_encoder = response_graph_encoder
         self.gs_max_guess = float(gs_max_guess)
         self.gs_max_slip = float(gs_max_slip)
         self.ukc_evidence_cap = float(ukc_evidence_cap)
@@ -191,6 +194,24 @@ class DecoupledCDMV2(nn.Module):
             self.target_fusion_gate = None
             self.target_fusion_match_mlp = None
 
+        if response_graph_encoder:
+            self.rg_encoder = ResponseGraphEncoder(
+                num_students=num_students,
+                num_exercises=num_exercises,
+                dim=concept_dim,
+                layers=response_graph_layers,
+            )
+            # Zero-init projections: the encoder starts as an exact no-op on
+            # both consumption points and grows only if it carries signal.
+            self.rg_exercise_proj = nn.Linear(concept_dim, concept_dim, bias=False)
+            self.rg_student_proj = nn.Linear(concept_dim, concept_dim, bias=False)
+            nn.init.zeros_(self.rg_exercise_proj.weight)
+            nn.init.zeros_(self.rg_student_proj.weight)
+        else:
+            self.rg_encoder = None
+            self.rg_exercise_proj = None
+            self.rg_student_proj = None
+
         if bounded_gs:
             self.guess_logit = None
             self.slip_logit = None
@@ -242,6 +263,14 @@ class DecoupledCDMV2(nn.Module):
 
         concept_embeddings = self.concept_embedding.weight
         exercise_embeddings = self.exercise_embedding.weight
+        rg_student_encoded = None
+        if self.response_graph_encoder:
+            rg_student_encoded, rg_exercise_encoded = self.rg_encoder(
+                student_exercise_mask=student_exercise_mask,
+                response_matrix=response_matrix,
+                exercise_embeddings=exercise_embeddings,
+            )
+            exercise_embeddings = exercise_embeddings + self.rg_exercise_proj(rg_exercise_encoded)
         student_indices = None
         state_target_student_ids = target_student_ids
         if use_student_subset:
@@ -264,6 +293,8 @@ class DecoupledCDMV2(nn.Module):
         )
 
         student_state = propagated.student_state[state_target_student_ids]
+        if rg_student_encoded is not None:
+            student_state = student_state + self.rg_student_proj(rg_student_encoded[target_student_ids])
         q_vectors = q_matrix[target_exercise_ids]
         target_exercise_embeddings = exercise_embeddings[target_exercise_ids]
         q_repr = self._build_exercise_q_representation(

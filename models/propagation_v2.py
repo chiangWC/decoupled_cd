@@ -12,6 +12,50 @@ from .hetero_propagation import (
 )
 
 
+class ResponseGraphEncoder(nn.Module):
+    """
+    ORCDF-style response-graph encoder: LightGCN propagation of student and
+    exercise embeddings over degree-normalized right/wrong response graphs
+    (train history only), with a learnable wrong-channel weight. Outputs are
+    layer-averaged embeddings for all students and exercises.
+    """
+
+    def __init__(self, num_students: int, num_exercises: int, dim: int, layers: int = 2):
+        super().__init__()
+        if layers < 1:
+            raise ValueError("response graph layers must be positive.")
+        self.layers = layers
+        self.student_base = nn.Embedding(num_students, dim)
+        self.wrong_channel_weight = nn.Parameter(torch.tensor(-0.5))
+
+    @staticmethod
+    def _normalize(graph: torch.Tensor) -> torch.Tensor:
+        student_degree = graph.sum(dim=1, keepdim=True).clamp_min(1.0)
+        exercise_degree = graph.sum(dim=0, keepdim=True).clamp_min(1.0)
+        return graph / (student_degree.sqrt() * exercise_degree.sqrt())
+
+    def forward(
+        self,
+        *,
+        student_exercise_mask: torch.Tensor,
+        response_matrix: torch.Tensor,
+        exercise_embeddings: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        right = self._normalize(student_exercise_mask * response_matrix)
+        wrong = self._normalize(student_exercise_mask * (1.0 - response_matrix))
+        alpha = self.wrong_channel_weight
+        student_layers = [self.student_base.weight]
+        exercise_layers = [exercise_embeddings]
+        for _ in range(self.layers):
+            next_student = right @ exercise_layers[-1] + alpha * (wrong @ exercise_layers[-1])
+            next_exercise = right.t() @ student_layers[-1] + alpha * (wrong.t() @ student_layers[-1])
+            student_layers.append(next_student)
+            exercise_layers.append(next_exercise)
+        student_encoded = torch.stack(student_layers, dim=0).mean(dim=0)
+        exercise_encoded = torch.stack(exercise_layers, dim=0).mean(dim=0)
+        return student_encoded, exercise_encoded
+
+
 class DecoupledPropagationV2(nn.Module):
     """
     V2 propagation. Single-graph only.
