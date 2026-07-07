@@ -59,10 +59,14 @@ class DecoupledCDMV2(nn.Module):
         response_graph_encoder: bool = False,
         response_graph_layers: int = 2,
         rg_mastery: bool = False,
+        readout_dropout: float = 0.0,
         gs_max_guess: float = 0.3,
         gs_max_slip: float = 0.3,
     ):
         super().__init__()
+        if not 0.0 <= readout_dropout < 1.0:
+            raise ValueError("readout_dropout must be in [0, 1).")
+        self._readout_dropout = float(readout_dropout)
         if gs_mode not in {"constant", "conditional"}:
             raise ValueError(f"Unsupported gs_mode: {gs_mode}")
         if monotonic_readout and not (target_aware_readout or hybrid_readout):
@@ -152,6 +156,7 @@ class DecoupledCDMV2(nn.Module):
                 self.concept_score_mlp = nn.Sequential(
                     nn.Linear(concept_dim * 2 + 3, concept_dim),
                     nn.ReLU(),
+                    nn.Dropout(self._readout_dropout),
                     nn.Linear(concept_dim, 1),
                 )
                 if hybrid_readout:
@@ -174,6 +179,7 @@ class DecoupledCDMV2(nn.Module):
             self.cognitive_match_mlp = nn.Sequential(
                 nn.Linear(concept_dim * 4, concept_dim),
                 nn.ReLU(),
+                nn.Dropout(self._readout_dropout),
                 nn.Linear(concept_dim, 1),
             )
 

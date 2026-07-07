@@ -98,6 +98,7 @@ def load_model(
             response_graph_encoder=bool(summary.get("v2_response_graph", False)),
             response_graph_layers=int(summary.get("v2_rg_layers", 2)),
             rg_mastery=bool(summary.get("v2_rg_mastery", False)),
+            readout_dropout=float(summary.get("v2_readout_dropout", 0.0)),
             gs_max_guess=float(summary.get("v2_gs_max_guess", 0.3)),
             gs_max_slip=float(summary.get("v2_gs_max_slip", 0.3)),
         )

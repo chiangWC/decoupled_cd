@@ -164,6 +164,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--v2-gs-max-guess", type=float, default=0.3)
     parser.add_argument("--v2-gs-max-slip", type=float, default=0.3)
     parser.add_argument(
+        "--v2-readout-dropout",
+        type=float,
+        default=0.0,
+        help="Dropout inside the v2 prediction heads (NCF match / concept scorer). Regularizes sparse data.",
+    )
+    parser.add_argument(
         "--v2-ukc-consistency-weight",
         type=float,
         default=0.0,
@@ -897,6 +903,7 @@ def main() -> None:
             response_graph_encoder=args.v2_response_graph,
             response_graph_layers=args.v2_rg_layers,
             rg_mastery=args.v2_rg_mastery,
+            readout_dropout=args.v2_readout_dropout,
             gs_max_guess=args.v2_gs_max_guess,
             gs_max_slip=args.v2_gs_max_slip,
         )
@@ -1002,6 +1009,7 @@ def main() -> None:
         "v2_response_graph": args.v2_response_graph,
         "v2_rg_layers": args.v2_rg_layers,
         "v2_rg_mastery": args.v2_rg_mastery,
+        "v2_readout_dropout": args.v2_readout_dropout,
         "v2_gs_max_guess": args.v2_gs_max_guess,
         "v2_gs_max_slip": args.v2_gs_max_slip,
         "b0_prior_weight": args.b0_prior_weight,
