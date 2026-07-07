@@ -124,6 +124,27 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--v2-rg-layers", type=int, default=2)
     parser.add_argument(
+        "--v2-history-dropout-frac",
+        type=float,
+        default=0.0,
+        help=(
+            "Training recipe: each epoch randomly drop this fraction of observed history entries "
+            "(masks/evidence re-derived) before encoding — augmentation for inference from "
+            "incomplete evidence. full_batch only."
+        ),
+    )
+    parser.add_argument(
+        "--v2-masked-response-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Training recipe: weight of the masked-response self-supervision — hide a fraction of "
+            "history entries and predict the labels of training interactions on the hidden entries. "
+            "full_batch only."
+        ),
+    )
+    parser.add_argument("--v2-masked-response-frac", type=float, default=0.15)
+    parser.add_argument(
         "--v2-rg-mastery",
         action="store_true",
         help=(
@@ -667,8 +688,10 @@ def validate_model_args(args: argparse.Namespace) -> None:
     if args.v2_mastery_aux_weight > 0.0:
         if args.model != "v2" or not args.v2_monotonic_readout:
             raise ValueError("--v2-mastery-aux-weight requires --model v2 with --v2-monotonic-readout.")
-        if args.training_mode != "full_batch":
-            raise ValueError("--v2-mastery-aux-weight is only implemented for full_batch training.")
+        if args.training_mode not in {"full_batch", "student_recompute_minibatch"}:
+            raise ValueError(
+                "--v2-mastery-aux-weight supports full_batch and student_recompute_minibatch training."
+            )
     if args.v2_ukc_consistency_weight < 0.0:
         raise ValueError("--v2-ukc-consistency-weight must be non-negative.")
     if args.v2_ukc_consistency_weight > 0.0:
@@ -678,6 +701,17 @@ def validate_model_args(args: argparse.Namespace) -> None:
             raise ValueError("--v2-ukc-consistency-weight is only implemented for full_batch training.")
     if not 0.0 < args.v2_ukc_consistency_drop_frac < 1.0:
         raise ValueError("--v2-ukc-consistency-drop-frac must be in (0, 1).")
+    if not 0.0 <= args.v2_history_dropout_frac < 1.0:
+        raise ValueError("--v2-history-dropout-frac must be in [0, 1).")
+    if args.v2_masked_response_weight < 0.0:
+        raise ValueError("--v2-masked-response-weight must be non-negative.")
+    if not 0.0 < args.v2_masked_response_frac < 1.0:
+        raise ValueError("--v2-masked-response-frac must be in (0, 1).")
+    if (args.v2_history_dropout_frac > 0.0 or args.v2_masked_response_weight > 0.0):
+        if args.model != "v2":
+            raise ValueError("history dropout / masked response recipes require --model v2.")
+        if args.training_mode != "full_batch":
+            raise ValueError("history dropout / masked response recipes are only implemented for full_batch training.")
     if args.v2_ukc_layers < 1:
         raise ValueError("--v2-ukc-layers must be positive.")
     if args.v2_ukc_evidence_cap <= 0.0:
@@ -922,6 +956,9 @@ def main() -> None:
         ukc_consistency_weight=args.v2_ukc_consistency_weight,
         ukc_consistency_drop_frac=args.v2_ukc_consistency_drop_frac,
         mastery_aux_bce_weight=args.v2_mastery_aux_weight,
+        history_dropout_frac=args.v2_history_dropout_frac,
+        masked_response_weight=args.v2_masked_response_weight,
+        masked_response_frac=args.v2_masked_response_frac,
     )
     evaluation_student_batch_size = (
         args.student_batch_size if args.training_mode == "student_recompute_minibatch" else None
@@ -959,6 +996,9 @@ def main() -> None:
         "v2_lowrank_mastery": args.v2_lowrank_mastery,
         "v2_lowrank_dim": args.v2_lowrank_dim,
         "v2_mastery_aux_weight": args.v2_mastery_aux_weight,
+        "v2_history_dropout_frac": args.v2_history_dropout_frac,
+        "v2_masked_response_weight": args.v2_masked_response_weight,
+        "v2_masked_response_frac": args.v2_masked_response_frac,
         "v2_response_graph": args.v2_response_graph,
         "v2_rg_layers": args.v2_rg_layers,
         "v2_rg_mastery": args.v2_rg_mastery,

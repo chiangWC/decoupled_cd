@@ -266,6 +266,9 @@ def train_model(
     ukc_consistency_weight: float = 0.0,
     ukc_consistency_drop_frac: float = 0.2,
     mastery_aux_bce_weight: float = 0.0,
+    history_dropout_frac: float = 0.0,
+    masked_response_weight: float = 0.0,
+    masked_response_frac: float = 0.15,
 ) -> TrainResult:
     if training_mode not in {"full_batch", "recompute_minibatch", "student_recompute_minibatch"}:
         raise ValueError(f"Unsupported training_mode: {training_mode}")
@@ -275,6 +278,14 @@ def train_model(
         raise ValueError("ukc_consistency_weight is only implemented for full_batch training.")
     if ukc_consistency_weight > 0.0 and not hasattr(model, "compute_ukc_consistency_loss"):
         raise ValueError("ukc_consistency_weight requires a model with compute_ukc_consistency_loss.")
+    if not 0.0 <= history_dropout_frac < 1.0:
+        raise ValueError("history_dropout_frac must be in [0, 1).")
+    if masked_response_weight < 0.0:
+        raise ValueError("masked_response_weight must be non-negative.")
+    if not 0.0 < masked_response_frac < 1.0:
+        raise ValueError("masked_response_frac must be in (0, 1).")
+    if (history_dropout_frac > 0.0 or masked_response_weight > 0.0) and training_mode != "full_batch":
+        raise ValueError("history dropout / masked response losses are only implemented for full_batch training.")
     if batch_size is not None and batch_size <= 0:
         raise ValueError("batch_size must be positive when provided.")
     if student_batch_size is not None and student_batch_size <= 0:
@@ -478,6 +489,9 @@ def train_model(
                     ukc_consistency_weight=ukc_consistency_weight,
                     ukc_consistency_drop_frac=ukc_consistency_drop_frac,
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
+                    history_dropout_frac=history_dropout_frac,
+                    masked_response_weight=masked_response_weight,
+                    masked_response_frac=masked_response_frac,
                     exercise_evidence_difficulty_regularization_weight=exercise_evidence_difficulty_regularization_weight,
                     difficulty_prior_target=difficulty_prior_target,
                     difficulty_prior_mask=difficulty_prior_mask,
@@ -573,6 +587,7 @@ def train_model(
                     tensors=train_tensors,
                     optimizer=optimizer,
                     student_batch_size=int(student_batch_size),
+                    mastery_aux_bce_weight=mastery_aux_bce_weight,
                     exercise_evidence_difficulty_regularization_weight=exercise_evidence_difficulty_regularization_weight,
                     difficulty_prior_target=difficulty_prior_target,
                     difficulty_prior_mask=difficulty_prior_mask,
@@ -753,6 +768,70 @@ def train_model(
     )
 
 
+def _perturb_history_tensors(
+    tensors: dict[str, torch.Tensor | None],
+    *,
+    drop_frac: float,
+) -> tuple[dict[str, torch.Tensor | None], torch.Tensor]:
+    """
+    Randomly drop a fraction of observed (student, exercise) history entries and
+    re-derive the dependent tensors in tensor space (TKC/UKC masks, per-concept
+    evidence counts approximated by distinct-exercise counts). Returns the
+    perturbed tensor dict and the boolean keep-matrix over (S, E).
+    """
+    mask = tensors["student_exercise_mask"]
+    keep = torch.rand_like(mask) >= drop_frac
+    dropped_mask = mask * keep.to(mask.dtype)
+    q_binary = (tensors["q_matrix"] > 0).to(mask.dtype)
+    attempts = dropped_mask @ q_binary
+    correct = (dropped_mask * tensors["response_matrix"]) @ q_binary
+    tkc_mask = (attempts > 0).to(mask.dtype)
+    ukc_mask = (1.0 - tkc_mask).clamp(min=0.0, max=1.0)
+    perturbed = dict(tensors)
+    perturbed["student_exercise_mask"] = dropped_mask
+    perturbed["student_tkc_mask"] = tkc_mask
+    perturbed["student_ukc_mask"] = ukc_mask
+    if tensors["student_concept_evidence"] is not None:
+        perturbed["student_concept_evidence"] = torch.stack([attempts, correct], dim=-1)
+    return perturbed, keep
+
+
+def _masked_response_loss(
+    *,
+    model: DecoupledCDM,
+    tensors: dict[str, torch.Tensor | None],
+    mask_frac: float,
+) -> torch.Tensor:
+    """
+    Masked-response self-supervision: hide a random fraction of observed
+    history entries, then predict the labels of the training interactions
+    that fall on the hidden entries using the masked history. Blocks the
+    transductive look-up shortcut and directly trains inference from
+    incomplete evidence. Supervision stays on observed (tested) responses.
+    """
+    perturbed, keep = _perturb_history_tensors(tensors, drop_frac=mask_frac)
+    student_ids = tensors["interaction_student_ids"]
+    exercise_ids = tensors["interaction_exercise_ids"]
+    hidden_rows = ~keep[student_ids, exercise_ids]
+    if int(hidden_rows.sum().item()) == 0:
+        return tensors["interaction_labels"].new_zeros(())
+    output = model(
+        q_matrix=perturbed["q_matrix"],
+        concept_graph=perturbed["concept_graph"],
+        prerequisite_graph=perturbed["prerequisite_graph"],
+        similarity_graph=perturbed["similarity_graph"],
+        student_exercise_mask=perturbed["student_exercise_mask"],
+        response_matrix=perturbed["response_matrix"],
+        student_tkc_mask=perturbed["student_tkc_mask"],
+        student_ukc_mask=perturbed["student_ukc_mask"],
+        student_concept_evidence=perturbed["student_concept_evidence"],
+        exercise_evidence=perturbed["exercise_evidence"],
+        target_student_ids=student_ids[hidden_rows],
+        target_exercise_ids=exercise_ids[hidden_rows],
+    )
+    return F.binary_cross_entropy(output.probs, tensors["interaction_labels"][hidden_rows])
+
+
 def _train_full_batch_epoch(
     *,
     model: DecoupledCDM,
@@ -781,23 +860,30 @@ def _train_full_batch_epoch(
     ukc_consistency_weight: float = 0.0,
     ukc_consistency_drop_frac: float = 0.2,
     mastery_aux_bce_weight: float = 0.0,
+    history_dropout_frac: float = 0.0,
+    masked_response_weight: float = 0.0,
+    masked_response_frac: float = 0.15,
 ) -> EpochTrainStats:
     model.train()
     optimizer.zero_grad()
 
+    forward_tensors = tensors
+    if history_dropout_frac > 0.0:
+        forward_tensors, _ = _perturb_history_tensors(tensors, drop_frac=history_dropout_frac)
+
     output = model(
-        q_matrix=tensors["q_matrix"],
-        concept_graph=tensors["concept_graph"],
-        prerequisite_graph=tensors["prerequisite_graph"],
-        similarity_graph=tensors["similarity_graph"],
-        student_exercise_mask=tensors["student_exercise_mask"],
-        response_matrix=tensors["response_matrix"],
-        student_tkc_mask=tensors["student_tkc_mask"],
-        student_ukc_mask=tensors["student_ukc_mask"],
-        student_concept_evidence=tensors["student_concept_evidence"],
-        exercise_evidence=tensors["exercise_evidence"],
-        target_student_ids=tensors["interaction_student_ids"],
-        target_exercise_ids=tensors["interaction_exercise_ids"],
+        q_matrix=forward_tensors["q_matrix"],
+        concept_graph=forward_tensors["concept_graph"],
+        prerequisite_graph=forward_tensors["prerequisite_graph"],
+        similarity_graph=forward_tensors["similarity_graph"],
+        student_exercise_mask=forward_tensors["student_exercise_mask"],
+        response_matrix=forward_tensors["response_matrix"],
+        student_tkc_mask=forward_tensors["student_tkc_mask"],
+        student_ukc_mask=forward_tensors["student_ukc_mask"],
+        student_concept_evidence=forward_tensors["student_concept_evidence"],
+        exercise_evidence=forward_tensors["exercise_evidence"],
+        target_student_ids=forward_tensors["interaction_student_ids"],
+        target_exercise_ids=forward_tensors["interaction_exercise_ids"],
     )
     loss = F.binary_cross_entropy(output.probs, tensors["interaction_labels"])
     if mastery_aux_bce_weight > 0.0:
@@ -805,6 +891,12 @@ def _train_full_batch_epoch(
             raise ValueError("mastery_aux_bce_weight requires a model that emits mastery_aux_logits.")
         loss = loss + mastery_aux_bce_weight * F.binary_cross_entropy_with_logits(
             output.mastery_aux_logits, tensors["interaction_labels"]
+        )
+    if masked_response_weight > 0.0:
+        loss = loss + masked_response_weight * _masked_response_loss(
+            model=model,
+            tensors=tensors,
+            mask_frac=masked_response_frac,
         )
     if ukc_consistency_weight > 0.0:
         loss = loss + ukc_consistency_weight * model.compute_ukc_consistency_loss(
@@ -1023,6 +1115,7 @@ def _train_student_recompute_minibatch_epoch(
     checkpoint_distillation_weight: float = 0.0,
     checkpoint_distillation_loss: str = "bce",
     dual_tower_branch_bce_weight: float = 0.0,
+    mastery_aux_bce_weight: float = 0.0,
 ) -> EpochTrainStats:
     model.train()
     num_targets = int(tensors["interaction_labels"].size(0))
@@ -1060,6 +1153,12 @@ def _train_student_recompute_minibatch_epoch(
             use_student_subset=True,
         )
         loss = F.binary_cross_entropy(output.probs, batch_labels)
+        if mastery_aux_bce_weight > 0.0:
+            if getattr(output, "mastery_aux_logits", None) is None:
+                raise ValueError("mastery_aux_bce_weight requires a model that emits mastery_aux_logits.")
+            loss = loss + mastery_aux_bce_weight * F.binary_cross_entropy_with_logits(
+                output.mastery_aux_logits, batch_labels
+            )
         if dual_tower_branch_bce_weight > 0.0:
             loss = loss + _dual_tower_branch_bce_loss(
                 output=output,
