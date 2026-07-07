@@ -90,6 +90,7 @@ def compute_doa(
     rng = np.random.default_rng(seed)
     per_concept_doa: list[float] = []
     per_concept_pairs: list[int] = []
+    per_concept_spearman: list[float] = []
     for concept, attempts_by_student in attempt_sums.items():
         students = np.array(
             [s for s, n in attempts_by_student.items() if n >= min_responses],
@@ -122,14 +123,28 @@ def compute_doa(
         concordant[mastery_diff == 0.0] = 0.5
         per_concept_doa.append(float(concordant.mean()))
         per_concept_pairs.append(int(concordant.size))
+        # Continuous companion: rank correlation between mastery and observed accuracy.
+        if np.std(accuracy) > 0 and np.std(concept_mastery) > 0:
+            acc_rank = np.argsort(np.argsort(accuracy)).astype(np.float64)
+            mas_rank = np.argsort(np.argsort(concept_mastery)).astype(np.float64)
+            rho = np.corrcoef(acc_rank, mas_rank)[0, 1]
+            if np.isfinite(rho):
+                per_concept_spearman.append(float(rho))
 
     if not per_concept_doa:
         return {"doa": float("nan"), "doa_weighted": float("nan"), "num_concepts_evaluated": 0, "num_pairs": 0}
     doa_values = np.array(per_concept_doa, dtype=np.float64)
     pair_counts = np.array(per_concept_pairs, dtype=np.float64)
+    # Bootstrap CI over concepts (resample the per-concept DOA set).
+    boot = rng.choice(doa_values, size=(1000, doa_values.size), replace=True).mean(axis=1)
+    ci_low, ci_high = np.percentile(boot, [2.5, 97.5])
+    spearman = float(np.mean(per_concept_spearman)) if per_concept_spearman else float("nan")
     return {
         "doa": float(doa_values.mean()),
         "doa_weighted": float((doa_values * pair_counts).sum() / pair_counts.sum()),
+        "doa_ci_low": float(ci_low),
+        "doa_ci_high": float(ci_high),
+        "doa_spearman": spearman,
         "num_concepts_evaluated": int(doa_values.size),
         "num_pairs": int(pair_counts.sum()),
     }
