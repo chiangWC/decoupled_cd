@@ -97,6 +97,7 @@ def load_model(
             mastery_aux_head=float(summary.get("v2_mastery_aux_weight", 0.0)) > 0.0,
             response_graph_encoder=bool(summary.get("v2_response_graph", False)),
             response_graph_layers=int(summary.get("v2_rg_layers", 2)),
+            rg_primary=bool(summary.get("v2_rg_primary", False)),
             rg_mastery=bool(summary.get("v2_rg_mastery", False)),
             readout_dropout=float(summary.get("v2_readout_dropout", 0.0)),
             gs_max_guess=float(summary.get("v2_gs_max_guess", 0.3)),

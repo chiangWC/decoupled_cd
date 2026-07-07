@@ -124,6 +124,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--v2-rg-layers", type=int, default=2)
     parser.add_argument(
+        "--v2-rg-primary",
+        action="store_true",
+        help=(
+            "Make the student-exercise response-graph encoder a primary (xavier-init) co-encoder "
+            "of the student state, not a starved zero-init residual. Supplies signal on low-density "
+            "datasets where the concept co-occurrence graph is empty."
+        ),
+    )
+    parser.add_argument(
         "--v2-history-dropout-frac",
         type=float,
         default=0.0,
@@ -653,6 +662,7 @@ V2_ONLY_FLAG_ATTRS = (
     "v2_target_fusion",
     "v2_lowrank_mastery",
     "v2_response_graph",
+    "v2_rg_primary",
     "v2_rg_mastery",
 )
 
@@ -902,6 +912,7 @@ def main() -> None:
             mastery_aux_head=args.v2_mastery_aux_weight > 0.0,
             response_graph_encoder=args.v2_response_graph,
             response_graph_layers=args.v2_rg_layers,
+            rg_primary=args.v2_rg_primary,
             rg_mastery=args.v2_rg_mastery,
             readout_dropout=args.v2_readout_dropout,
             gs_max_guess=args.v2_gs_max_guess,
@@ -1008,6 +1019,7 @@ def main() -> None:
         "v2_masked_response_frac": args.v2_masked_response_frac,
         "v2_response_graph": args.v2_response_graph,
         "v2_rg_layers": args.v2_rg_layers,
+        "v2_rg_primary": args.v2_rg_primary,
         "v2_rg_mastery": args.v2_rg_mastery,
         "v2_readout_dropout": args.v2_readout_dropout,
         "v2_gs_max_guess": args.v2_gs_max_guess,

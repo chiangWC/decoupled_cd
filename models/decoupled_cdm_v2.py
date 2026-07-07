@@ -58,6 +58,7 @@ class DecoupledCDMV2(nn.Module):
         mastery_aux_head: bool = False,
         response_graph_encoder: bool = False,
         response_graph_layers: int = 2,
+        rg_primary: bool = False,
         rg_mastery: bool = False,
         readout_dropout: float = 0.0,
         gs_max_guess: float = 0.3,
@@ -94,7 +95,8 @@ class DecoupledCDMV2(nn.Module):
         self.target_fusion = target_fusion
         self.lowrank_mastery = lowrank_mastery
         self.mastery_aux_head = mastery_aux_head
-        self.response_graph_encoder = response_graph_encoder
+        self.rg_primary = rg_primary
+        self.response_graph_encoder = response_graph_encoder or rg_primary
         self.rg_mastery = rg_mastery
         self.gs_max_guess = float(gs_max_guess)
         self.gs_max_slip = float(gs_max_slip)
@@ -206,19 +208,27 @@ class DecoupledCDMV2(nn.Module):
             self.target_fusion_gate = None
             self.target_fusion_match_mlp = None
 
-        if response_graph_encoder:
+        if response_graph_encoder or rg_primary:
             self.rg_encoder = ResponseGraphEncoder(
                 num_students=num_students,
                 num_exercises=num_exercises,
                 dim=concept_dim,
                 layers=response_graph_layers,
             )
-            # Zero-init projections: the encoder starts as an exact no-op on
-            # both consumption points and grows only if it carries signal.
             self.rg_exercise_proj = nn.Linear(concept_dim, concept_dim, bias=False)
             self.rg_student_proj = nn.Linear(concept_dim, concept_dim, bias=False)
-            nn.init.zeros_(self.rg_exercise_proj.weight)
-            nn.init.zeros_(self.rg_student_proj.weight)
+            if rg_primary:
+                # Primary mode: the student-exercise response graph is a real
+                # co-encoder from epoch 1 (xavier-init), not a starved residual.
+                # This graph is always dense (unlike the concept co-occurrence
+                # graph, which is empty on 1-concept-per-item datasets), so it
+                # supplies signal exactly where the concept graph cannot.
+                nn.init.xavier_uniform_(self.rg_exercise_proj.weight)
+                nn.init.xavier_uniform_(self.rg_student_proj.weight)
+            else:
+                # Zero-init: exact no-op at start, grows only if it carries signal.
+                nn.init.zeros_(self.rg_exercise_proj.weight)
+                nn.init.zeros_(self.rg_student_proj.weight)
         else:
             self.rg_encoder = None
             self.rg_exercise_proj = None
