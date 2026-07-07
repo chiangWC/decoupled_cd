@@ -25,6 +25,7 @@ class DecoupledForwardOutput:
     primary_cognitive_probs: torch.Tensor | None = None
     secondary_cognitive_probs: torch.Tensor | None = None
     mastery: torch.Tensor | None = None
+    mastery_aux_logits: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)

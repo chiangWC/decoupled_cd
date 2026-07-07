@@ -105,6 +105,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--v2-lowrank-dim", type=int, default=64)
     parser.add_argument(
+        "--v2-mastery-aux-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Surgery v2: weight of an auxiliary BCE that predicts each response from the "
+            "monotone mastery term ALONE (fixed scale 4.0), giving the mastery head direct "
+            "training pressure. Requires --v2-monotonic-readout."
+        ),
+    )
+    parser.add_argument(
         "--v2-target-fusion",
         action="store_true",
         help=(
@@ -628,6 +638,13 @@ def validate_model_args(args: argparse.Namespace) -> None:
         raise ValueError("--v2-lowrank-mastery requires --v2-target-aware-readout or --v2-hybrid-readout.")
     if args.v2_lowrank_dim < 1:
         raise ValueError("--v2-lowrank-dim must be positive.")
+    if args.v2_mastery_aux_weight < 0.0:
+        raise ValueError("--v2-mastery-aux-weight must be non-negative.")
+    if args.v2_mastery_aux_weight > 0.0:
+        if args.model != "v2" or not args.v2_monotonic_readout:
+            raise ValueError("--v2-mastery-aux-weight requires --model v2 with --v2-monotonic-readout.")
+        if args.training_mode != "full_batch":
+            raise ValueError("--v2-mastery-aux-weight is only implemented for full_batch training.")
     if args.v2_ukc_consistency_weight < 0.0:
         raise ValueError("--v2-ukc-consistency-weight must be non-negative.")
     if args.v2_ukc_consistency_weight > 0.0:
@@ -818,6 +835,7 @@ def main() -> None:
             target_fusion=args.v2_target_fusion,
             lowrank_mastery=args.v2_lowrank_mastery,
             lowrank_dim=args.v2_lowrank_dim,
+            mastery_aux_head=args.v2_mastery_aux_weight > 0.0,
             gs_max_guess=args.v2_gs_max_guess,
             gs_max_slip=args.v2_gs_max_slip,
         )
@@ -876,6 +894,7 @@ def main() -> None:
         concept_evidence_prior_train_warmup_epochs=args.concept_evidence_prior_train_warmup_epochs,
         ukc_consistency_weight=args.v2_ukc_consistency_weight,
         ukc_consistency_drop_frac=args.v2_ukc_consistency_drop_frac,
+        mastery_aux_bce_weight=args.v2_mastery_aux_weight,
     )
     evaluation_student_batch_size = (
         args.student_batch_size if args.training_mode == "student_recompute_minibatch" else None
@@ -912,6 +931,7 @@ def main() -> None:
         "v2_ukc_consistency_drop_frac": args.v2_ukc_consistency_drop_frac,
         "v2_lowrank_mastery": args.v2_lowrank_mastery,
         "v2_lowrank_dim": args.v2_lowrank_dim,
+        "v2_mastery_aux_weight": args.v2_mastery_aux_weight,
         "v2_gs_max_guess": args.v2_gs_max_guess,
         "v2_gs_max_slip": args.v2_gs_max_slip,
         "b0_prior_weight": args.b0_prior_weight,

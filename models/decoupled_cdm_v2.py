@@ -55,6 +55,7 @@ class DecoupledCDMV2(nn.Module):
         target_fusion: bool = False,
         lowrank_mastery: bool = False,
         lowrank_dim: int = 64,
+        mastery_aux_head: bool = False,
         gs_max_guess: float = 0.3,
         gs_max_slip: float = 0.3,
     ):
@@ -67,6 +68,8 @@ class DecoupledCDMV2(nn.Module):
             raise ValueError("hybrid_readout and target_aware_readout are mutually exclusive.")
         if lowrank_mastery and not (target_aware_readout or hybrid_readout):
             raise ValueError("lowrank_mastery requires target_aware_readout or hybrid_readout.")
+        if mastery_aux_head and not monotonic_readout:
+            raise ValueError("mastery_aux_head requires monotonic_readout (it reuses the monotone scoring path).")
         if lowrank_dim < 1:
             raise ValueError("lowrank_dim must be positive.")
         if not 0.0 < gs_max_guess < 1.0 or not 0.0 < gs_max_slip < 1.0:
@@ -79,6 +82,7 @@ class DecoupledCDMV2(nn.Module):
         self.hybrid_readout = hybrid_readout
         self.target_fusion = target_fusion
         self.lowrank_mastery = lowrank_mastery
+        self.mastery_aux_head = mastery_aux_head
         self.gs_max_guess = float(gs_max_guess)
         self.gs_max_slip = float(gs_max_slip)
         self.ukc_evidence_cap = float(ukc_evidence_cap)
@@ -313,6 +317,22 @@ class DecoupledCDMV2(nn.Module):
                     difficulty=difficulty,
                     residual_only=True,
                 )
+        mastery_aux_logits = None
+        if self.mastery_aux_head and mastery is not None:
+            mastery_aux_logits = self._build_target_aware_logits(
+                q_vectors=q_vectors,
+                mastery=mastery,
+                per_concept_states=per_concept_states,
+                concept_embeddings=concept_embeddings,
+                state_target_student_ids=state_target_student_ids,
+                target_student_ids=target_student_ids,
+                target_exercise_ids=target_exercise_ids,
+                student_concept_evidence=student_concept_evidence,
+                student_tkc_mask=student_tkc_mask,
+                difficulty=difficulty,
+                residual_only=True,
+                fixed_scale=4.0,
+            )
         if self.target_fusion:
             cognitive_logits = cognitive_logits + self._build_target_fusion_residual(
                 q_vectors=q_vectors,
@@ -352,6 +372,7 @@ class DecoupledCDMV2(nn.Module):
             slip_probs=slip_probs,
             difficulty=difficulty,
             mastery=mastery,
+            mastery_aux_logits=mastery_aux_logits,
         )
 
     def compute_ukc_consistency_loss(
@@ -459,6 +480,7 @@ class DecoupledCDMV2(nn.Module):
         student_tkc_mask: torch.Tensor,
         difficulty: torch.Tensor,
         residual_only: bool = False,
+        fixed_scale: float | None = None,
     ) -> torch.Tensor:
         q_mask = q_vectors > 0
         max_concepts = max(int(q_mask.sum(dim=1).max().item()), 1)
@@ -498,7 +520,7 @@ class DecoupledCDMV2(nn.Module):
             discrimination = 1.0 + F.softplus(
                 self.exercise_discrimination(target_exercise_ids).squeeze(-1)
             )
-            scale = F.softplus(self.mono_scale_raw)
+            scale = fixed_scale if fixed_scale is not None else F.softplus(self.mono_scale_raw)
             return discrimination * scale * (attention * per_concept_signal).sum(dim=1)
 
         score_inputs = torch.cat(
