@@ -269,6 +269,9 @@ def train_model(
     history_dropout_frac: float = 0.0,
     masked_response_weight: float = 0.0,
     masked_response_frac: float = 0.15,
+    contrastive_weight: float = 0.0,
+    consistency_weight: float = 0.0,
+    curriculum: bool = False,
 ) -> TrainResult:
     if training_mode not in {"full_batch", "recompute_minibatch", "student_recompute_minibatch"}:
         raise ValueError(f"Unsupported training_mode: {training_mode}")
@@ -588,6 +591,9 @@ def train_model(
                     optimizer=optimizer,
                     student_batch_size=int(student_batch_size),
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
+                    contrastive_weight=contrastive_weight,
+                    consistency_weight=consistency_weight,
+                    curriculum=curriculum,
                     exercise_evidence_difficulty_regularization_weight=exercise_evidence_difficulty_regularization_weight,
                     difficulty_prior_target=difficulty_prior_target,
                     difficulty_prior_mask=difficulty_prior_mask,
@@ -1116,13 +1122,28 @@ def _train_student_recompute_minibatch_epoch(
     checkpoint_distillation_loss: str = "bce",
     dual_tower_branch_bce_weight: float = 0.0,
     mastery_aux_bce_weight: float = 0.0,
+    contrastive_weight: float = 0.0,
+    consistency_weight: float = 0.0,
+    curriculum: bool = False,
 ) -> EpochTrainStats:
     model.train()
     num_targets = int(tensors["interaction_labels"].size(0))
     unique_student_ids = torch.unique(tensors["interaction_student_ids"], sorted=False)
-    student_permutation = unique_student_ids[
-        torch.randperm(unique_student_ids.numel(), device=unique_student_ids.device)
-    ]
+    if curriculum:
+        # Tr-3: order students by evidence density (attempts), easy (dense) first.
+        evidence = tensors["student_concept_evidence"]
+        density = (
+            evidence[..., 0].sum(dim=1)
+            if evidence is not None
+            else tensors["student_exercise_mask"].sum(dim=1)
+        )
+        student_permutation = unique_student_ids[
+            torch.argsort(density[unique_student_ids], descending=True)
+        ]
+    else:
+        student_permutation = unique_student_ids[
+            torch.randperm(unique_student_ids.numel(), device=unique_student_ids.device)
+        ]
     total_loss = 0.0
     optimizer_steps = 0
 
@@ -1159,6 +1180,33 @@ def _train_student_recompute_minibatch_epoch(
             loss = loss + mastery_aux_bce_weight * F.binary_cross_entropy_with_logits(
                 output.mastery_aux_logits, batch_labels
             )
+        if consistency_weight > 0.0 or contrastive_weight > 0.0:
+            perturbed, _ = _perturb_history_tensors(tensors, drop_frac=0.3)
+            view2 = model(
+                q_matrix=perturbed["q_matrix"],
+                concept_graph=perturbed["concept_graph"],
+                prerequisite_graph=perturbed["prerequisite_graph"],
+                similarity_graph=perturbed["similarity_graph"],
+                student_exercise_mask=perturbed["student_exercise_mask"],
+                response_matrix=perturbed["response_matrix"],
+                student_tkc_mask=perturbed["student_tkc_mask"],
+                student_ukc_mask=perturbed["student_ukc_mask"],
+                student_concept_evidence=perturbed["student_concept_evidence"],
+                exercise_evidence=perturbed["exercise_evidence"],
+                target_student_ids=tensors["interaction_student_ids"][batch_indices],
+                target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
+                use_student_subset=True,
+            )
+            if consistency_weight > 0.0:
+                # Tr-2: predictions from full vs masked history should agree.
+                loss = loss + consistency_weight * F.mse_loss(view2.probs, output.probs.detach())
+            if contrastive_weight > 0.0:
+                # Tr-1: InfoNCE pulling the two views of the same student together.
+                z1 = F.normalize(output.student_state[student_ids], dim=-1)
+                z2 = F.normalize(view2.student_state[student_ids], dim=-1)
+                logits = z1 @ z2.t() / 0.2
+                targets = torch.arange(z1.size(0), device=z1.device)
+                loss = loss + contrastive_weight * F.cross_entropy(logits, targets)
         if dual_tower_branch_bce_weight > 0.0:
             loss = loss + _dual_tower_branch_bce_loss(
                 output=output,

@@ -60,11 +60,17 @@ class DecoupledCDMV2(nn.Module):
         response_graph_layers: int = 2,
         rg_primary: bool = False,
         rg_mastery: bool = False,
+        dual_graph: bool = False,
+        attn_readout: bool = False,
+        irt_head: bool = False,
         readout_dropout: float = 0.0,
         gs_max_guess: float = 0.3,
         gs_max_slip: float = 0.3,
     ):
         super().__init__()
+        self.dual_graph = dual_graph
+        self.attn_readout = attn_readout
+        self.irt_head = irt_head
         if not 0.0 <= readout_dropout < 1.0:
             raise ValueError("readout_dropout must be in [0, 1).")
         self._readout_dropout = float(readout_dropout)
@@ -234,6 +240,40 @@ class DecoupledCDMV2(nn.Module):
             self.rg_exercise_proj = None
             self.rg_student_proj = None
 
+        if dual_graph:
+            # Mo-1: student-exercise response graph as a co-equal propagation
+            # channel, gated-fused with the concept-graph student state.
+            self.dg_encoder = ResponseGraphEncoder(
+                num_students=num_students, num_exercises=num_exercises,
+                dim=concept_dim, layers=response_graph_layers,
+            )
+            self.dg_proj = nn.Linear(concept_dim, concept_dim, bias=False)
+            self.dg_gate = nn.Linear(concept_dim * 2, 1)
+        else:
+            self.dg_encoder = None
+            self.dg_proj = None
+            self.dg_gate = None
+
+        if attn_readout:
+            # Mo-2: target-conditioned attention pooling of per-concept states,
+            # replacing the coarse masked mean for the student state.
+            self.attn_query = nn.Linear(concept_dim, concept_dim, bias=False)
+            self.attn_key = nn.Linear(concept_dim, concept_dim, bias=False)
+        else:
+            self.attn_query = None
+            self.attn_key = None
+
+        if irt_head:
+            # Mo-3: MIRT-style structured cognitive logit (theta . q - b) * disc,
+            # a psychometric prior replacing the free NCF match as the base logit.
+            self.irt_theta = nn.Embedding(num_students, concept_dim)
+            self.irt_disc = nn.Embedding(num_exercises, 1)
+            nn.init.xavier_uniform_(self.irt_theta.weight)
+            nn.init.ones_(self.irt_disc.weight)
+        else:
+            self.irt_theta = None
+            self.irt_disc = None
+
         if rg_mastery:
             # ORCDF-style mastery base: K-dim student/exercise embeddings propagated
             # over the train-only right/wrong response graphs. The propagated K-dim
@@ -335,6 +375,23 @@ class DecoupledCDMV2(nn.Module):
         student_state = propagated.student_state[state_target_student_ids]
         if rg_student_encoded is not None:
             student_state = student_state + self.rg_student_proj(rg_student_encoded[target_student_ids])
+        if self.dual_graph:
+            dg_student, _ = self.dg_encoder(
+                student_exercise_mask=student_exercise_mask,
+                response_matrix=response_matrix,
+                exercise_embeddings=exercise_embeddings,
+            )
+            dg_state = self.dg_proj(dg_student[target_student_ids])
+            gate = torch.sigmoid(self.dg_gate(torch.cat([student_state, dg_state], dim=-1)))
+            student_state = gate * student_state + (1.0 - gate) * dg_state
+        if self.attn_readout:
+            student_state = self._attention_student_state(
+                per_concept_states=propagated.tkc_states + propagated.ukc_states,
+                state_target_student_ids=state_target_student_ids,
+                q_matrix=q_matrix,
+                target_exercise_ids=target_exercise_ids,
+                fallback=student_state,
+            )
         q_vectors = q_matrix[target_exercise_ids]
         target_exercise_embeddings = exercise_embeddings[target_exercise_ids]
         q_repr = self._build_exercise_q_representation(
@@ -383,6 +440,12 @@ class DecoupledCDMV2(nn.Module):
                 dim=-1,
             )
             cognitive_logits = self.cognitive_match_mlp(match_inputs).squeeze(-1) - difficulty
+            if self.irt_head:
+                # Mo-3: MIRT structured term (theta . q_concepts - difficulty) * disc.
+                theta = self.irt_theta(target_student_ids)
+                disc = 1.0 + torch.nn.functional.softplus(self.irt_disc(target_exercise_ids).squeeze(-1))
+                irt_logit = disc * ((theta * q_repr).sum(dim=-1) - difficulty)
+                cognitive_logits = cognitive_logits + irt_logit
             if self.hybrid_readout:
                 cognitive_logits = cognitive_logits + self._build_target_aware_logits(
                     q_vectors=q_vectors,
@@ -531,6 +594,31 @@ class DecoupledCDMV2(nn.Module):
         squared_error = (inferred - targets.detach()).square().sum(dim=-1)
         concept_dim = targets.size(-1)
         return (squared_error * weight).sum() / (weight.sum().clamp_min(1.0) * float(concept_dim))
+
+    def _attention_student_state(
+        self,
+        *,
+        per_concept_states: torch.Tensor,
+        state_target_student_ids: torch.Tensor,
+        q_matrix: torch.Tensor,
+        target_exercise_ids: torch.Tensor,
+        fallback: torch.Tensor,
+    ) -> torch.Tensor:
+        # Mo-2: attention over the student's per-concept states, keyed by the
+        # target exercise's concept representation (query), replacing masked mean.
+        states = per_concept_states[state_target_student_ids]          # (B, K, D)
+        q_vectors = (q_matrix[target_exercise_ids] > 0).to(states.dtype)  # (B, K)
+        query = self.attn_query((q_vectors.unsqueeze(-1) * states).sum(dim=1)
+                                / q_vectors.sum(dim=1, keepdim=True).clamp_min(1.0))  # (B, D)
+        keys = self.attn_key(states)                                   # (B, K, D)
+        scores = (keys * query.unsqueeze(1)).sum(dim=-1) / (states.size(-1) ** 0.5)
+        active = (states.abs().sum(dim=-1) > 0).to(states.dtype)
+        scores = scores.masked_fill(active == 0, -1e9)
+        attn = torch.softmax(scores, dim=1).unsqueeze(-1)
+        pooled = (attn * states).sum(dim=1)
+        # If a student has no active concepts, fall back to the masked-mean state.
+        has_active = (active.sum(dim=1, keepdim=True) > 0).to(states.dtype)
+        return has_active * pooled + (1.0 - has_active) * fallback
 
     def _build_exercise_q_representation(
         self,

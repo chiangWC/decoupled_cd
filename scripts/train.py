@@ -123,6 +123,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--v2-rg-layers", type=int, default=2)
+    parser.add_argument("--v2-dual-graph", action="store_true", help="Mo-1: student-exercise response-graph co-propagation channel (gated fusion).")
+    parser.add_argument("--v2-attn-readout", action="store_true", help="Mo-2: target-conditioned attention pooling of per-concept states.")
+    parser.add_argument("--v2-irt-head", action="store_true", help="Mo-3: MIRT structured cognitive logit term.")
+    parser.add_argument("--v2-contrastive-weight", type=float, default=0.0, help="Tr-1: InfoNCE contrastive loss on student states (two dropout views).")
+    parser.add_argument("--v2-consistency-weight", type=float, default=0.0, help="Tr-2: full-vs-masked-history prediction consistency loss.")
+    parser.add_argument("--v2-curriculum", action="store_true", help="Tr-3: evidence-density curriculum ordering of minibatches.")
     parser.add_argument(
         "--v2-rg-primary",
         action="store_true",
@@ -914,6 +920,9 @@ def main() -> None:
             response_graph_layers=args.v2_rg_layers,
             rg_primary=args.v2_rg_primary,
             rg_mastery=args.v2_rg_mastery,
+            dual_graph=args.v2_dual_graph,
+            attn_readout=args.v2_attn_readout,
+            irt_head=args.v2_irt_head,
             readout_dropout=args.v2_readout_dropout,
             gs_max_guess=args.v2_gs_max_guess,
             gs_max_slip=args.v2_gs_max_slip,
@@ -974,6 +983,9 @@ def main() -> None:
         ukc_consistency_weight=args.v2_ukc_consistency_weight,
         ukc_consistency_drop_frac=args.v2_ukc_consistency_drop_frac,
         mastery_aux_bce_weight=args.v2_mastery_aux_weight,
+        contrastive_weight=args.v2_contrastive_weight,
+        consistency_weight=args.v2_consistency_weight,
+        curriculum=args.v2_curriculum,
         history_dropout_frac=args.v2_history_dropout_frac,
         masked_response_weight=args.v2_masked_response_weight,
         masked_response_frac=args.v2_masked_response_frac,
@@ -1020,6 +1032,12 @@ def main() -> None:
         "v2_response_graph": args.v2_response_graph,
         "v2_rg_layers": args.v2_rg_layers,
         "v2_rg_primary": args.v2_rg_primary,
+        "v2_dual_graph": args.v2_dual_graph,
+        "v2_attn_readout": args.v2_attn_readout,
+        "v2_irt_head": args.v2_irt_head,
+        "v2_contrastive_weight": args.v2_contrastive_weight,
+        "v2_consistency_weight": args.v2_consistency_weight,
+        "v2_curriculum": args.v2_curriculum,
         "v2_rg_mastery": args.v2_rg_mastery,
         "v2_readout_dropout": args.v2_readout_dropout,
         "v2_gs_max_guess": args.v2_gs_max_guess,
