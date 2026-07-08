@@ -61,6 +61,8 @@ class DecoupledCDMV2(nn.Module):
         rg_primary: bool = False,
         rg_mastery: bool = False,
         dual_graph: bool = False,
+        dual_graph_adaptive: bool = False,
+        router: bool = False,
         attn_readout: bool = False,
         irt_head: bool = False,
         readout_dropout: float = 0.0,
@@ -68,7 +70,9 @@ class DecoupledCDMV2(nn.Module):
         gs_max_slip: float = 0.3,
     ):
         super().__init__()
-        self.dual_graph = dual_graph
+        self.dual_graph = dual_graph or dual_graph_adaptive or router
+        self.dual_graph_adaptive = dual_graph_adaptive
+        self.router = router
         self.attn_readout = attn_readout
         self.irt_head = irt_head
         if not 0.0 <= readout_dropout < 1.0:
@@ -240,7 +244,7 @@ class DecoupledCDMV2(nn.Module):
             self.rg_exercise_proj = None
             self.rg_student_proj = None
 
-        if dual_graph:
+        if self.dual_graph:
             # Mo-1: student-exercise response graph as a co-equal propagation
             # channel, gated-fused with the concept-graph student state.
             self.dg_encoder = ResponseGraphEncoder(
@@ -248,11 +252,24 @@ class DecoupledCDMV2(nn.Module):
                 dim=concept_dim, layers=response_graph_layers,
             )
             self.dg_proj = nn.Linear(concept_dim, concept_dim, bias=False)
-            self.dg_gate = nn.Linear(concept_dim * 2, 1)
+            # +1 input dim carries the per-student local graph-density feature,
+            # so the gate can suppress the response-graph channel where the
+            # concept graph is already dense (preserving decoupling diagnosis).
+            gate_in = concept_dim * 2 + (1 if (dual_graph_adaptive or router) else 0)
+            self.dg_gate = nn.Linear(gate_in, 1)
+            if router:
+                # Meta-router: reads only structure signals (density, coverage)
+                # to decide how much response-graph signal to admit per student.
+                self.router_gate = nn.Sequential(
+                    nn.Linear(2, 16), nn.ReLU(), nn.Linear(16, 1),
+                )
+            else:
+                self.router_gate = None
         else:
             self.dg_encoder = None
             self.dg_proj = None
             self.dg_gate = None
+            self.router_gate = None
 
         if attn_readout:
             # Mo-2: target-conditioned attention pooling of per-concept states,
@@ -382,8 +399,28 @@ class DecoupledCDMV2(nn.Module):
                 exercise_embeddings=exercise_embeddings,
             )
             dg_state = self.dg_proj(dg_student[target_student_ids])
-            gate = torch.sigmoid(self.dg_gate(torch.cat([student_state, dg_state], dim=-1)))
-            student_state = gate * student_state + (1.0 - gate) * dg_state
+            if self.dual_graph_adaptive or self.router:
+                # Per-student local concept-graph density = mean degree over the
+                # concepts the student has been tested on. High = concept graph
+                # already informative -> gate should keep the decoupling state.
+                degree = concept_graph.sum(dim=1)                       # (K,)
+                tkc = student_tkc_mask[target_student_ids]              # (B, K)
+                density = (tkc * degree.unsqueeze(0)).sum(dim=1) / tkc.sum(dim=1).clamp_min(1.0)
+                density_feat = torch.log1p(density).unsqueeze(-1)       # (B, 1)
+            if self.router:
+                coverage = student_tkc_mask[target_student_ids].mean(dim=1, keepdim=True)
+                # Structure-only router: g -> keep decoupling state at high
+                # density/coverage, admit response-graph signal when sparse.
+                g = torch.sigmoid(self.router_gate(torch.cat([density_feat, coverage], dim=-1)))
+                student_state = g * student_state + (1.0 - g) * dg_state
+            elif self.dual_graph_adaptive:
+                gate = torch.sigmoid(
+                    self.dg_gate(torch.cat([student_state, dg_state, density_feat], dim=-1))
+                )
+                student_state = gate * student_state + (1.0 - gate) * dg_state
+            else:
+                gate = torch.sigmoid(self.dg_gate(torch.cat([student_state, dg_state], dim=-1)))
+                student_state = gate * student_state + (1.0 - gate) * dg_state
         if self.attn_readout:
             student_state = self._attention_student_state(
                 per_concept_states=propagated.tkc_states + propagated.ukc_states,

@@ -99,6 +99,8 @@ def load_model(
             response_graph_layers=int(summary.get("v2_rg_layers", 2)),
             rg_primary=bool(summary.get("v2_rg_primary", False)),
             dual_graph=bool(summary.get("v2_dual_graph", False)),
+            dual_graph_adaptive=bool(summary.get("v2_dual_graph_adaptive", False)),
+            router=bool(summary.get("v2_router", False)),
             attn_readout=bool(summary.get("v2_attn_readout", False)),
             irt_head=bool(summary.get("v2_irt_head", False)),
             rg_mastery=bool(summary.get("v2_rg_mastery", False)),

@@ -124,10 +124,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--v2-rg-layers", type=int, default=2)
     parser.add_argument("--v2-dual-graph", action="store_true", help="Mo-1: student-exercise response-graph co-propagation channel (gated fusion).")
+    parser.add_argument("--v2-dual-graph-adaptive", action="store_true", help="Mo-1b: density-conditioned dual-graph gate (suppress on dense concept graphs).")
+    parser.add_argument("--v2-router", action="store_true", help="Meta-router: structure-signal (density,coverage) gate over decoupling vs response-graph state.")
     parser.add_argument("--v2-attn-readout", action="store_true", help="Mo-2: target-conditioned attention pooling of per-concept states.")
     parser.add_argument("--v2-irt-head", action="store_true", help="Mo-3: MIRT structured cognitive logit term.")
     parser.add_argument("--v2-contrastive-weight", type=float, default=0.0, help="Tr-1: InfoNCE contrastive loss on student states (two dropout views).")
     parser.add_argument("--v2-consistency-weight", type=float, default=0.0, help="Tr-2: full-vs-masked-history prediction consistency loss.")
+    parser.add_argument("--v2-consistency-adaptive", action="store_true", help="Tr-2b: coverage-scaled per-student masking rate.")
     parser.add_argument("--v2-curriculum", action="store_true", help="Tr-3: evidence-density curriculum ordering of minibatches.")
     parser.add_argument(
         "--v2-rg-primary",
@@ -921,6 +924,8 @@ def main() -> None:
             rg_primary=args.v2_rg_primary,
             rg_mastery=args.v2_rg_mastery,
             dual_graph=args.v2_dual_graph,
+            dual_graph_adaptive=args.v2_dual_graph_adaptive,
+            router=args.v2_router,
             attn_readout=args.v2_attn_readout,
             irt_head=args.v2_irt_head,
             readout_dropout=args.v2_readout_dropout,
@@ -985,6 +990,7 @@ def main() -> None:
         mastery_aux_bce_weight=args.v2_mastery_aux_weight,
         contrastive_weight=args.v2_contrastive_weight,
         consistency_weight=args.v2_consistency_weight,
+        consistency_adaptive=args.v2_consistency_adaptive,
         curriculum=args.v2_curriculum,
         history_dropout_frac=args.v2_history_dropout_frac,
         masked_response_weight=args.v2_masked_response_weight,
@@ -1033,6 +1039,9 @@ def main() -> None:
         "v2_rg_layers": args.v2_rg_layers,
         "v2_rg_primary": args.v2_rg_primary,
         "v2_dual_graph": args.v2_dual_graph,
+        "v2_dual_graph_adaptive": args.v2_dual_graph_adaptive,
+        "v2_router": args.v2_router,
+        "v2_consistency_adaptive": args.v2_consistency_adaptive,
         "v2_attn_readout": args.v2_attn_readout,
         "v2_irt_head": args.v2_irt_head,
         "v2_contrastive_weight": args.v2_contrastive_weight,

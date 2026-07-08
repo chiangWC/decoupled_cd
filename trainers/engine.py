@@ -271,6 +271,7 @@ def train_model(
     masked_response_frac: float = 0.15,
     contrastive_weight: float = 0.0,
     consistency_weight: float = 0.0,
+    consistency_adaptive: bool = False,
     curriculum: bool = False,
 ) -> TrainResult:
     if training_mode not in {"full_batch", "recompute_minibatch", "student_recompute_minibatch"}:
@@ -593,6 +594,7 @@ def train_model(
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
                     contrastive_weight=contrastive_weight,
                     consistency_weight=consistency_weight,
+                    consistency_adaptive=consistency_adaptive,
                     curriculum=curriculum,
                     exercise_evidence_difficulty_regularization_weight=exercise_evidence_difficulty_regularization_weight,
                     difficulty_prior_target=difficulty_prior_target,
@@ -777,16 +779,20 @@ def train_model(
 def _perturb_history_tensors(
     tensors: dict[str, torch.Tensor | None],
     *,
-    drop_frac: float,
+    drop_frac: float | torch.Tensor,
 ) -> tuple[dict[str, torch.Tensor | None], torch.Tensor]:
     """
     Randomly drop a fraction of observed (student, exercise) history entries and
     re-derive the dependent tensors in tensor space (TKC/UKC masks, per-concept
     evidence counts approximated by distinct-exercise counts). Returns the
     perturbed tensor dict and the boolean keep-matrix over (S, E).
+
+    drop_frac may be a scalar or a per-student (S,) tensor (adaptive dropping,
+    e.g. scaled by coverage so sparse students are barely touched).
     """
     mask = tensors["student_exercise_mask"]
-    keep = torch.rand_like(mask) >= drop_frac
+    threshold = drop_frac.unsqueeze(-1) if torch.is_tensor(drop_frac) else drop_frac
+    keep = torch.rand_like(mask) >= threshold
     dropped_mask = mask * keep.to(mask.dtype)
     q_binary = (tensors["q_matrix"] > 0).to(mask.dtype)
     attempts = dropped_mask @ q_binary
@@ -1124,6 +1130,7 @@ def _train_student_recompute_minibatch_epoch(
     mastery_aux_bce_weight: float = 0.0,
     contrastive_weight: float = 0.0,
     consistency_weight: float = 0.0,
+    consistency_adaptive: bool = False,
     curriculum: bool = False,
 ) -> EpochTrainStats:
     model.train()
@@ -1181,7 +1188,15 @@ def _train_student_recompute_minibatch_epoch(
                 output.mastery_aux_logits, batch_labels
             )
         if consistency_weight > 0.0 or contrastive_weight > 0.0:
-            perturbed, _ = _perturb_history_tensors(tensors, drop_frac=0.3)
+            if consistency_adaptive:
+                # Tr-2-adaptive: per-student drop scaled by coverage so
+                # high-coverage students are perturbed hard and sparse students
+                # (whose evidence we cannot afford to erase) are barely touched.
+                coverage = tensors["student_tkc_mask"].mean(dim=1)
+                drop = 0.6 * coverage / coverage.clamp_min(1e-6).max()
+                perturbed, _ = _perturb_history_tensors(tensors, drop_frac=drop)
+            else:
+                perturbed, _ = _perturb_history_tensors(tensors, drop_frac=0.3)
             view2 = model(
                 q_matrix=perturbed["q_matrix"],
                 concept_graph=perturbed["concept_graph"],
