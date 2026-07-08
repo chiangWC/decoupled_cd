@@ -1202,8 +1202,10 @@ def _train_student_recompute_minibatch_epoch(
                 loss = loss + consistency_weight * F.mse_loss(view2.probs, output.probs.detach())
             if contrastive_weight > 0.0:
                 # Tr-1: InfoNCE pulling the two views of the same student together.
-                z1 = F.normalize(output.student_state[student_ids], dim=-1)
-                z2 = F.normalize(view2.student_state[student_ids], dim=-1)
+                # With use_student_subset, student_state is already the batch's
+                # unique-student subset, aligned across both views.
+                z1 = F.normalize(output.student_state, dim=-1)
+                z2 = F.normalize(view2.student_state, dim=-1)
                 logits = z1 @ z2.t() / 0.2
                 targets = torch.arange(z1.size(0), device=z1.device)
                 loss = loss + contrastive_weight * F.cross_entropy(logits, targets)
