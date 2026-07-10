@@ -17,7 +17,10 @@ from typing import Any, Sequence
 
 
 ATTEMPT_PATTERN = re.compile(r"^attempt-(\d+)$")
+COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+VENDOR_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 DEFAULT_CAPTURE_ENV = ("CONDA_DEFAULT_ENV", "CUDA_VISIBLE_DEVICES", "PYTHONPATH")
+GPU_SAMPLE_INTERVAL_SECONDS = 1.0
 
 
 class CampaignError(RuntimeError):
@@ -55,6 +58,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         metavar="NAME",
         help="Additional environment variable to capture; repeat as needed.",
     )
+    parser.add_argument(
+        "--vendor-commit",
+        action="append",
+        default=[],
+        metavar="NAME=COMMIT",
+        help="Vendored source commit; repeat once per vendor.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--doa-seed", type=int, default=42)
     parser.add_argument("--min-responses", type=int, default=3)
@@ -70,6 +80,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args.repo_root = (args.repo_root or args.cwd).expanduser().resolve()
     args.artifact_root = args.artifact_root.expanduser().resolve()
     args.dataset_file = [resolve_from(path, args.cwd) for path in args.dataset_file]
+    try:
+        args.vendor_commits = parse_vendor_commits(args.vendor_commit)
+    except CampaignError as exc:
+        parser.error(str(exc))
     return args
 
 
@@ -78,6 +92,25 @@ def resolve_from(path: Path, base: Path) -> Path:
     if not expanded.is_absolute():
         expanded = base / expanded
     return expanded.resolve()
+
+
+def parse_vendor_commits(values: Sequence[str]) -> dict[str, str]:
+    commits: dict[str, str] = {}
+    for value in values:
+        name, separator, commit = value.partition("=")
+        if (
+            not separator
+            or not VENDOR_NAME_PATTERN.fullmatch(name)
+            or not COMMIT_PATTERN.fullmatch(commit)
+        ):
+            raise CampaignError(
+                "Invalid vendor commit; expected NAME followed by a 40-hex commit: "
+                f"{value!r}"
+            )
+        if name in commits:
+            raise CampaignError(f"Duplicate vendor commit name: {name}")
+        commits[name] = commit.lower()
+    return commits
 
 
 def utc_now() -> str:
@@ -200,6 +233,139 @@ def collect_gpu_metadata() -> dict[str, Any]:
     return {"available": True, "devices": devices}
 
 
+def descendant_pids(root_pid: int) -> set[int]:
+    """Return the root process and every currently observable Linux descendant."""
+    parent_by_pid: dict[int, int] = {}
+    proc_root = Path("/proc")
+    try:
+        entries = list(proc_root.iterdir())
+    except OSError:
+        return {root_pid}
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            process_id = int(entry.name)
+            status_lines = (entry / "status").read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+        except (OSError, ValueError):
+            continue
+        for line in status_lines:
+            if line.startswith("PPid:"):
+                try:
+                    parent_by_pid[process_id] = int(line.split()[1])
+                except (IndexError, ValueError):
+                    pass
+                break
+
+    descendants = {root_pid}
+    changed = True
+    while changed:
+        changed = False
+        for process_id, parent_id in parent_by_pid.items():
+            if parent_id in descendants and process_id not in descendants:
+                descendants.add(process_id)
+                changed = True
+    return descendants
+
+
+def sample_gpu_process_memory(root_pid: int) -> dict[str, Any]:
+    """Sample aggregate GPU memory for the child process tree, grouped by UUID."""
+    command = [
+        "nvidia-smi",
+        "--query-compute-apps=pid,gpu_uuid,used_gpu_memory",
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return {"available": False, "devices": {}, "error": f"{type(exc).__name__}: {exc}"}
+    if completed.returncode != 0:
+        return {
+            "available": False,
+            "devices": {},
+            "error": completed.stderr.strip() or f"nvidia-smi exited {completed.returncode}",
+        }
+
+    process_tree = descendant_pids(root_pid)
+    devices: dict[str, int] = {}
+    for line in completed.stdout.splitlines():
+        fields = [field.strip() for field in line.split(",", maxsplit=2)]
+        if len(fields) != 3:
+            continue
+        raw_pid, gpu_uuid, raw_memory = fields
+        try:
+            process_id = int(raw_pid)
+            used_memory_mib = int(raw_memory)
+        except ValueError:
+            continue
+        if process_id in process_tree:
+            devices[gpu_uuid] = devices.get(gpu_uuid, 0) + used_memory_mib
+    return {"available": True, "devices": devices}
+
+
+def empty_gpu_peak_record(reason: str | None = None) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "available": False,
+        "scope": "command root process and observable descendants",
+        "sample_interval_seconds": GPU_SAMPLE_INTERVAL_SECONDS,
+        "successful_samples": 0,
+        "devices": {},
+    }
+    if reason is not None:
+        record["reason"] = reason
+    return record
+
+
+def update_gpu_peak_record(record: dict[str, Any], sample: dict[str, Any]) -> None:
+    if sample["available"]:
+        record["available"] = True
+        record["successful_samples"] += 1
+        record.pop("reason", None)
+        for gpu_uuid, used_memory_mib in sample["devices"].items():
+            device_record = record["devices"].setdefault(
+                gpu_uuid, {"peak_used_memory_mib": 0}
+            )
+            device_record["peak_used_memory_mib"] = max(
+                device_record["peak_used_memory_mib"], used_memory_mib
+            )
+    elif "error" in sample:
+        record["last_error"] = sample["error"]
+
+
+def run_with_gpu_sampling(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    stdout: Any,
+) -> tuple[int, dict[str, Any]]:
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=stdout,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    peak = empty_gpu_peak_record()
+    while True:
+        update_gpu_peak_record(peak, sample_gpu_process_memory(process.pid))
+        try:
+            exit_code = process.wait(timeout=GPU_SAMPLE_INTERVAL_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    return exit_code, peak
+
+
 def reserve_attempt(artifact_root: Path) -> Path:
     artifact_root.mkdir(parents=True, exist_ok=True)
     lock_path = artifact_root / ".campaign.lock"
@@ -266,6 +432,8 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
         )
     datasets = [fingerprint_file(path) for path in args.dataset_file]
     runtime = collect_runtime_metadata()
+    gpu_peak_memory = empty_gpu_peak_record(reason="command not started")
+    runtime["gpu_peak_memory"] = gpu_peak_memory
     attempt_dir = reserve_attempt(args.artifact_root)
     status_path = attempt_dir / "status.json"
     outputs = output_paths(attempt_dir, args.output_file)
@@ -290,6 +458,10 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
             "environment": selected_environment(args.capture_env),
         },
         "parameters": parameters,
+        "code": {
+            "route_commit": git_metadata["head"],
+            "vendor_commits": args.vendor_commits,
+        },
         "git": git_metadata,
         "datasets": datasets,
         "runtime": runtime,
@@ -314,18 +486,15 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
             log_handle.write("$ " + shlex.join(args.command) + "\n")
             log_handle.flush()
             if args.dry_run:
+                gpu_peak_memory["reason"] = "dry run"
                 log_handle.write("[dry-run] command not executed\n")
             else:
-                completed = subprocess.run(
+                exit_code, gpu_peak_memory = run_with_gpu_sampling(
                     args.command,
                     cwd=args.cwd,
                     env=child_env,
                     stdout=log_handle,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    check=False,
                 )
-                exit_code = completed.returncode
     except FileNotFoundError as exc:
         exit_code = 127
         error = f"{type(exc).__name__}: {exc}"
@@ -343,6 +512,7 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
     status["ended_at_utc"] = utc_now()
     if error is not None:
         status["error"] = error
+    status["runtime"]["gpu_peak_memory"] = gpu_peak_memory
     status["output_hashes"] = {
         name: fingerprint_output(path) for name, path in outputs.items()
     }

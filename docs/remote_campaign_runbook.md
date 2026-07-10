@@ -17,6 +17,8 @@ attempt 内容；需要重跑时创建下一个 attempt。
 
 - 位于预期 Git worktree，且已提交当前代码；tracked/untracked 文件均不得残留。
 - 显式列出本次使用的所有 `--dataset-file`，用于记录 SHA-256。
+- 插件路线用 `--vendor-commit NAME=COMMIT` 逐项记录 40 位 vendor
+  提交；名称不得重复。当前 worktree HEAD 自动作为 route commit。
 - 输出写入环境变量 `CAMPAIGN_ATTEMPT_DIR` 指向的目录，并通过
   `--output-file` 声明需要校验的文件。
 - `--capture-env` 只填写非敏感变量名，不要记录 token、密码或凭据。
@@ -42,6 +44,7 @@ python3 scripts/run_remote_campaign.py \
   --dataset-file "${SPLIT_DIR}/test.csv" \
   --dataset-file "${MASTERY_DIR}/mastery.npy" \
   --dataset-file "${MASTERY_DIR}/id_maps.json" \
+  --vendor-commit "orcdf=${ORCDF_VENDOR_COMMIT}" \
   --output-file doa.csv \
   --seed 42 \
   --doa-seed 42 \
@@ -87,5 +90,8 @@ sha256sum "${ARTIFACT_ROOT}/attempt-NNN/command.log"
 
 `status.json` 会原子替换为终态，并记录开始/结束 UTC、退出码、argv/cwd、选定
 环境变量、Git HEAD/clean 状态、数据文件哈希、Python/Torch/CUDA/GPU 元数据
-（环境可提供时）以及声明输出和命令日志的哈希。`completed` 表示退出码为 0；
+（环境可提供时）、route/vendor commits、子进程及其可观察后代按 GPU UUID
+汇总的运行期峰值显存，以及声明输出和命令日志的哈希。峰值显存每秒通过
+`nvidia-smi` 采样；无 NVIDIA 工具时字段保留并标为不可用，不影响 CPU 作业。
+`completed` 表示退出码为 0；
 `failed` 保留非零退出码；`dry_run` 的退出码为 `null`。
