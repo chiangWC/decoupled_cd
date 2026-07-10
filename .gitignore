@@ -19,6 +19,7 @@ data/assist_09_ordered/
 .DS_Store
 
 # Codex local/project files
+.superpowers/
 .codex/*
 !.codex/config.toml
 !.codex/hooks.json

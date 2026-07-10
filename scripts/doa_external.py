@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dataset-name", required=True)
     parser.add_argument("--split-dir", required=True)
+    parser.add_argument("--split", choices=("valid", "test"), default="test")
     parser.add_argument("--mastery-dir", action="append", required=True, help="Dir with mastery.npy + id_maps.json.")
     parser.add_argument("--model-name", action="append", required=True)
     parser.add_argument("--holdout-assignments", default=None)
@@ -37,17 +38,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    test_frame = pd.read_csv(Path(args.split_dir) / "test.csv")
+    evaluation_frame = pd.read_csv(Path(args.split_dir) / f"{args.split}.csv")
 
     rows = []
     for mastery_dir, model_name in zip(args.mastery_dir, args.model_name, strict=True):
         mastery = np.load(Path(mastery_dir) / "mastery.npy")
-        id_maps = json.load(open(Path(mastery_dir) / "id_maps.json"))
+        id_maps_path = Path(mastery_dir) / "id_maps.json"
+        id_maps = json.loads(id_maps_path.read_text(encoding="utf-8"))
         stu2row = {token: index for index, token in enumerate(id_maps["stu_ids"])}
         cpt2col = {token: index for index, token in enumerate(id_maps["cpt_ids"])}
 
         student_ids, concept_lists, labels = [], [], []
-        for row in test_frame.itertuples(index=False):
+        for row in evaluation_frame.itertuples(index=False):
             student_index = stu2row.get(str(row.stu_id))
             if student_index is None:
                 continue
