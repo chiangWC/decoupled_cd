@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -194,6 +195,56 @@ class SVGCDPluginTests(unittest.TestCase):
 
         self.assertTrue(args.plugin_aux_detach_item_difficulty)
         self.assertEqual(args.plugin_aux_warmup_fraction, 0.25)
+        self.assertEqual(args.plugin_q_matrix_file, Path("Q_matrix.csv"))
+
+    def test_backbone_config_binds_every_svgcd_model_argument_exactly(self) -> None:
+        main_plugin = load_main_plugin()
+        args = svgcd_args()
+        expected = {
+            key: getattr(args, key)
+            for key in (
+                "emb_dim",
+                "dnn_units",
+                "dropout_rate",
+                "n_gnn_layer",
+                "cl_tau",
+                "cl_weight",
+                "beta",
+            )
+        }
+
+        self.assertEqual(main_plugin.backbone_config(args), expected)
+
+    def test_plugin_q_matrix_path_defaults_under_data_dir_and_must_exist(self) -> None:
+        main_plugin = load_main_plugin()
+        with tempfile.TemporaryDirectory() as directory:
+            data_dir = Path(directory)
+            args = SimpleNamespace(
+                data_dir=str(data_dir),
+                plugin_q_matrix_file=Path("Q_matrix.csv"),
+            )
+            with self.assertRaises(FileNotFoundError):
+                main_plugin.resolve_plugin_q_matrix(args)
+            q_matrix = data_dir / "Q_matrix.csv"
+            q_matrix.write_text("exer_id,cpt_seq\n1,1\n", encoding="utf-8")
+            self.assertEqual(main_plugin.resolve_plugin_q_matrix(args), q_matrix)
+
+    def test_evaluation_checkpoint_loads_from_frozen_bytes(self) -> None:
+        main_plugin = load_main_plugin()
+        model = mock.Mock()
+        with mock.patch.object(
+            main_plugin.torch,
+            "load",
+            return_value={"weight": "state"},
+        ) as load:
+            main_plugin.load_evaluation_checkpoint(
+                model,
+                b"serialized-checkpoint",
+                "cpu",
+            )
+
+        self.assertTrue(hasattr(load.call_args.args[0], "read"))
+        model.load_state_dict.assert_called_once_with({"weight": "state"})
 
     def test_cli_requires_explicit_plugin_mode(self) -> None:
         main_plugin = load_main_plugin()

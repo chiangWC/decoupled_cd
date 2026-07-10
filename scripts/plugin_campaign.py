@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ _PROTOCOL_FIELDS = (
     "min_responses",
     "max_pairs_per_concept",
     "split_seed",
+    "q_matrix_sha256",
 )
 _APPROVED_PROTOCOL = {
     "split": "valid",
@@ -43,12 +45,37 @@ class FrozenConfigMismatchError(RuntimeError):
     """Raised when a caller-provided frozen ID does not match its inputs."""
 
 
+@dataclass(frozen=True)
+class EvaluationArtifactSnapshot:
+    """In-memory bytes consumed after a frozen test claim is created."""
+
+    checkpoint_bytes: bytes
+    id_maps_bytes: bytes
+    q_matrix_bytes: bytes
+
+
+def snapshot_evaluation_artifacts(
+    checkpoint_path: Path,
+    q_matrix_path: Path,
+) -> EvaluationArtifactSnapshot:
+    checkpoint_path = Path(checkpoint_path)
+    return EvaluationArtifactSnapshot(
+        checkpoint_bytes=checkpoint_path.read_bytes(),
+        id_maps_bytes=checkpoint_path.with_name("id_maps.json").read_bytes(),
+        q_matrix_bytes=Path(q_matrix_path).read_bytes(),
+    )
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _json_copy(value: Any) -> Any:
@@ -79,20 +106,31 @@ def _validated_protocol(protocol: Mapping[str, Any]) -> dict[str, Any]:
                 f"candidate protocol {field} must be {expected!r}, "
                 f"got {normalized[field]!r}"
             )
+    _validated_sha256(normalized["q_matrix_sha256"], "q_matrix_sha256")
     return normalized
+
+
+def _validated_sha256(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise ValueError(f"{field} must be a lowercase SHA-256")
+    return value
 
 
 def compute_frozen_config_id(
     *,
     checkpoint_sha256: str,
+    id_maps_sha256: str,
     plugin_config: Mapping[str, Any],
+    backbone_config: Mapping[str, Any],
     protocol: Mapping[str, Any],
 ) -> str:
-    if not re.fullmatch(r"[0-9a-f]{64}", checkpoint_sha256):
-        raise ValueError("checkpoint_sha256 must be a lowercase SHA-256")
     payload = {
-        "checkpoint_sha256": checkpoint_sha256,
+        "checkpoint_sha256": _validated_sha256(
+            checkpoint_sha256, "checkpoint_sha256"
+        ),
+        "id_maps_sha256": _validated_sha256(id_maps_sha256, "id_maps_sha256"),
         "plugin_config": _json_copy(dict(plugin_config)),
+        "backbone_config": _json_copy(dict(backbone_config)),
         "protocol": _validated_protocol(protocol),
     }
     canonical = json.dumps(
@@ -113,11 +151,13 @@ class CandidateStore:
         output_dir: Path,
         model_name: str,
         plugin_config: Mapping[str, Any],
+        backbone_config: Mapping[str, Any],
         protocol: Mapping[str, Any],
     ) -> None:
         self.output_dir = Path(output_dir)
         self.model_name = str(model_name)
         self.plugin_config = _json_copy(dict(plugin_config))
+        self.backbone_config = _json_copy(dict(backbone_config))
         self.protocol = _validated_protocol(protocol)
         if not self.model_name:
             raise ValueError("model_name must not be empty")
@@ -164,7 +204,11 @@ class CandidateStore:
             "checkpoint_path": (relative_dir / "checkpoint.pth").as_posix(),
             "mastery_path": (relative_dir / "mastery.npy").as_posix(),
             "id_maps_path": (relative_dir / "id_maps.json").as_posix(),
+            "checkpoint_sha256": sha256_file(checkpoint_path),
+            "mastery_sha256": sha256_file(mastery_path),
+            "id_maps_sha256": sha256_file(id_maps_path),
             "plugin_config": self.plugin_config,
+            "backbone_config": self.backbone_config,
             "protocol": self.protocol,
         }
         payload = (json.dumps(record, sort_keys=True, allow_nan=False) + "\n").encode()
@@ -242,9 +286,11 @@ def _validated_selection(
     selection_path: Path,
     checkpoint_path: Path,
     plugin_config: Mapping[str, Any],
+    backbone_config: Mapping[str, Any],
     protocol: Mapping[str, Any],
     supplied_frozen_config_id: str | None,
-) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+    artifact_snapshot: EvaluationArtifactSnapshot | None = None,
+) -> tuple[str, str, str, dict[str, Any], dict[str, Any], dict[str, Any]]:
     try:
         selection = json.loads(Path(selection_path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -254,21 +300,48 @@ def _validated_selection(
     if not isinstance(selection, dict):
         raise FrozenConfigMismatchError("frozen selection must be a JSON object")
     checkpoint_path = Path(checkpoint_path)
-    if not checkpoint_path.is_file():
-        raise FileNotFoundError(checkpoint_path)
-    checkpoint_sha256 = sha256_file(checkpoint_path)
+    if artifact_snapshot is None:
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(checkpoint_path)
+        checkpoint_sha256 = sha256_file(checkpoint_path)
+        id_maps_path = checkpoint_path.with_name("id_maps.json")
+        if not id_maps_path.is_file():
+            raise FrozenConfigMismatchError(
+                f"checkpoint sibling id_maps.json does not exist: {id_maps_path}"
+            )
+        id_maps_sha256 = sha256_file(id_maps_path)
+    else:
+        checkpoint_sha256 = sha256_bytes(artifact_snapshot.checkpoint_bytes)
+        id_maps_sha256 = sha256_bytes(artifact_snapshot.id_maps_bytes)
     normalized_config = _json_copy(dict(plugin_config))
+    normalized_backbone = _json_copy(dict(backbone_config))
     try:
         normalized_protocol = _validated_protocol(protocol)
     except ValueError as exc:
         raise FrozenConfigMismatchError(str(exc)) from exc
+    if (
+        artifact_snapshot is not None
+        and sha256_bytes(artifact_snapshot.q_matrix_bytes)
+        != normalized_protocol["q_matrix_sha256"]
+    ):
+        raise FrozenConfigMismatchError(
+            "evaluation Q-matrix bytes do not match evaluation protocol"
+        )
     if selection.get("checkpoint_sha256") != checkpoint_sha256:
         raise FrozenConfigMismatchError(
             "selection checkpoint SHA-256 does not match actual checkpoint"
         )
+    if selection.get("id_maps_sha256") != id_maps_sha256:
+        raise FrozenConfigMismatchError(
+            "selection id_maps SHA-256 does not match checkpoint sibling id_maps.json"
+        )
     if selection.get("plugin_config") != normalized_config:
         raise FrozenConfigMismatchError(
             "selection plugin_config does not match evaluation CLI"
+        )
+    if selection.get("backbone_config") != normalized_backbone:
+        raise FrozenConfigMismatchError(
+            "selection backbone_config does not match evaluation CLI"
         )
     if selection.get("protocol") != normalized_protocol:
         raise FrozenConfigMismatchError(
@@ -276,7 +349,9 @@ def _validated_selection(
         )
     config_id = compute_frozen_config_id(
         checkpoint_sha256=checkpoint_sha256,
+        id_maps_sha256=id_maps_sha256,
         plugin_config=normalized_config,
+        backbone_config=normalized_backbone,
         protocol=normalized_protocol,
     )
     if selection.get("frozen_config_id") != config_id:
@@ -285,7 +360,14 @@ def _validated_selection(
         raise FrozenConfigMismatchError(
             "supplied frozen_config_id does not match frozen selection"
         )
-    return config_id, checkpoint_sha256, normalized_config, normalized_protocol
+    return (
+        config_id,
+        checkpoint_sha256,
+        id_maps_sha256,
+        normalized_config,
+        normalized_backbone,
+        normalized_protocol,
+    )
 
 
 def claim_test_evaluation(
@@ -294,21 +376,30 @@ def claim_test_evaluation(
     selection_path: Path,
     checkpoint_path: Path,
     plugin_config: Mapping[str, Any],
+    backbone_config: Mapping[str, Any],
     protocol: Mapping[str, Any],
     route_root: Path,
     supplied_frozen_config_id: str | None = None,
     argv: Sequence[str] | None = None,
     route_head: str | None = None,
     claimed_at_utc: str | None = None,
+    artifact_snapshot: EvaluationArtifactSnapshot | None = None,
 ) -> Path:
-    frozen_config_id, checkpoint_sha256, normalized_config, normalized_protocol = (
-        _validated_selection(
-            selection_path=selection_path,
-            checkpoint_path=checkpoint_path,
-            plugin_config=plugin_config,
-            protocol=protocol,
-            supplied_frozen_config_id=supplied_frozen_config_id,
-        )
+    (
+        frozen_config_id,
+        checkpoint_sha256,
+        id_maps_sha256,
+        normalized_config,
+        normalized_backbone,
+        normalized_protocol,
+    ) = _validated_selection(
+        selection_path=selection_path,
+        checkpoint_path=checkpoint_path,
+        plugin_config=plugin_config,
+        backbone_config=backbone_config,
+        protocol=protocol,
+        supplied_frozen_config_id=supplied_frozen_config_id,
+        artifact_snapshot=artifact_snapshot,
     )
     if not _CONFIG_ID_PATTERN.fullmatch(frozen_config_id):
         raise FrozenConfigMismatchError("selection frozen_config_id is unsafe")
@@ -321,7 +412,9 @@ def claim_test_evaluation(
     record = {
         "frozen_config_id": frozen_config_id,
         "checkpoint_sha256": checkpoint_sha256,
+        "id_maps_sha256": id_maps_sha256,
         "plugin_config": normalized_config,
+        "backbone_config": normalized_backbone,
         "protocol": normalized_protocol,
         "selection_path": str(Path(selection_path).resolve()),
         "route_head": resolved_head,
@@ -355,6 +448,7 @@ def prepare_evaluation_resources(
     load_resources: Callable[[], Any],
     checkpoint_path: Path,
     plugin_config: Mapping[str, Any],
+    backbone_config: Mapping[str, Any],
     protocol: Mapping[str, Any],
     ledger_dir: Path | None = None,
     selection_path: Path | None = None,
@@ -362,6 +456,7 @@ def prepare_evaluation_resources(
     route_root: Path | None = None,
     argv: Sequence[str] | None = None,
     route_head: str | None = None,
+    artifact_snapshot: EvaluationArtifactSnapshot | None = None,
 ) -> Any:
     if split not in {"valid", "test"}:
         raise ValueError("evaluation split must be 'valid' or 'test'")
@@ -375,11 +470,13 @@ def prepare_evaluation_resources(
             selection_path=selection_path,
             checkpoint_path=checkpoint_path,
             plugin_config=plugin_config,
+            backbone_config=backbone_config,
             protocol=protocol,
             route_root=route_root,
             supplied_frozen_config_id=supplied_frozen_config_id,
             argv=argv,
             route_head=route_head,
+            artifact_snapshot=artifact_snapshot,
         )
     return load_resources()
 

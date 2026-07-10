@@ -43,6 +43,7 @@ python3 scripts/run_remote_campaign.py \
   --artifact-root "${ARTIFACT_ROOT}" \
   --repo-root "${PWD}" \
   --cwd "${PWD}" \
+  --dataset-file "${SPLIT_DIR}/Q_matrix.csv" \
   --dataset-file "${SPLIT_DIR}/test.csv" \
   --dataset-file "${MASTERY_DIR}/mastery.npy" \
   --dataset-file "${MASTERY_DIR}/id_maps.json" \
@@ -61,6 +62,7 @@ python3 scripts/run_remote_campaign.py \
       --model-name "$4" \
       --min-responses "$CAMPAIGN_MIN_RESPONSES" \
       --doa-seed "$CAMPAIGN_DOA_SEED" \
+      --split-seed 2024 \
       --output-csv "$CAMPAIGN_ATTEMPT_DIR/doa.csv"' \
     campaign assist_09 "${SPLIT_DIR}" "${MASTERY_DIR}" model-name
 ```
@@ -114,6 +116,9 @@ ORCDF 专属的 `--plugin-decouple`。
 `campaign_run` 临时加上 `--dry-run` 审核状态，再删除该参数正式执行。数据 split 必须预先由
 `split_seed=2024` 生成；选型协议固定为 `seed=42`、`doa_seed=42`、
 `min_responses=3`、`split_seed=2024`，不得使用 `doa_external.py` 的默认值。
+插件模式把 `Q_matrix.csv` 作为完整 exercise/concept schema 与模型 Q 矩阵的唯一
+来源；同一 exercise 的多行会取 concept 并集。ASSIST17 等数据集必须保留这种
+多行 union 语义，不能只保留第一行或用后续行覆盖前一行。
 
 ```bash
 WORKTREE=/home/xph/jwc/research/decoupled_cd_codex_worktrees/plugin
@@ -137,6 +142,7 @@ campaign_run() {
     --artifact-root "${CAMPAIGN_ROOT}/${stage}" \
     --repo-root "${WORKTREE}" \
     --cwd "${WORKTREE}" \
+    --dataset-file "${SPLIT_DIR}/Q_matrix.csv" \
     --vendor-commit "${VENDOR_NAME}=${VENDOR_COMMIT}" \
     --seed 42 \
     --doa-seed 42 \
@@ -163,6 +169,7 @@ BASE_ATTEMPT=$(campaign_run baseline-train \
       --train_file train.csv \
       --valid_file valid.csv \
       --test_file test.csv \
+      --plugin-q-matrix-file Q_matrix.csv \
       --log_dir "${CAMPAIGN_ATTEMPT_DIR}/model" \
       --seed 42 \
       --plugin-doa-seed 42 \
@@ -219,6 +226,7 @@ BASE_DOA_ATTEMPT=$(campaign_run baseline-valid-doa \
       --min-responses 3 \
       --max-pairs-per-concept 100000 \
       --doa-seed 42 \
+      --split-seed 2024 \
       "$@" \
       --output-csv "${CAMPAIGN_ATTEMPT_DIR}/valid_doa.csv"' \
     doa "${DOA_ARGS[@]}")
@@ -260,6 +268,7 @@ PLUGIN_ATTEMPT=$(campaign_run plugin-train \
       --train_file train.csv \
       --valid_file valid.csv \
       --test_file test.csv \
+      --plugin-q-matrix-file Q_matrix.csv \
       --log_dir "${CAMPAIGN_ATTEMPT_DIR}/model" \
       --seed 42 \
       --plugin-doa-seed 42 \
@@ -284,6 +293,7 @@ PLUGIN_DOA_ATTEMPT=$(campaign_run plugin-valid-doa \
       --min-responses 3 \
       --max-pairs-per-concept 100000 \
       --doa-seed 42 \
+      --split-seed 2024 \
       "$@" \
       --output-csv "${CAMPAIGN_ATTEMPT_DIR}/valid_doa.csv"' \
     doa "${DOA_ARGS[@]}")
@@ -351,6 +361,7 @@ TEST_ATTEMPT=$(campaign_run test-once \
       --train_file train.csv \
       --valid_file valid.csv \
       --test_file test.csv \
+      --plugin-q-matrix-file Q_matrix.csv \
       --log_dir "${CAMPAIGN_ATTEMPT_DIR}/model" \
       --seed 42 \
       --plugin-doa-seed 42 \

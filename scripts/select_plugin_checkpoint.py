@@ -24,6 +24,7 @@ PROTOCOL_FIELDS = (
     "min_responses",
     "max_pairs_per_concept",
     "split_seed",
+    "q_matrix_sha256",
 )
 APPROVED_PROTOCOL = {
     "split": "valid",
@@ -101,6 +102,7 @@ def _validated_protocol(candidate_rows: list[dict[str, Any]]) -> dict[str, Any]:
                 f"candidate protocol {field} must be {expected!r}, "
                 f"got {first[field]!r}"
             )
+    _sha256(first["q_matrix_sha256"], "candidate protocol q_matrix_sha256")
     for row in candidate_rows[1:]:
         if row.get("protocol") != first:
             raise SelectionError("candidate manifest contains mixed protocols")
@@ -132,9 +134,19 @@ def _index_candidates(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         if not isinstance(plugin_config, dict):
             raise SelectionError(f"candidate {model_name} lacks plugin_config")
         normalized["plugin_config"] = dict(plugin_config)
+        backbone_config = row.get("backbone_config")
+        if not isinstance(backbone_config, dict):
+            raise SelectionError(f"candidate {model_name} lacks backbone_config")
+        normalized["backbone_config"] = dict(backbone_config)
         for field in ("checkpoint_path", "mastery_path", "id_maps_path"):
             if not isinstance(row.get(field), str) or not row[field]:
                 raise SelectionError(f"candidate {model_name} lacks {field}")
+        for field in (
+            "checkpoint_sha256",
+            "mastery_sha256",
+            "id_maps_sha256",
+        ):
+            normalized[field] = _sha256(row.get(field), f"{model_name}.{field}")
         indexed[model_name] = normalized
     return indexed
 
@@ -175,6 +187,9 @@ def _load_doa_rows(path: Path) -> dict[str, dict[str, Any]]:
                 "max_pairs_per_concept": _integer(
                     row.get("max_pairs_per_concept"),
                     f"{model_name}.max_pairs_per_concept",
+                ),
+                "split_seed": _integer(
+                    row.get("split_seed"), f"{model_name}.split_seed"
                 ),
                 "mastery_sha256": _sha256(
                     row.get("mastery_sha256"), f"{model_name}.mastery_sha256"
@@ -224,12 +239,14 @@ def _validate_doa_binding(
             "doa_seed",
             "min_responses",
             "max_pairs_per_concept",
+            "split_seed",
         ):
             if doa[field] != protocol[field]:
                 raise SelectionError(
                     f"{model_name} DOA {field} does not match candidate protocol"
                 )
         for path_field, hash_field in (
+            ("checkpoint_path", "checkpoint_sha256"),
             ("mastery_path", "mastery_sha256"),
             ("id_maps_path", "id_maps_sha256"),
         ):
@@ -238,7 +255,12 @@ def _validate_doa_binding(
                 raise SelectionError(
                     f"candidate {model_name} artifact does not exist: {artifact_path}"
                 )
-            if sha256_file(artifact_path) != doa[hash_field]:
+            actual_sha256 = sha256_file(artifact_path)
+            if actual_sha256 != candidate[hash_field]:
+                raise SelectionError(
+                    f"candidate {model_name} {hash_field} does not match actual artifact"
+                )
+            if hash_field != "checkpoint_sha256" and actual_sha256 != doa[hash_field]:
                 raise SelectionError(
                     f"{model_name} DOA {hash_field} does not match candidate artifact"
                 )
@@ -263,9 +285,12 @@ def _selection_payload(
         "checkpoint_sha256": sha256_file(checkpoint_path),
         "mastery_path": candidate["mastery_path"],
         "id_maps_path": candidate["id_maps_path"],
+        "mastery_sha256": candidate["mastery_sha256"],
+        "id_maps_sha256": candidate["id_maps_sha256"],
         "validation": candidate["validation"],
         "validation_doa": doa,
         "plugin_config": candidate["plugin_config"],
+        "backbone_config": candidate["backbone_config"],
         "protocol": protocol,
         "constraints": {
             "baseline_auc": baseline_auc,
@@ -281,7 +306,9 @@ def _selection_payload(
     }
     payload["frozen_config_id"] = compute_frozen_config_id(
         checkpoint_sha256=payload["checkpoint_sha256"],
+        id_maps_sha256=payload["id_maps_sha256"],
         plugin_config=payload["plugin_config"],
+        backbone_config=payload["backbone_config"],
         protocol=payload["protocol"],
     )
     return payload

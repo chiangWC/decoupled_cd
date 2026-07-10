@@ -1,4 +1,5 @@
 import json
+import io
 import os
 from collections import defaultdict
 
@@ -25,21 +26,55 @@ class CognitiveDataset(Dataset):
 
 
 class CognitiveDataProcessor:
-    def __init__(self, args, logger, *, split_mode="all", id_maps_path=None):
+    def __init__(
+        self,
+        args,
+        logger,
+        *,
+        split_mode="all",
+        id_maps_path=None,
+        q_matrix_path=None,
+        id_maps_payload=None,
+        q_matrix_bytes=None,
+    ):
         if split_mode not in {"all", "train", "valid", "test"}:
             raise ValueError("split_mode must be all, train, valid, or test")
-        if split_mode == "test" and id_maps_path is None:
-            raise ValueError("test mode requires frozen id_maps_path")
+        if split_mode == "test" and id_maps_path is None and id_maps_payload is None:
+            raise ValueError("test mode requires frozen ID maps")
+        if split_mode != "all" and q_matrix_path is None and q_matrix_bytes is None:
+            raise ValueError("plugin split mode requires Q-matrix bytes or path")
         self.args = args
         self.logger = logger
         self.data_dir = args.data_dir
         self.split_mode = split_mode
         self.id_maps_path = id_maps_path
+        self.q_matrix_path = q_matrix_path
+        self.id_maps_payload = id_maps_payload
+        self.q_matrix_bytes = q_matrix_bytes
         self.logger.info(">>> Processing Data...")
         self._load_and_process()
 
     def _read_csv(self, filename):
         return pd.read_csv(os.path.join(self.data_dir, filename))
+
+    def _read_q_matrix(self):
+        try:
+            source = (
+                io.BytesIO(self.q_matrix_bytes)
+                if self.q_matrix_bytes is not None
+                else self.q_matrix_path
+            )
+            frame = pd.read_csv(source)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"cannot read Q-matrix: {self.q_matrix_path}") from exc
+        missing = {"exer_id", "cpt_seq"} - set(frame.columns)
+        if missing:
+            raise ValueError(
+                f"Q-matrix missing required columns: {', '.join(sorted(missing))}"
+            )
+        if frame.empty:
+            raise ValueError("Q-matrix must not be empty")
+        return frame
 
     @staticmethod
     def _token(value):
@@ -47,12 +82,31 @@ class CognitiveDataProcessor:
             return str(int(value))
         return str(value)
 
+    @classmethod
+    def _sorted_tokens(cls, values):
+        tokens = {cls._token(value) for value in values}
+
+        def key(token):
+            try:
+                return 0, int(token), token
+            except ValueError:
+                return 1, token, token
+
+        return sorted(tokens, key=key)
+
     def _load_frozen_ids(self):
-        try:
-            with open(self.id_maps_path, encoding="utf-8") as handle:
-                payload = json.load(handle)
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"cannot read frozen ID schema: {self.id_maps_path}") from exc
+        if self.id_maps_payload is not None:
+            payload = self.id_maps_payload
+        else:
+            try:
+                with open(self.id_maps_path, encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"cannot read frozen ID schema: {self.id_maps_path}"
+                ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError("frozen ID schema must be an object")
         ids = {}
         for field in ("stu_ids", "exer_ids", "cpt_ids"):
             values = payload.get(field)
@@ -92,23 +146,56 @@ class CognitiveDataProcessor:
             if self.split_mode == "all"
             else schema_data
         )
-
-        if self.id_maps_path is not None:
-            frozen = self._load_frozen_ids()
-            self.stu_ids = frozen["stu_ids"]
-            self.exer_ids = frozen["exer_ids"]
-            self.cpt_ids = frozen["cpt_ids"]
+        if self.split_mode == "all":
+            q_data = mapping_data
+            if self.id_maps_path is not None or self.id_maps_payload is not None:
+                frozen = self._load_frozen_ids()
+                self.stu_ids = frozen["stu_ids"]
+                self.exer_ids = frozen["exer_ids"]
+                self.cpt_ids = frozen["cpt_ids"]
+            else:
+                self.stu_ids = [
+                    self._token(value)
+                    for value in sorted(mapping_data["stu_id"].unique())
+                ]
+                self.exer_ids = [
+                    self._token(value)
+                    for value in sorted(mapping_data["exer_id"].unique())
+                ]
+                all_concepts = set()
+                for cpt_seq in mapping_data["cpt_seq"]:
+                    all_concepts.update(self._parse_concepts(cpt_seq))
+                self.cpt_ids = [
+                    self._token(value) for value in sorted(all_concepts)
+                ]
         else:
-            self.stu_ids = [
-                self._token(value) for value in sorted(mapping_data["stu_id"].unique())
-            ]
-            self.exer_ids = [
-                self._token(value) for value in sorted(mapping_data["exer_id"].unique())
-            ]
+            q_data = self._read_q_matrix()
+            derived_stu_ids = self._sorted_tokens(schema_data["stu_id"].unique())
+            derived_exer_ids = self._sorted_tokens(q_data["exer_id"].unique())
             all_concepts = set()
-            for cpt_seq in mapping_data["cpt_seq"]:
+            for cpt_seq in q_data["cpt_seq"]:
                 all_concepts.update(self._parse_concepts(cpt_seq))
-            self.cpt_ids = [self._token(value) for value in sorted(all_concepts)]
+            derived_cpt_ids = self._sorted_tokens(all_concepts)
+            derived = {
+                "stu_ids": derived_stu_ids,
+                "exer_ids": derived_exer_ids,
+                "cpt_ids": derived_cpt_ids,
+            }
+            if self.id_maps_path is not None or self.id_maps_payload is not None:
+                frozen = self._load_frozen_ids()
+                for field, expected in derived.items():
+                    if frozen[field] != expected:
+                        raise ValueError(
+                            f"frozen ID schema {field} does not match "
+                            "train+valid/Q schema"
+                        )
+                self.stu_ids = frozen["stu_ids"]
+                self.exer_ids = frozen["exer_ids"]
+                self.cpt_ids = frozen["cpt_ids"]
+            else:
+                self.stu_ids = derived_stu_ids
+                self.exer_ids = derived_exer_ids
+                self.cpt_ids = derived_cpt_ids
 
         self.stu2idx = {x: i for i, x in enumerate(self.stu_ids)}
         self.exer2idx = {x: i for i, x in enumerate(self.exer_ids)}
@@ -121,12 +208,18 @@ class CognitiveDataProcessor:
             f"Stats: Stu={self.num_students}, Exer={self.num_exercises}, Cpt={self.num_concepts}"
         )
 
-        self.q_matrix = self._build_q_matrix(mapping_data).to(device)
+        self.q_matrix = self._build_q_matrix(q_data).to(device)
+        if self.split_mode != "all":
+            for data in (self.train_data, self.valid_data, self.test_data):
+                self._validate_q_coverage(data, q_data)
         self.train_triplets = self._process_triplets(self.train_data)
         self.valid_triplets = self._process_triplets(self.valid_data)
         self.test_triplets = self._process_triplets(self.test_data)
         self._validate_concepts(self.test_data)
-        self._build_sample_conflict(mapping_data)
+        self._build_sample_conflict(
+            mapping_data,
+            use_interaction_concepts=self.split_mode != "all",
+        )
         self.train_response = self._process_response_array(self.train_data)
         self.graph_dict = self._build_graph_dict()
 
@@ -138,6 +231,26 @@ class CognitiveDataProcessor:
                 concept_idx = self._lookup(self.cpt2idx, concept, "concept")
                 q_matrix[exer_idx, concept_idx] = 1.0
         return q_matrix
+
+    def _validate_q_coverage(self, data, q_data):
+        q_concepts = defaultdict(set)
+        for row in q_data.itertuples(index=False):
+            exercise = self._token(row.exer_id)
+            q_concepts[exercise].update(
+                self._token(concept)
+                for concept in self._parse_concepts(row.cpt_seq)
+            )
+        for row in data.itertuples(index=False):
+            exercise = self._token(row.exer_id)
+            self._lookup(self.exer2idx, exercise, "exercise")
+            for concept in self._parse_concepts(row.cpt_seq):
+                concept_token = self._token(concept)
+                self._lookup(self.cpt2idx, concept_token, "concept")
+                if concept_token not in q_concepts[exercise]:
+                    raise ValueError(
+                        f"concept ID {concept_token!r} is not in Q for "
+                        f"exercise ID {exercise!r}"
+                    )
 
     def _validate_concepts(self, data):
         for row in data.itertuples(index=False):
@@ -168,19 +281,44 @@ class CognitiveDataProcessor:
             )
         return np.asarray(rows, dtype=np.int64)
 
-    def _build_sample_conflict(self, all_data):
-        exercise_concepts = {}
-        for row in all_data.drop_duplicates(subset=["exer_id"]).itertuples(index=False):
-            exercise_concepts[self._lookup(self.exer2idx, row.exer_id, "exercise")] = [
-                self._lookup(self.cpt2idx, concept, "concept")
-                for concept in self._parse_concepts(row.cpt_seq)
-            ]
+    def _build_sample_conflict(
+        self,
+        all_data,
+        *,
+        use_interaction_concepts=False,
+    ):
+        if not use_interaction_concepts:
+            exercise_concepts = {}
+            for row in all_data.drop_duplicates(subset=["exer_id"]).itertuples(
+                index=False
+            ):
+                exercise_concepts[
+                    self._lookup(self.exer2idx, row.exer_id, "exercise")
+                ] = [
+                    self._lookup(self.cpt2idx, concept, "concept")
+                    for concept in self._parse_concepts(row.cpt_seq)
+                ]
 
         student_kc_correct = defaultdict(float)
         student_kc_wrong = defaultdict(float)
-
-        for stu_idx, exer_idx, label in self.train_triplets:
-            concepts = exercise_concepts.get(exer_idx, [])
+        if use_interaction_concepts:
+            train_evidence = (
+                (
+                    self._lookup(self.stu2idx, row.stu_id, "student"),
+                    [
+                        self._lookup(self.cpt2idx, concept, "concept")
+                        for concept in self._parse_concepts(row.cpt_seq)
+                    ],
+                    int(row.label),
+                )
+                for row in self.train_data.itertuples(index=False)
+            )
+        else:
+            train_evidence = (
+                (stu_idx, exercise_concepts.get(exer_idx, []), label)
+                for stu_idx, exer_idx, label in self.train_triplets
+            )
+        for stu_idx, concepts, label in train_evidence:
             if not concepts:
                 continue
             weight = 1.0 / len(concepts)
@@ -200,11 +338,27 @@ class CognitiveDataProcessor:
                 return None, 0.0
             return 2.0 * min(correct, wrong) / support, support
 
+        if use_interaction_concepts:
+            test_evidence = (
+                (
+                    self._lookup(self.stu2idx, row.stu_id, "student"),
+                    [
+                        self._lookup(self.cpt2idx, concept, "concept")
+                        for concept in self._parse_concepts(row.cpt_seq)
+                    ],
+                )
+                for row in self.test_data.itertuples(index=False)
+            )
+        else:
+            test_evidence = (
+                (stu_idx, exercise_concepts.get(exer_idx, []))
+                for stu_idx, exer_idx, _ in self.test_triplets
+            )
         self.test_sample_conflict = []
-        for stu_idx, exer_idx, _ in self.test_triplets:
+        for stu_idx, concepts in test_evidence:
             concept_scores = []
             concept_supports = []
-            for concept_idx in exercise_concepts.get(exer_idx, []):
+            for concept_idx in concepts:
                 score, support = kc_conflict(stu_idx, concept_idx)
                 if score is None:
                     continue

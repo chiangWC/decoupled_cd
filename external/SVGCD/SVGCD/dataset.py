@@ -1,7 +1,9 @@
 import csv
+import io
 import json
 import os
 from collections import Counter
+from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader, Dataset, default_collate
@@ -33,16 +35,31 @@ class ResponseDataset(Dataset):
 
 
 class CognitiveDataProcessor:
-    def __init__(self, args, logger, *, split_mode="all", id_maps_path=None):
+    def __init__(
+        self,
+        args,
+        logger,
+        *,
+        split_mode="all",
+        id_maps_path=None,
+        q_matrix_path=None,
+        id_maps_payload=None,
+        q_matrix_bytes=None,
+    ):
         if split_mode not in {"all", "train", "valid", "test"}:
             raise ValueError("split_mode must be all, train, valid, or test")
-        if split_mode == "test" and id_maps_path is None:
-            raise ValueError("test mode requires frozen id_maps_path")
+        if split_mode == "test" and id_maps_path is None and id_maps_payload is None:
+            raise ValueError("test mode requires frozen ID maps")
+        if split_mode != "all" and q_matrix_path is None and q_matrix_bytes is None:
+            raise ValueError("plugin split mode requires Q-matrix bytes or path")
         self.args = args
         self.logger = logger
         self.data_dir = args.data_dir
         self.split_mode = split_mode
         self.id_maps_path = id_maps_path
+        self.q_matrix_path = q_matrix_path
+        self.id_maps_payload = id_maps_payload
+        self.q_matrix_bytes = q_matrix_bytes
 
         self.logger.info(">>> Processing Data...")
         self.train_rows = self._read_csv(args.train_file)
@@ -57,18 +74,58 @@ class CognitiveDataProcessor:
             schema_rows + self.test_rows if split_mode == "all" else schema_rows
         )
 
-        if id_maps_path is not None:
-            frozen = self._load_frozen_ids()
-            self.stu_ids = frozen["stu_ids"]
-            self.exer_ids = frozen["exer_ids"]
-            self.cpt_ids = frozen["cpt_ids"]
+        if split_mode == "all":
+            q_rows = mapping_rows
+            if id_maps_path is not None or id_maps_payload is not None:
+                frozen = self._load_frozen_ids()
+                self.stu_ids = frozen["stu_ids"]
+                self.exer_ids = frozen["exer_ids"]
+                self.cpt_ids = frozen["cpt_ids"]
+            else:
+                self.stu_ids = [
+                    str(value)
+                    for value in sorted(
+                        {int(row["stu_id"]) for row in mapping_rows}
+                    )
+                ]
+                self.exer_ids = [
+                    str(value)
+                    for value in sorted(
+                        {int(row["exer_id"]) for row in mapping_rows}
+                    )
+                ]
+                all_concepts = set()
+                for row in mapping_rows:
+                    all_concepts.update(self._parse_cpts(row["cpt_seq"]))
+                self.cpt_ids = [str(value) for value in sorted(all_concepts)]
         else:
-            self.stu_ids = [str(value) for value in sorted({int(r["stu_id"]) for r in mapping_rows})]
-            self.exer_ids = [str(value) for value in sorted({int(r["exer_id"]) for r in mapping_rows})]
+            q_rows = self._read_q_matrix()
+            derived_stu_ids = self._sorted_tokens(r["stu_id"] for r in schema_rows)
+            derived_exer_ids = self._sorted_tokens(r["exer_id"] for r in q_rows)
             all_concepts = set()
-            for row in mapping_rows:
+            for row in q_rows:
                 all_concepts.update(self._parse_cpts(row["cpt_seq"]))
-            self.cpt_ids = [str(value) for value in sorted(all_concepts)]
+            derived_cpt_ids = self._sorted_tokens(all_concepts)
+            derived = {
+                "stu_ids": derived_stu_ids,
+                "exer_ids": derived_exer_ids,
+                "cpt_ids": derived_cpt_ids,
+            }
+            if id_maps_path is not None or id_maps_payload is not None:
+                frozen = self._load_frozen_ids()
+                for field, expected in derived.items():
+                    if frozen[field] != expected:
+                        raise ValueError(
+                            f"frozen ID schema {field} does not match "
+                            "train+valid/Q schema"
+                        )
+                self.stu_ids = frozen["stu_ids"]
+                self.exer_ids = frozen["exer_ids"]
+                self.cpt_ids = frozen["cpt_ids"]
+            else:
+                self.stu_ids = derived_stu_ids
+                self.exer_ids = derived_exer_ids
+                self.cpt_ids = derived_cpt_ids
 
         self.stu2idx = {stu_id: idx for idx, stu_id in enumerate(self.stu_ids)}
         self.exer2idx = {exer_id: idx for idx, exer_id in enumerate(self.exer_ids)}
@@ -79,11 +136,15 @@ class CognitiveDataProcessor:
         self.num_concepts = len(self.cpt_ids)
 
         self.q_matrix = torch.zeros(self.num_exercises, self.num_concepts, dtype=torch.float32)
-        for row in mapping_rows:
+        for row in q_rows:
             exer = self._lookup(self.exer2idx, row["exer_id"], "exercise")
             for c in self._parse_cpts(row["cpt_seq"]):
                 concept = self._lookup(self.cpt2idx, c, "concept")
                 self.q_matrix[exer, concept] = 1.0
+
+        if split_mode != "all":
+            for rows in (self.train_rows, self.valid_rows, self.test_rows):
+                self._validate_q_coverage(rows, q_rows)
 
         self.train_triplets = self._rows_to_triplets(self.train_rows)
         self.valid_triplets = self._rows_to_triplets(self.valid_rows)
@@ -103,6 +164,27 @@ class CognitiveDataProcessor:
         with open(path, "r", encoding="utf-8", newline="") as f:
             return list(csv.DictReader(f))
 
+    def _read_q_matrix(self):
+        path = Path(self.q_matrix_path) if self.q_matrix_path is not None else None
+        if self.q_matrix_bytes is not None:
+            handle = io.StringIO(self.q_matrix_bytes.decode("utf-8"), newline="")
+        else:
+            try:
+                handle = path.open("r", encoding="utf-8", newline="")
+            except OSError as exc:
+                raise ValueError(f"cannot read Q-matrix: {path}") from exc
+        with handle:
+            reader = csv.DictReader(handle)
+            missing = {"exer_id", "cpt_seq"} - set(reader.fieldnames or ())
+            if missing:
+                raise ValueError(
+                    f"Q-matrix missing required columns: {', '.join(sorted(missing))}"
+                )
+            rows = list(reader)
+        if not rows:
+            raise ValueError("Q-matrix must not be empty")
+        return rows
+
     @staticmethod
     def _token(value):
         try:
@@ -110,12 +192,31 @@ class CognitiveDataProcessor:
         except (TypeError, ValueError):
             return str(value)
 
+    @classmethod
+    def _sorted_tokens(cls, values):
+        tokens = {cls._token(value) for value in values}
+
+        def key(token):
+            try:
+                return 0, int(token), token
+            except ValueError:
+                return 1, token, token
+
+        return sorted(tokens, key=key)
+
     def _load_frozen_ids(self):
-        try:
-            with open(self.id_maps_path, encoding="utf-8") as handle:
-                payload = json.load(handle)
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"cannot read frozen ID schema: {self.id_maps_path}") from exc
+        if self.id_maps_payload is not None:
+            payload = self.id_maps_payload
+        else:
+            try:
+                with open(self.id_maps_path, encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"cannot read frozen ID schema: {self.id_maps_path}"
+                ) from exc
+        if not isinstance(payload, dict):
+            raise ValueError("frozen ID schema must be an object")
         ids = {}
         for field in ("stu_ids", "exer_ids", "cpt_ids"):
             values = payload.get(field)
@@ -151,6 +252,26 @@ class CognitiveDataProcessor:
                 )
             )
         return triplets
+
+    def _validate_q_coverage(self, rows, q_rows):
+        q_concepts = {}
+        for row in q_rows:
+            exercise = self._token(row["exer_id"])
+            q_concepts.setdefault(exercise, set()).update(
+                self._token(concept)
+                for concept in self._parse_cpts(row["cpt_seq"])
+            )
+        for row in rows:
+            exercise = self._token(row["exer_id"])
+            self._lookup(self.exer2idx, exercise, "exercise")
+            for concept in self._parse_cpts(row["cpt_seq"]):
+                concept_token = self._token(concept)
+                self._lookup(self.cpt2idx, concept_token, "concept")
+                if concept_token not in q_concepts[exercise]:
+                    raise ValueError(
+                        f"concept ID {concept_token!r} is not in Q for "
+                        f"exercise ID {exercise!r}"
+                    )
 
     def _validate_concepts(self, rows):
         for row in rows:

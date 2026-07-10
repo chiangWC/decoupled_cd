@@ -25,6 +25,19 @@ class SelectPluginCheckpointTests(unittest.TestCase):
         self.manifest = self.root / "candidates" / "manifest.jsonl"
         self.doa_csv = self.root / "valid_doa.csv"
         self.artifact_hashes: dict[str, dict[str, str]] = {}
+        self.backbone_config = {
+            "latent_dim": 32,
+            "gcn_layers": 2,
+            "keep_prob": 0.9,
+            "if_type": "ncd",
+            "mode": "all",
+            "flip_ratio": 0.1,
+            "ssl_temp": 0.5,
+            "ssl_weight": 0.01,
+            "prednet_len1": 512,
+            "prednet_len2": 256,
+            "dropout": 0.2,
+        }
         self.protocol = {
             "split": "valid",
             "seed": 42,
@@ -32,6 +45,7 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             "min_responses": 3,
             "max_pairs_per_concept": 100_000,
             "split_seed": 2024,
+            "q_matrix_sha256": hashlib.sha256(b"q-matrix").hexdigest(),
         }
 
     def tearDown(self) -> None:
@@ -50,9 +64,11 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             id_maps = candidate_dir / "id_maps.json"
             id_maps.write_text(json.dumps({"epoch": epoch}), encoding="utf-8")
             self.artifact_hashes[str(row["model_name"])] = {
+                "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
                 "mastery_sha256": hashlib.sha256(mastery.read_bytes()).hexdigest(),
                 "id_maps_sha256": hashlib.sha256(id_maps.read_bytes()).hexdigest(),
             }
+            hashes = self.artifact_hashes[str(row["model_name"])]
             manifest_rows.append({
                 "epoch": epoch,
                 "model_name": row["model_name"],
@@ -61,7 +77,9 @@ class SelectPluginCheckpointTests(unittest.TestCase):
                 "id_maps_path": f"candidates/epoch-{epoch:03d}/id_maps.json",
                 "validation": row["validation"],
                 "plugin_config": row["plugin_config"],
+                "backbone_config": row.get("backbone_config", self.backbone_config),
                 "protocol": row.get("protocol", self.protocol),
+                **hashes,
                 "test_metrics": {"auc": 1.0},
             })
         self.manifest.write_text(
@@ -88,6 +106,7 @@ class SelectPluginCheckpointTests(unittest.TestCase):
                     "doa_seed",
                     "min_responses",
                     "max_pairs_per_concept",
+                    "split_seed",
                     "mastery_sha256",
                     "id_maps_sha256",
                 ],
@@ -95,7 +114,12 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             writer.writeheader()
             audited_rows = []
             for row in rows:
-                audit = self.artifact_hashes.get(str(row["model"]), {})
+                artifact_hashes = self.artifact_hashes.get(str(row["model"]), {})
+                audit = {
+                    field: artifact_hashes[field]
+                    for field in ("mastery_sha256", "id_maps_sha256")
+                    if field in artifact_hashes
+                }
                 audited_rows.append({
                     "holdout_num_concepts_evaluated": 2,
                     "holdout_num_pairs": 10,
@@ -104,6 +128,7 @@ class SelectPluginCheckpointTests(unittest.TestCase):
                         "doa_seed": 42,
                         "min_responses": 3,
                         "max_pairs_per_concept": 100_000,
+                        "split_seed": 2024,
                         **audit,
                     } if include_audit else {}),
                     **row,
@@ -142,6 +167,11 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             selected["checkpoint_sha256"],
             hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
         )
+        self.assertEqual(
+            selected["id_maps_sha256"],
+            self.artifact_hashes[selected["model_name"]]["id_maps_sha256"],
+        )
+        self.assertEqual(selected["backbone_config"], self.backbone_config)
         self.assertEqual(json.loads(output.read_text()), selected)
 
     def test_plugin_filters_constraints_then_ranks_doa_auc_and_earlier_epoch(self) -> None:
@@ -186,7 +216,9 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             selected["frozen_config_id"],
             compute_frozen_config_id(
                 checkpoint_sha256=selected["checkpoint_sha256"],
+                id_maps_sha256=selected["id_maps_sha256"],
                 plugin_config=selected["plugin_config"],
+                backbone_config=selected["backbone_config"],
                 protocol=selected["protocol"],
             ),
         )
@@ -320,6 +352,7 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             ("wrong doa seed", {"doa_seed": 2024}, True),
             ("wrong minimum", {"min_responses": 1}, True),
             ("wrong max pairs", {"max_pairs_per_concept": 99}, True),
+            ("wrong split seed", {"split_seed": 7}, True),
             ("wrong mastery", {"mastery_sha256": "0" * 64}, True),
             ("wrong id maps", {"id_maps_sha256": "0" * 64}, True),
         )
@@ -337,6 +370,34 @@ class SelectPluginCheckpointTests(unittest.TestCase):
                         doa_csv_path=self.doa_csv,
                         output_path=self.root / "selection.json",
                     )
+
+    def test_manifest_artifact_hashes_are_checked_against_actual_files(self) -> None:
+        self.write_candidates([
+            {
+                "epoch": 1,
+                "model_name": "candidate",
+                "validation": {"auc": 0.80, "acc": 0.7, "rmse": 0.4},
+                "plugin_config": {"aux_weight": 0.0},
+            },
+        ])
+        self.write_doa([
+            {
+                "model": "candidate",
+                "holdout_doa": 0.50,
+                "holdout_doa_weighted": 0.51,
+            },
+        ])
+        rows = [json.loads(line) for line in self.manifest.read_text().splitlines()]
+        rows[0]["checkpoint_sha256"] = "0" * 64
+        self.manifest.write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(SelectionError, "checkpoint_sha256"):
+            select_checkpoint(
+                mode="baseline",
+                manifest_path=self.manifest,
+                doa_csv_path=self.doa_csv,
+                output_path=self.root / "selection.json",
+            )
 
 
 if __name__ == "__main__":

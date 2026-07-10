@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-responses", type=int, default=1)
     parser.add_argument("--max-pairs-per-concept", type=int, default=100_000)
     parser.add_argument("--doa-seed", type=int, default=2024)
+    parser.add_argument("--split-seed", type=int, default=2024)
     parser.add_argument("--output-csv", required=True)
     return parser.parse_args()
 
@@ -69,6 +70,7 @@ def main() -> None:
             "doa_seed": args.doa_seed,
             "min_responses": args.min_responses,
             "max_pairs_per_concept": args.max_pairs_per_concept,
+            "split_seed": args.split_seed,
             "mastery_sha256": sha256_file(mastery_path),
             "id_maps_sha256": sha256_file(id_maps_path),
         }

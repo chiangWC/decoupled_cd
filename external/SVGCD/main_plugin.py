@@ -1,5 +1,7 @@
 """SVGCD plugin runner with validation-only training and guarded evaluation."""
 import argparse
+import io
+import json
 import os
 import sys
 import time
@@ -19,7 +21,8 @@ from scripts.plugin_campaign import (
     prepare_evaluation_resources,
     run_candidate_training,
     select_evaluation_loader,
-    sha256_file,
+    sha256_bytes,
+    snapshot_evaluation_artifacts,
     write_evaluation_artifacts,
 )
 
@@ -95,6 +98,9 @@ def parse_all():
     pre.add_argument("--plugin-min-responses", type=int, default=3)
     pre.add_argument("--plugin-max-pairs-per-concept", type=int, default=100_000)
     pre.add_argument("--plugin-split-seed", type=int, default=2024)
+    pre.add_argument(
+        "--plugin-q-matrix-file", type=Path, default=Path("Q_matrix.csv")
+    )
     pa, remaining = pre.parse_known_args()
     if pa.plugin_mode == "evaluate":
         if pa.plugin_checkpoint is None or pa.plugin_eval_split is None:
@@ -125,7 +131,31 @@ def plugin_config(args):
     }
 
 
-def campaign_protocol(args):
+def backbone_config(args):
+    return {
+        field: getattr(args, field)
+        for field in (
+            "emb_dim",
+            "dnn_units",
+            "dropout_rate",
+            "n_gnn_layer",
+            "cl_tau",
+            "cl_weight",
+            "beta",
+        )
+    }
+
+
+def resolve_plugin_q_matrix(args):
+    path = Path(args.plugin_q_matrix_file)
+    if not path.is_absolute():
+        path = Path(args.data_dir) / path
+    if not path.is_file():
+        raise FileNotFoundError(f"plugin Q-matrix does not exist: {path}")
+    return path
+
+
+def campaign_protocol(args, q_matrix_bytes):
     return {
         "split": "valid",
         "seed": args.seed,
@@ -133,6 +163,7 @@ def campaign_protocol(args):
         "min_responses": args.plugin_min_responses,
         "max_pairs_per_concept": args.plugin_max_pairs_per_concept,
         "split_seed": args.plugin_split_seed,
+        "q_matrix_sha256": sha256_bytes(q_matrix_bytes),
     }
 
 
@@ -144,24 +175,39 @@ def processor_id_maps(proc):
     }
 
 
+def load_evaluation_checkpoint(model, checkpoint_bytes, device):
+    model.load_state_dict(
+        torch.load(io.BytesIO(checkpoint_bytes), map_location=device)
+    )
+
+
 def main():
     args = parse_all()
+    q_matrix_path = resolve_plugin_q_matrix(args)
+    artifact_snapshot = None
+    id_maps_payload = None
+    if args.plugin_mode == "evaluate":
+        artifact_snapshot = snapshot_evaluation_artifacts(
+            args.plugin_checkpoint,
+            q_matrix_path,
+        )
+        q_matrix_bytes = artifact_snapshot.q_matrix_bytes
+        id_maps_payload = json.loads(artifact_snapshot.id_maps_bytes)
+    else:
+        q_matrix_bytes = q_matrix_path.read_bytes()
+    protocol = campaign_protocol(args, q_matrix_bytes)
     logger = setup_logger(args.log_dir)
     logger.info(f"Args: {vars(args)}")
     device = get_device()
     set_seed(args.seed)
 
     def load_resources():
-        id_maps_path = (
-            args.plugin_checkpoint.with_name("id_maps.json")
-            if args.plugin_mode == "evaluate"
-            else None
-        )
         processor = CognitiveDataProcessor(
             args,
             logger,
             split_mode=(args.plugin_eval_split if args.plugin_mode == "evaluate" else "train"),
-            id_maps_path=id_maps_path,
+            id_maps_payload=id_maps_payload,
+            q_matrix_bytes=q_matrix_bytes,
         )
         return processor, processor.get_loaders()
 
@@ -171,12 +217,14 @@ def main():
             load_resources=load_resources,
             checkpoint_path=args.plugin_checkpoint,
             plugin_config=plugin_config(args),
-            protocol=campaign_protocol(args),
+            backbone_config=backbone_config(args),
+            protocol=protocol,
             ledger_dir=args.plugin_test_ledger_dir,
             selection_path=args.plugin_selection_json,
             supplied_frozen_config_id=args.plugin_frozen_config_id,
             route_root=PROJECT_ROOT,
             argv=sys.argv,
+            artifact_snapshot=artifact_snapshot,
         )
     else:
         proc, loaders = load_resources()
@@ -223,7 +271,8 @@ def main():
             output_dir=Path(args.log_dir),
             model_name=args.plugin_model_name,
             plugin_config=plugin_config(args),
-            protocol=campaign_protocol(args),
+            backbone_config=backbone_config(args),
+            protocol=protocol,
         )
 
         def snapshot_candidate(epoch, validation):
@@ -245,7 +294,7 @@ def main():
         logger.info(f"TRAIN COMPLETE {summary}")
         return
 
-    model.load_state_dict(torch.load(args.plugin_checkpoint, map_location=device))
+    load_evaluation_checkpoint(model, artifact_snapshot.checkpoint_bytes, device)
     evaluation_loader = select_evaluation_loader(loaders, args.plugin_eval_split)
     model.eval()
     predictions, labels = [], []
@@ -273,11 +322,13 @@ def main():
         mastery=model.mastery_matrix(),
         id_maps=processor_id_maps(proc),
         metadata={
-            "checkpoint_sha256": sha256_file(args.plugin_checkpoint),
+            "checkpoint_sha256": sha256_bytes(artifact_snapshot.checkpoint_bytes),
             "selection_json": (
                 str(args.plugin_selection_json) if args.plugin_selection_json else None
             ),
             "plugin_config": plugin_config(args),
+            "backbone_config": backbone_config(args),
+            "protocol": protocol,
         },
     )
     logger.info(f"EVALUATION COMPLETE {metrics}")

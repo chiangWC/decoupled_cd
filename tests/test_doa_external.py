@@ -77,6 +77,7 @@ class DoaExternalSplitTests(unittest.TestCase):
         self.assertEqual(row["doa_seed"], 2024)
         self.assertEqual(row["min_responses"], 1)
         self.assertEqual(row["max_pairs_per_concept"], 100_000)
+        self.assertEqual(row["split_seed"], 2024)
         self.assertEqual(
             row["mastery_sha256"],
             hashlib.sha256((self.mastery_dir / "mastery.npy").read_bytes()).hexdigest(),

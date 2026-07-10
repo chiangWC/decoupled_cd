@@ -15,7 +15,6 @@ supervision (our biggest DOA lever).
 Both are flag-gated and zero-initialised, so with the flags off the model is
 bit-identical to baseline ORCDF.
 """
-from collections import defaultdict
 from pathlib import Path
 import sys
 
@@ -35,19 +34,17 @@ from .model import ORCDFNet
 def build_tkc_mask(data_proc, dtype):
     """(S, K) mask: 1 where the student answered an exercise touching concept k in TRAIN."""
     S, K = data_proc.num_students, data_proc.num_concepts
-    exercise_concepts = {}
-    for row in data_proc.train_data.drop_duplicates(subset=["exer_id"]).itertuples(index=False):
-        exercise_index = data_proc._lookup(
-            data_proc.exer2idx, row.exer_id, "exercise"
-        )
-        exercise_concepts[exercise_index] = [
-            data_proc._lookup(data_proc.cpt2idx, concept, "concept")
-            for concept in data_proc._parse_concepts(row.cpt_seq)
-        ]
+    q_matrix = data_proc.q_matrix.detach().cpu()
+    exercise_concepts = {
+        exercise: torch.nonzero(q_matrix[exercise], as_tuple=False)
+        .flatten()
+        .tolist()
+        for exercise in {exer for _, exer, _ in data_proc.train_triplets}
+    }
     mask = torch.zeros(S, K, dtype=dtype)
-    for stu_idx, exer_idx, _label in data_proc.train_triplets:
-        for c in exercise_concepts.get(exer_idx, []):
-            mask[stu_idx, c] = 1.0
+    for student, exercise, _ in data_proc.train_triplets:
+        for concept in exercise_concepts[exercise]:
+            mask[student, concept] = 1.0
     return mask
 
 
@@ -55,11 +52,10 @@ def build_concept_graph(data_proc, dtype):
     """Row-normalized (K, K) concept co-occurrence graph from TRAIN exercises only."""
     K = data_proc.num_concepts
     adj = torch.zeros(K, K, dtype=dtype)
-    for row in data_proc.train_data.drop_duplicates(subset=["exer_id"]).itertuples(index=False):
-        concepts = [
-            data_proc._lookup(data_proc.cpt2idx, concept, "concept")
-            for concept in data_proc._parse_concepts(row.cpt_seq)
-        ]
+    q_matrix = data_proc.q_matrix.detach().cpu()
+    train_exercises = {exercise for _, exercise, _ in data_proc.train_triplets}
+    for exercise in train_exercises:
+        concepts = torch.nonzero(q_matrix[exercise], as_tuple=False).flatten().tolist()
         for i in concepts:
             for j in concepts:
                 if i != j:

@@ -13,6 +13,7 @@ import torch
 from scripts.plugin_campaign import (
     CandidateStore,
     DuplicateTestEvaluationError,
+    EvaluationArtifactSnapshot,
     FrozenConfigMismatchError,
     claim_test_evaluation,
     compute_frozen_config_id,
@@ -24,6 +25,20 @@ from scripts.plugin_campaign import (
 
 
 PLUGIN_CONFIG = {"aux_weight": 0.1}
+BACKBONE_CONFIG = {
+    "latent_dim": 32,
+    "gcn_layers": 2,
+    "keep_prob": 0.9,
+    "if_type": "ncd",
+    "mode": "all",
+    "flip_ratio": 0.1,
+    "ssl_temp": 0.5,
+    "ssl_weight": 0.01,
+    "prednet_len1": 512,
+    "prednet_len2": 256,
+    "dropout": 0.2,
+}
+Q_MATRIX_SHA256 = hashlib.sha256(b"q-matrix").hexdigest()
 PROTOCOL = {
     "split": "valid",
     "seed": 42,
@@ -31,23 +46,33 @@ PROTOCOL = {
     "min_responses": 3,
     "max_pairs_per_concept": 100_000,
     "split_seed": 2024,
+    "q_matrix_sha256": Q_MATRIX_SHA256,
 }
+ID_MAPS_BYTES = b'{"cpt_ids":["c1"],"exer_ids":["e1"],"stu_ids":["s1"]}\n'
 
 
-def frozen_id(checkpoint_bytes: bytes) -> str:
+def frozen_id(checkpoint_bytes: bytes, id_maps_bytes: bytes = ID_MAPS_BYTES) -> str:
     return compute_frozen_config_id(
         checkpoint_sha256=hashlib.sha256(checkpoint_bytes).hexdigest(),
+        id_maps_sha256=hashlib.sha256(id_maps_bytes).hexdigest(),
         plugin_config=PLUGIN_CONFIG,
+        backbone_config=BACKBONE_CONFIG,
         protocol=PROTOCOL,
     )
 
 
 def write_selection(path: Path, checkpoint_bytes: bytes = b"checkpoint") -> str:
-    config_id = frozen_id(checkpoint_bytes)
+    id_maps_path = path.parent / "id_maps.json"
+    if not id_maps_path.exists():
+        id_maps_path.write_bytes(ID_MAPS_BYTES)
+    id_maps_sha256 = hashlib.sha256(id_maps_path.read_bytes()).hexdigest()
+    config_id = frozen_id(checkpoint_bytes, id_maps_path.read_bytes())
     path.write_text(
         json.dumps({
             "checkpoint_sha256": hashlib.sha256(checkpoint_bytes).hexdigest(),
+            "id_maps_sha256": id_maps_sha256,
             "plugin_config": PLUGIN_CONFIG,
+            "backbone_config": BACKBONE_CONFIG,
             "protocol": PROTOCOL,
             "frozen_config_id": config_id,
         }),
@@ -70,6 +95,7 @@ def _claim_worker(
             selection_path=Path(selection_path),
             checkpoint_path=Path(checkpoint_path),
             plugin_config=PLUGIN_CONFIG,
+            backbone_config=BACKBONE_CONFIG,
             protocol=PROTOCOL,
             route_root=Path(ledger_dir),
             argv=["evaluate", "--split", "test"],
@@ -94,6 +120,7 @@ class PluginCampaignTests(unittest.TestCase):
             output_dir=self.root,
             model_name="orcdf-baseline",
             plugin_config={"aux_weight": 0.0, "decouple": False},
+            backbone_config=BACKBONE_CONFIG,
             protocol={
                 "split": "valid",
                 "seed": 42,
@@ -101,6 +128,7 @@ class PluginCampaignTests(unittest.TestCase):
                 "min_responses": 3,
                 "max_pairs_per_concept": 100_000,
                 "split_seed": 2024,
+                "q_matrix_sha256": Q_MATRIX_SHA256,
             },
         )
 
@@ -124,7 +152,18 @@ class PluginCampaignTests(unittest.TestCase):
         )
         self.assertEqual(record["validation"]["auc"], 0.81)
         self.assertEqual(record["plugin_config"]["aux_weight"], 0.0)
+        self.assertEqual(record["backbone_config"], BACKBONE_CONFIG)
         self.assertEqual(record["protocol"]["split"], "valid")
+        for artifact in ("checkpoint", "mastery", "id_maps"):
+            path = candidate_dir / (
+                f"{artifact}.pth" if artifact == "checkpoint"
+                else f"{artifact}.npy" if artifact == "mastery"
+                else "id_maps.json"
+            )
+            self.assertEqual(
+                record[f"{artifact}_sha256"],
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
         manifest = self.root / "candidates" / "manifest.jsonl"
         original_checkpoint = (candidate_dir / "checkpoint.pth").read_bytes()
 
@@ -193,6 +232,7 @@ class PluginCampaignTests(unittest.TestCase):
             selection_path=selection,
             checkpoint_path=checkpoint,
             plugin_config=PLUGIN_CONFIG,
+            backbone_config=BACKBONE_CONFIG,
             protocol=PROTOCOL,
             route_root=self.root,
             argv=["runner.py", "--plugin-mode", "evaluate"],
@@ -215,6 +255,7 @@ class PluginCampaignTests(unittest.TestCase):
                 selection_path=selection,
                 checkpoint_path=checkpoint,
                 plugin_config=PLUGIN_CONFIG,
+                backbone_config=BACKBONE_CONFIG,
                 protocol=PROTOCOL,
                 route_root=self.root,
                 argv=[],
@@ -232,6 +273,7 @@ class PluginCampaignTests(unittest.TestCase):
             selection_path=selection,
             checkpoint_path=checkpoint,
             plugin_config=PLUGIN_CONFIG,
+            backbone_config=BACKBONE_CONFIG,
             protocol=PROTOCOL,
             route_root=self.root,
             route_head="d" * 40,
@@ -244,6 +286,7 @@ class PluginCampaignTests(unittest.TestCase):
                 supplied_frozen_config_id="arbitrary-new-id",
                 checkpoint_path=checkpoint,
                 plugin_config=PLUGIN_CONFIG,
+                backbone_config=BACKBONE_CONFIG,
                 protocol=PROTOCOL,
                 route_root=self.root,
                 route_head="d" * 40,
@@ -300,6 +343,7 @@ class PluginCampaignTests(unittest.TestCase):
             ledger_dir=ledger,
             selection_path=selection,
             plugin_config=PLUGIN_CONFIG,
+            backbone_config=BACKBONE_CONFIG,
             protocol=PROTOCOL,
             route_root=self.root,
             argv=["evaluate"],
@@ -307,6 +351,69 @@ class PluginCampaignTests(unittest.TestCase):
         )
 
         self.assertEqual(resources, "resources")
+
+    def test_test_claim_rejects_tampered_checkpoint_sibling_id_maps(self) -> None:
+        checkpoint = self.root / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        selection = self.root / "selection.json"
+        write_selection(selection)
+        (self.root / "id_maps.json").write_text('{"tampered": true}\n', encoding="utf-8")
+
+        with self.assertRaisesRegex(FrozenConfigMismatchError, "id_maps"):
+            claim_test_evaluation(
+                ledger_dir=self.root / "ledger",
+                selection_path=selection,
+                checkpoint_path=checkpoint,
+                plugin_config=PLUGIN_CONFIG,
+                backbone_config=BACKBONE_CONFIG,
+                protocol=PROTOCOL,
+                route_root=self.root,
+                route_head="e" * 40,
+            )
+        self.assertFalse((self.root / "ledger").exists())
+
+    def test_test_claim_rejects_backbone_cli_drift(self) -> None:
+        checkpoint = self.root / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        selection = self.root / "selection.json"
+        write_selection(selection)
+
+        with self.assertRaisesRegex(FrozenConfigMismatchError, "backbone_config"):
+            claim_test_evaluation(
+                ledger_dir=self.root / "ledger",
+                selection_path=selection,
+                checkpoint_path=checkpoint,
+                plugin_config=PLUGIN_CONFIG,
+                backbone_config={**BACKBONE_CONFIG, "latent_dim": 64},
+                protocol=PROTOCOL,
+                route_root=self.root,
+                route_head="e" * 40,
+            )
+
+    def test_test_claim_rejects_snapshot_q_bytes_outside_protocol(self) -> None:
+        checkpoint = self.root / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        selection = self.root / "selection.json"
+        write_selection(selection)
+        snapshot = EvaluationArtifactSnapshot(
+            checkpoint_bytes=checkpoint.read_bytes(),
+            id_maps_bytes=(self.root / "id_maps.json").read_bytes(),
+            q_matrix_bytes=b"different-q-matrix",
+        )
+
+        with self.assertRaisesRegex(FrozenConfigMismatchError, "Q-matrix"):
+            claim_test_evaluation(
+                ledger_dir=self.root / "ledger",
+                selection_path=selection,
+                checkpoint_path=checkpoint,
+                plugin_config=PLUGIN_CONFIG,
+                backbone_config=BACKBONE_CONFIG,
+                protocol=PROTOCOL,
+                route_root=self.root,
+                route_head="e" * 40,
+                artifact_snapshot=snapshot,
+            )
+        self.assertFalse((self.root / "ledger").exists())
 
     def test_evaluation_artifacts_include_metrics_predictions_mastery_and_ids(self) -> None:
         output = self.root / "evaluation"
@@ -347,6 +454,7 @@ class PluginCampaignTests(unittest.TestCase):
             "min_responses": 3,
             "max_pairs_per_concept": 100_000,
             "split_seed": 2024,
+            "q_matrix_sha256": Q_MATRIX_SHA256,
         }
 
         for field, value in {
@@ -361,6 +469,7 @@ class PluginCampaignTests(unittest.TestCase):
                         output_dir=self.root / field,
                         model_name="invalid",
                         plugin_config={"aux_weight": 0.0},
+                        backbone_config=BACKBONE_CONFIG,
                         protocol={**approved, field: value},
                     )
 

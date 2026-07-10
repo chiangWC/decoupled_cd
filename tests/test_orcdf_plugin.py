@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import torch
@@ -159,6 +161,31 @@ class ORCDFPluginTests(unittest.TestCase):
 
         self.assertTrue(args.plugin_aux_detach_item_difficulty)
         self.assertEqual(args.plugin_aux_warmup_fraction, 0.25)
+        self.assertEqual(args.plugin_q_matrix_file, Path("Q_matrix.csv"))
+
+    def test_backbone_config_binds_every_orcdf_model_argument_exactly(self) -> None:
+        main_plugin = load_main_plugin()
+        values = {
+            key: value
+            for key, value in model_kwargs().items()
+            if key not in {"student_n", "exer_n", "knowledge_n", "device"}
+        }
+
+        self.assertEqual(main_plugin.backbone_config(SimpleNamespace(**values)), values)
+
+    def test_plugin_q_matrix_path_defaults_under_data_dir_and_must_exist(self) -> None:
+        main_plugin = load_main_plugin()
+        with tempfile.TemporaryDirectory() as directory:
+            data_dir = Path(directory)
+            args = SimpleNamespace(
+                data_dir=str(data_dir),
+                plugin_q_matrix_file=Path("Q_matrix.csv"),
+            )
+            with self.assertRaises(FileNotFoundError):
+                main_plugin.resolve_plugin_q_matrix(args)
+            q_matrix = data_dir / "Q_matrix.csv"
+            q_matrix.write_text("exer_id,cpt_seq\n1,1\n", encoding="utf-8")
+            self.assertEqual(main_plugin.resolve_plugin_q_matrix(args), q_matrix)
 
     def test_cli_requires_explicit_plugin_mode(self) -> None:
         main_plugin = load_main_plugin()
@@ -214,7 +241,7 @@ class ORCDFPluginTests(unittest.TestCase):
         ):
             main_plugin.load_evaluation_checkpoint(
                 RecordingModel(),
-                Path("checkpoint.pth"),
+                b"serialized-checkpoint",
                 "cpu",
             )
 
