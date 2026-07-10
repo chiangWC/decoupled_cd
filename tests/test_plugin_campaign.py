@@ -6,10 +6,12 @@ import multiprocessing
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import torch
 
+from scripts import plugin_campaign
 from scripts.plugin_campaign import (
     CandidateStore,
     DuplicateTestEvaluationError,
@@ -48,6 +50,7 @@ PROTOCOL = {
     "split_seed": 2024,
     "q_matrix_sha256": Q_MATRIX_SHA256,
 }
+HOLDOUT_ASSIGNMENTS_SHA256 = "9" * 64
 ID_MAPS_BYTES = b'{"cpt_ids":["c1"],"exer_ids":["e1"],"stu_ids":["s1"]}\n'
 
 
@@ -75,10 +78,44 @@ def write_selection(path: Path, checkpoint_bytes: bytes = b"checkpoint") -> str:
             "backbone_config": BACKBONE_CONFIG,
             "protocol": PROTOCOL,
             "frozen_config_id": config_id,
+            "dataset": "fixture",
+            "holdout_assignments_sha256": HOLDOUT_ASSIGNMENTS_SHA256,
         }),
         encoding="utf-8",
     )
     return config_id
+
+
+def test_claim_bytes(
+    *,
+    checkpoint_sha256: str = "d" * 64,
+    id_maps_sha256: str = "e" * 64,
+) -> bytes:
+    config_id = compute_frozen_config_id(
+        checkpoint_sha256=checkpoint_sha256,
+        id_maps_sha256=id_maps_sha256,
+        plugin_config=PLUGIN_CONFIG,
+        backbone_config=BACKBONE_CONFIG,
+        protocol=PROTOCOL,
+    )
+    record = {
+        "frozen_config_id": config_id,
+        "checkpoint_sha256": checkpoint_sha256,
+        "id_maps_sha256": id_maps_sha256,
+        "plugin_config": PLUGIN_CONFIG,
+        "backbone_config": BACKBONE_CONFIG,
+        "protocol": PROTOCOL,
+        "selection_sha256": "f" * 64,
+        "dataset": "fixture",
+        "holdout_assignments_sha256": HOLDOUT_ASSIGNMENTS_SHA256,
+        "selection_path": "/frozen/selection.json",
+        "route_head": "a" * 40,
+        "claimed_at_utc": "2026-07-10T12:00:00Z",
+        "argv": ["evaluate", "--split", "test"],
+    }
+    return (
+        json.dumps(record, sort_keys=True, allow_nan=False) + "\n"
+    ).encode()
 
 
 def _claim_worker(
@@ -246,6 +283,15 @@ class PluginCampaignTests(unittest.TestCase):
         self.assertEqual(record["claimed_at_utc"], "2026-07-10T12:00:00Z")
         self.assertEqual(record["argv"], ["runner.py", "--plugin-mode", "evaluate"])
         self.assertEqual(
+            record["selection_sha256"],
+            hashlib.sha256(selection.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(record["dataset"], "fixture")
+        self.assertEqual(
+            record["holdout_assignments_sha256"],
+            HOLDOUT_ASSIGNMENTS_SHA256,
+        )
+        self.assertEqual(
             record["checkpoint_sha256"],
             hashlib.sha256(b"checkpoint").hexdigest(),
         )
@@ -352,6 +398,38 @@ class PluginCampaignTests(unittest.TestCase):
 
         self.assertEqual(resources, "resources")
 
+    def test_prepare_uses_claim_bytes_returned_by_exclusive_writer(self) -> None:
+        checkpoint = self.root / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        selection = self.root / "selection.json"
+        write_selection(selection)
+        snapshot = plugin_campaign.TestClaimSnapshot(
+            path=self.root / "ledger" / "claim.json",
+            payload=b'{"immutable":true}\n',
+        )
+
+        with mock.patch.object(
+            plugin_campaign,
+            "claim_test_evaluation",
+            return_value=snapshot,
+        ):
+            resources, claim_bytes = prepare_evaluation_resources(
+                split="test",
+                load_resources=lambda: "resources",
+                checkpoint_path=checkpoint,
+                ledger_dir=self.root / "ledger",
+                selection_path=selection,
+                plugin_config=PLUGIN_CONFIG,
+                backbone_config=BACKBONE_CONFIG,
+                protocol=PROTOCOL,
+                route_root=self.root,
+                route_head="c" * 40,
+                return_test_claim_bytes=True,
+            )
+
+        self.assertEqual(resources, "resources")
+        self.assertEqual(claim_bytes, snapshot.payload)
+
     def test_test_claim_rejects_tampered_checkpoint_sibling_id_maps(self) -> None:
         checkpoint = self.root / "checkpoint.pth"
         checkpoint.write_bytes(b"checkpoint")
@@ -445,6 +523,175 @@ class PluginCampaignTests(unittest.TestCase):
             json.loads((output / "id_maps.json").read_text())["stu_ids"],
             ["s1"],
         )
+
+    def test_test_evaluation_cache_is_row_aligned_and_manifest_is_written_last(self) -> None:
+        output = self.root / "test-evaluation"
+        metadata = {
+            "checkpoint_sha256": "d" * 64,
+            "source_id_maps_sha256": "e" * 64,
+            "plugin_config": PLUGIN_CONFIG,
+            "backbone_config": BACKBONE_CONFIG,
+            "protocol": PROTOCOL,
+        }
+        manifest_payload = {}
+        original_writer = plugin_campaign._write_evaluation_cache_manifest
+
+        def observe_manifest(path, payload):
+            for filename in (
+                "evaluation_cache.csv",
+                "mastery.npy",
+                "id_maps.json",
+            ):
+                artifact = output / filename
+                self.assertTrue(artifact.is_file(), filename)
+                expected_field = {
+                    "evaluation_cache.csv": "cache_sha256",
+                    "mastery.npy": "mastery_sha256",
+                    "id_maps.json": "id_maps_sha256",
+                }[filename]
+                self.assertEqual(
+                    payload[expected_field],
+                    hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                )
+            manifest_payload.update(payload)
+            original_writer(path, payload)
+
+        with mock.patch.object(
+            plugin_campaign,
+            "_write_evaluation_cache_manifest",
+            side_effect=observe_manifest,
+        ) as manifest_writer:
+            write_evaluation_artifacts(
+                output_dir=output,
+                split="test",
+                metrics={"auc": 0.8, "acc": 0.7, "rmse": 0.4},
+                predictions=[0.2, 0.9],
+                labels=[0.0, 1.0],
+                test_claim_bytes=test_claim_bytes(),
+                interaction_rows=[
+                    {
+                        "stu_id": "student-1",
+                        "exer_id": "exercise-1",
+                        "cpt_seq": "concept-1,concept-2",
+                        "label": 0,
+                    },
+                    {
+                        "stu_id": 2,
+                        "exer_id": 20,
+                        "cpt_seq": 200,
+                        "label": 1,
+                    },
+                ],
+                mastery=np.array([[0.1, 0.9], [0.8, 0.2]], dtype=np.float32),
+                id_maps={
+                    "stu_ids": ["student-1", "2"],
+                    "exer_ids": ["exercise-1", "20"],
+                    "cpt_ids": ["concept-1", "concept-2", "200"],
+                },
+                metadata=metadata,
+            )
+
+        manifest_writer.assert_called_once()
+        self.assertEqual(
+            (output / "evaluation_cache.csv").read_text().splitlines(),
+            [
+                "row_index,stu_id,exer_id,cpt_seq,label,prob",
+                '0,student-1,exercise-1,"concept-1,concept-2",0.0,0.2',
+                "1,2,20,200,1.0,0.9",
+            ],
+        )
+        manifest = json.loads(
+            (output / "evaluation_cache_manifest.json").read_text()
+        )
+        self.assertEqual(manifest, manifest_payload)
+        self.assertEqual(manifest["format_version"], 1)
+        self.assertEqual(manifest["evaluation_split"], "test")
+        self.assertEqual(manifest["row_count"], 2)
+        self.assertEqual(manifest["protocol"], PROTOCOL)
+        self.assertEqual(manifest["checkpoint_sha256"], "d" * 64)
+        self.assertEqual(manifest["source_id_maps_sha256"], "e" * 64)
+        self.assertEqual(manifest["dataset"], "fixture")
+        self.assertEqual(
+            manifest["holdout_assignments_sha256"],
+            HOLDOUT_ASSIGNMENTS_SHA256,
+        )
+        self.assertEqual(manifest["selection_sha256"], "f" * 64)
+        self.assertEqual(
+            manifest["test_claim_sha256"],
+            hashlib.sha256(test_claim_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            manifest["frozen_config_id"],
+            json.loads(test_claim_bytes())["frozen_config_id"],
+        )
+
+    def test_test_evaluation_cache_requires_guarded_claim_binding(self) -> None:
+        output = self.root / "unguarded-test-evaluation"
+        with self.assertRaisesRegex(ValueError, "test claim"):
+            write_evaluation_artifacts(
+                output_dir=output,
+                split="test",
+                metrics={"auc": 0.8, "acc": 0.7, "rmse": 0.4},
+                predictions=[0.2],
+                labels=[0.0],
+                interaction_rows=[
+                    {"stu_id": 1, "exer_id": 10, "cpt_seq": 100, "label": 0}
+                ],
+                mastery=np.array([[0.1]], dtype=np.float32),
+                id_maps={
+                    "stu_ids": ["1"],
+                    "exer_ids": ["10"],
+                    "cpt_ids": ["100"],
+                },
+                metadata={
+                    "checkpoint_sha256": "d" * 64,
+                    "source_id_maps_sha256": "e" * 64,
+                    "plugin_config": PLUGIN_CONFIG,
+                    "backbone_config": BACKBONE_CONFIG,
+                    "protocol": PROTOCOL,
+                },
+            )
+        self.assertFalse(output.exists())
+
+    def test_evaluation_cache_rejects_row_or_label_misalignment_before_writing(self) -> None:
+        common = {
+            "split": "test",
+            "metrics": {"auc": 0.8, "acc": 0.7, "rmse": 0.4},
+            "predictions": [0.2, 0.9],
+            "labels": [0.0, 1.0],
+            "mastery": np.array([[0.1]], dtype=np.float32),
+            "id_maps": {
+                "stu_ids": ["1"],
+                "exer_ids": ["10"],
+                "cpt_ids": ["100"],
+            },
+            "metadata": {
+                "checkpoint_sha256": "d" * 64,
+                "source_id_maps_sha256": "e" * 64,
+                "protocol": PROTOCOL,
+            },
+            "test_claim_bytes": test_claim_bytes(),
+        }
+        invalid = {
+            "row count": [
+                {"stu_id": 1, "exer_id": 10, "cpt_seq": 100, "label": 0}
+            ],
+            "label": [
+                {"stu_id": 1, "exer_id": 10, "cpt_seq": 100, "label": 1},
+                {"stu_id": 1, "exer_id": 10, "cpt_seq": 100, "label": 1},
+            ],
+        }
+
+        for expected, interaction_rows in invalid.items():
+            with self.subTest(expected=expected):
+                output = self.root / expected.replace(" ", "-")
+                with self.assertRaisesRegex(ValueError, expected):
+                    write_evaluation_artifacts(
+                        output_dir=output,
+                        interaction_rows=interaction_rows,
+                        **common,
+                    )
+                self.assertFalse(output.exists())
 
     def test_candidate_protocol_rejects_unapproved_reproducibility_values(self) -> None:
         approved = {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -27,11 +28,16 @@ class DoaExternalSplitTests(unittest.TestCase):
             json.dumps({"stu_ids": ["student-1"], "cpt_ids": ["concept-1"]}),
             encoding="utf-8",
         )
+        self.assignments = self.root / "holdout.csv"
+        self.assignments.write_text(
+            "stu_id,holdout_concepts\nstudent-1,concept-1\n",
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def run_main(self, split: str | None) -> Path:
+    def run_main(self, split: str | None, *, include_holdout: bool = False) -> Path:
         argv = [
             "doa_external.py",
             "--dataset-name",
@@ -47,6 +53,8 @@ class DoaExternalSplitTests(unittest.TestCase):
         ]
         if split is not None:
             argv.extend(["--split", split])
+        if include_holdout:
+            argv.extend(["--holdout-assignments", str(self.assignments)])
         frame = pd.DataFrame(
             {
                 "stu_id": ["student-1"],
@@ -54,14 +62,23 @@ class DoaExternalSplitTests(unittest.TestCase):
                 "label": [1.0],
             }
         )
+        assignments = pd.DataFrame(
+            {"stu_id": ["student-1"], "holdout_concepts": ["concept-1"]}
+        )
+
+        def read_csv(path):
+            return assignments if isinstance(path, io.BytesIO) else frame
+
         with (
             mock.patch.object(sys, "argv", argv),
-            mock.patch.object(doa_external.pd, "read_csv", return_value=frame) as read_csv,
+            mock.patch.object(
+                doa_external.pd, "read_csv", side_effect=read_csv
+            ) as read_csv_mock,
             mock.patch.object(doa_external.np, "load", return_value=np.zeros((1, 1))),
             mock.patch.object(doa_external, "compute_doa", return_value={"doa": 0.5}),
         ):
             doa_external.main()
-        return Path(read_csv.call_args.args[0])
+        return Path(read_csv_mock.call_args_list[0].args[0])
 
     def test_default_split_reads_test_csv(self) -> None:
         self.assertEqual(self.run_main(None), self.split_dir / "test.csv")
@@ -85,6 +102,15 @@ class DoaExternalSplitTests(unittest.TestCase):
         self.assertEqual(
             row["id_maps_sha256"],
             hashlib.sha256((self.mastery_dir / "id_maps.json").read_bytes()).hexdigest(),
+        )
+
+    def test_output_binds_holdout_assignments_hash(self) -> None:
+        self.run_main("valid", include_holdout=True)
+
+        row = pd.read_csv(self.root / "doa.csv").iloc[0]
+        self.assertEqual(
+            row["holdout_assignments_sha256"],
+            hashlib.sha256(self.assignments.read_bytes()).hexdigest(),
         )
 
 

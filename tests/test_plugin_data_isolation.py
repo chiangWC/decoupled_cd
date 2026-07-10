@@ -93,6 +93,8 @@ class PluginDataIsolationTests(unittest.TestCase):
                 "backbone_config": BACKBONE_CONFIG,
                 "protocol": PROTOCOL,
                 "frozen_config_id": self.config_id,
+                "dataset": "fixture",
+                "holdout_assignments_sha256": "9" * 64,
             }),
             encoding="utf-8",
         )
@@ -361,6 +363,38 @@ class PluginDataIsolationTests(unittest.TestCase):
                                 id_maps_path=self.schema,
                                 q_matrix_path=self.q_matrix,
                             )
+
+    def test_evaluation_rows_are_reused_from_memory_without_csv_reread(self) -> None:
+        for name, module, processor_class, args in self.processors():
+            with self.subTest(name=name):
+                with self.processor_context(
+                    name,
+                    module,
+                    processor_class,
+                    processor_class._read_csv,
+                ):
+                    processor = processor_class(
+                        args,
+                        mock.Mock(),
+                        split_mode="test",
+                        id_maps_path=self.schema,
+                        q_matrix_path=self.q_matrix,
+                    )
+
+                with mock.patch.object(
+                    processor_class,
+                    "_read_csv",
+                    side_effect=AssertionError("evaluation rows reopened a CSV"),
+                ):
+                    rows = processor.evaluation_rows("test")
+
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(str(rows[0]["stu_id"]), "1")
+                self.assertEqual(str(rows[0]["exer_id"]), "30")
+                self.assertEqual(str(rows[0]["cpt_seq"]), "300,301")
+                self.assertEqual(float(rows[0]["label"]), 1.0)
+                with self.assertRaisesRegex(ValueError, "valid or test"):
+                    processor.evaluation_rows("train")
 
 
 if __name__ == "__main__":

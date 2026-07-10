@@ -181,6 +181,10 @@ BASE_RUN="${BASE_ATTEMPT}/model"
 
 只用 `valid.csv` 和每个 epoch 的 mastery 计算 holdout DOA。下面的 helper 从
 manifest 构造 `doa_external.py` 所需的重复参数，避免手工写错 model 名称。
+DOA CSV 会同时记录 `--dataset-name` 和 holdout assignments 的 SHA-256；selector
+要求所有候选一致，并把二者写入冻结 selection。旧的、缺少这两个字段的 DOA CSV
+和 selection 不得用于最终 test，应从既有候选 mastery 重新计算 validation DOA 并
+重新执行 selector（无需重训）。
 
 ```bash
 build_doa_args() {
@@ -345,6 +349,8 @@ TEST_ATTEMPT=$(campaign_run test-once \
   --dataset-file "${PLUGIN_SELECTION}" \
   --output-file model/metrics.json \
   --output-file model/predictions.csv \
+  --output-file model/evaluation_cache.csv \
+  --output-file model/evaluation_cache_manifest.json \
   --output-file model/mastery.npy \
   --output-file model/id_maps.json \
   --output-file "${TEST_LEDGER}/${FROZEN_CONFIG_ID}.json" \
@@ -372,5 +378,37 @@ TEST_ATTEMPT=$(campaign_run test-once \
 ```
 
 evaluate 模式输出 `metrics.json`、`predictions.csv`、`mastery.npy` 与
-`id_maps.json`。`--plugin-eval-split valid` 可以重复执行且不需要 ledger；
+`id_maps.json`；还会从本次 evaluate 已加载并完成预测的原始 split 行直接生成
+`evaluation_cache.csv`，随后在 cache、mastery、ID maps 全部落盘并取哈希后，最后
+写入 `evaluation_cache_manifest.json`。cache 明确保留与预测同序的
+`row_index,stu_id,exer_id,cpt_seq,label,prob`，不会再次打开 split CSV。
+test cache manifest 还嵌入并哈希 O_EXCL claim，绑定 canonical frozen config ID、
+selection SHA-256、数据集名和 validation 阶段的 holdout assignments SHA-256。
+`--plugin-eval-split valid` 可以重复执行且不需要 ledger；
 `--plugin-eval-split test` 则必须同时提供 ledger 和冻结 selection JSON。
+
+最终 test holdout DOA 只能消费上述 cache，不得再调用
+`doa_external.py --split test`。下面的 campaign 没有 `--split-dir` 或 test 文件参数；协议与输入哈希来自
+manifest，CLI 会强制检查 `seed=42`、`doa_seed=42`、`min_responses=3`、
+`split_seed=2024`、数据集名及实际 holdout assignments 哈希，并在输出中记录
+cache manifest、test claim、selection、cache、mastery、ID maps、
+Q matrix、checkpoint 与 holdout assignments 的 SHA-256：
+
+```bash
+TEST_MODEL_DIR="${TEST_ATTEMPT}/model"
+CACHED_DOA_ATTEMPT=$(campaign_run test-cached-doa \
+  --dataset-file "${TEST_MODEL_DIR}/evaluation_cache_manifest.json" \
+  --dataset-file "${TEST_MODEL_DIR}/evaluation_cache.csv" \
+  --dataset-file "${TEST_MODEL_DIR}/mastery.npy" \
+  --dataset-file "${TEST_MODEL_DIR}/id_maps.json" \
+  --dataset-file "${HOLDOUT_ASSIGNMENTS}" \
+  --output-file test_doa.csv \
+  -- bash -lc '
+    python3 scripts/doa_cached.py \
+      --dataset-name assist_09 \
+      --evaluation-dir "$1" \
+      --model-name orcdf-plugin \
+      --holdout-assignments "$2" \
+      --output-csv "${CAMPAIGN_ATTEMPT_DIR}/test_doa.csv"' \
+    cached-doa "${TEST_MODEL_DIR}" "${HOLDOUT_ASSIGNMENTS}")
+```

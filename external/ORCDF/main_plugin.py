@@ -175,7 +175,7 @@ def main():
         return processor, processor.get_loaders()
 
     if args.plugin_mode == "evaluate":
-        proc, loaders = prepare_evaluation_resources(
+        (proc, loaders), test_claim_bytes = prepare_evaluation_resources(
             split=args.plugin_eval_split,
             load_resources=load_resources,
             checkpoint_path=args.plugin_checkpoint,
@@ -188,9 +188,11 @@ def main():
             route_root=PROJECT_ROOT,
             argv=sys.argv,
             artifact_snapshot=artifact_snapshot,
+            return_test_claim_bytes=True,
         )
     else:
         proc, loaders = load_resources()
+        test_claim_bytes = None
 
     model = DecoupledORCDF(
         student_n=proc.num_students, exer_n=proc.num_exercises, knowledge_n=proc.num_concepts,
@@ -281,10 +283,15 @@ def main():
         metrics=metrics,
         predictions=predictions,
         labels=labels,
+        test_claim_bytes=test_claim_bytes,
+        interaction_rows=proc.evaluation_rows(args.plugin_eval_split),
         mastery=model.mastery_matrix(),
         id_maps=processor_id_maps(proc),
         metadata={
             "checkpoint_sha256": sha256_bytes(artifact_snapshot.checkpoint_bytes),
+            "source_id_maps_sha256": sha256_bytes(
+                artifact_snapshot.id_maps_bytes
+            ),
             "selection_json": (
                 str(args.plugin_selection_json) if args.plugin_selection_json else None
             ),

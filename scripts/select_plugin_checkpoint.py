@@ -179,6 +179,11 @@ def _load_doa_rows(path: Path) -> dict[str, dict[str, Any]]:
             if normalized["holdout_num_pairs"] <= 0:
                 raise SelectionError(f"{model_name} has no evaluated holdout pairs")
             normalized.update({
+                "dataset": row.get("dataset"),
+                "holdout_assignments_sha256": _sha256(
+                    row.get("holdout_assignments_sha256"),
+                    f"{model_name}.holdout_assignments_sha256",
+                ),
                 "split": row.get("split"),
                 "doa_seed": _integer(row.get("doa_seed"), f"{model_name}.doa_seed"),
                 "min_responses": _integer(
@@ -198,6 +203,10 @@ def _load_doa_rows(path: Path) -> dict[str, dict[str, Any]]:
                     row.get("id_maps_sha256"), f"{model_name}.id_maps_sha256"
                 ),
             })
+            if not isinstance(normalized["dataset"], str) or not normalized[
+                "dataset"
+            ].strip():
+                raise SelectionError(f"{model_name}.dataset must be non-empty")
             rows[model_name] = normalized
     if not rows:
         raise SelectionError("validation DOA CSV is empty")
@@ -289,6 +298,8 @@ def _selection_payload(
         "id_maps_sha256": candidate["id_maps_sha256"],
         "validation": candidate["validation"],
         "validation_doa": doa,
+        "dataset": doa["dataset"],
+        "holdout_assignments_sha256": doa["holdout_assignments_sha256"],
         "plugin_config": candidate["plugin_config"],
         "backbone_config": candidate["backbone_config"],
         "protocol": protocol,
@@ -329,6 +340,17 @@ def select_checkpoint(
     protocol = _validated_protocol(candidate_rows)
     candidates = _index_candidates(candidate_rows)
     doa_rows = _load_doa_rows(Path(doa_csv_path))
+    validation_identities = {
+        (row["dataset"], row["holdout_assignments_sha256"])
+        for row in doa_rows.values()
+    }
+    if len(validation_identities) != 1:
+        raise SelectionError(
+            "validation DOA rows contain mixed dataset/holdout assignments"
+        )
+    validation_dataset, validation_holdout_sha256 = next(
+        iter(validation_identities)
+    )
     missing = sorted(set(candidates) - set(doa_rows))
     if missing:
         raise SelectionError(f"DOA CSV is missing candidates: {', '.join(missing)}")
@@ -364,6 +386,15 @@ def select_checkpoint(
         )
         if baseline.get("protocol") != protocol:
             raise SelectionError("plugin and baseline selections use different protocols")
+        if baseline.get("dataset") != validation_dataset:
+            raise SelectionError("plugin and baseline selections use different datasets")
+        if (
+            baseline.get("holdout_assignments_sha256")
+            != validation_holdout_sha256
+        ):
+            raise SelectionError(
+                "plugin and baseline selections use different holdout assignments"
+            )
         try:
             baseline_auc = _finite_float(
                 baseline["validation"]["auc"], "baseline.validation.auc"

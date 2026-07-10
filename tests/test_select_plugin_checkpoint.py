@@ -47,6 +47,8 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             "split_seed": 2024,
             "q_matrix_sha256": hashlib.sha256(b"q-matrix").hexdigest(),
         }
+        self.dataset = "fixture"
+        self.holdout_assignments_sha256 = "9" * 64
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -109,6 +111,8 @@ class SelectPluginCheckpointTests(unittest.TestCase):
                     "split_seed",
                     "mastery_sha256",
                     "id_maps_sha256",
+                    "dataset",
+                    "holdout_assignments_sha256",
                 ],
             )
             writer.writeheader()
@@ -130,6 +134,8 @@ class SelectPluginCheckpointTests(unittest.TestCase):
                         "max_pairs_per_concept": 100_000,
                         "split_seed": 2024,
                         **audit,
+                        "dataset": self.dataset,
+                        "holdout_assignments_sha256": self.holdout_assignments_sha256,
                     } if include_audit else {}),
                     **row,
                 })
@@ -172,6 +178,11 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             self.artifact_hashes[selected["model_name"]]["id_maps_sha256"],
         )
         self.assertEqual(selected["backbone_config"], self.backbone_config)
+        self.assertEqual(selected["dataset"], self.dataset)
+        self.assertEqual(
+            selected["holdout_assignments_sha256"],
+            self.holdout_assignments_sha256,
+        )
         self.assertEqual(json.loads(output.read_text()), selected)
 
     def test_plugin_filters_constraints_then_ranks_doa_auc_and_earlier_epoch(self) -> None:
@@ -180,6 +191,8 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             "validation": {"auc": 0.90},
             "validation_doa": {"holdout_doa": 0.50, "holdout_doa_weighted": 0.55},
             "protocol": self.protocol,
+            "dataset": self.dataset,
+            "holdout_assignments_sha256": self.holdout_assignments_sha256,
         }))
         self.write_candidates([
             {"epoch": 1, "model_name": "low-auc", "validation": {"auc": 0.897, "acc": 0.7, "rmse": 0.4}, "plugin_config": {"aux_weight": 0.1}},
@@ -229,6 +242,8 @@ class SelectPluginCheckpointTests(unittest.TestCase):
             "validation": {"auc": 0.90},
             "validation_doa": {"holdout_doa": 0.50, "holdout_doa_weighted": 0.55},
             "protocol": self.protocol,
+            "dataset": self.dataset,
+            "holdout_assignments_sha256": self.holdout_assignments_sha256,
         }))
         self.write_candidates([
             {"epoch": 1, "model_name": "infeasible", "validation": {"auc": 0.80, "acc": 0.7, "rmse": 0.4}, "plugin_config": {"aux_weight": 0.1}},
@@ -263,6 +278,55 @@ class SelectPluginCheckpointTests(unittest.TestCase):
 
         self.assertNotEqual(completed.returncode, 0)
         self.assertFalse(output.exists())
+
+    def test_plugin_rejects_different_baseline_dataset_or_holdout_file(self) -> None:
+        self.write_candidates([
+            {
+                "epoch": 1,
+                "model_name": "candidate",
+                "validation": {"auc": 0.90, "acc": 0.8, "rmse": 0.3},
+                "plugin_config": {"aux_weight": 0.1},
+            },
+        ])
+        self.write_doa([
+            {
+                "model": "candidate",
+                "holdout_doa": 0.60,
+                "holdout_doa_weighted": 0.60,
+            },
+        ])
+        for field, value in (
+            ("dataset", "other-dataset"),
+            ("holdout_assignments_sha256", "0" * 64),
+        ):
+            with self.subTest(field=field):
+                baseline = self.root / f"baseline-{field}.json"
+                baseline.write_text(
+                    json.dumps(
+                        {
+                            "validation": {"auc": 0.90},
+                            "validation_doa": {
+                                "holdout_doa": 0.50,
+                                "holdout_doa_weighted": 0.55,
+                            },
+                            "protocol": self.protocol,
+                            "dataset": self.dataset,
+                            "holdout_assignments_sha256": (
+                                self.holdout_assignments_sha256
+                            ),
+                            field: value,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(SelectionError, "different"):
+                    select_checkpoint(
+                        mode="plugin",
+                        manifest_path=self.manifest,
+                        doa_csv_path=self.doa_csv,
+                        output_path=self.root / f"selection-{field}.json",
+                        baseline_selection_path=baseline,
+                    )
 
     def test_duplicate_model_names_are_rejected(self) -> None:
         self.write_candidates([

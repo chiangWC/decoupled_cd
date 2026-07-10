@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 from pathlib import Path
@@ -13,7 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data.q_matrix import normalize_concept_sequence
-from scripts.plugin_campaign import sha256_file
+from scripts.plugin_campaign import sha256_bytes, sha256_file
 from utils import compute_doa
 
 
@@ -41,6 +42,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     evaluation_frame = pd.read_csv(Path(args.split_dir) / f"{args.split}.csv")
+    assignments = None
+    holdout_assignments_sha256 = None
+    if args.holdout_assignments:
+        assignments_path = Path(args.holdout_assignments)
+        assignments_bytes = assignments_path.read_bytes()
+        assignments = pd.read_csv(io.BytesIO(assignments_bytes))
+        holdout_assignments_sha256 = sha256_bytes(assignments_bytes)
 
     rows = []
     for mastery_dir, model_name in zip(args.mastery_dir, args.model_name, strict=True):
@@ -74,6 +82,8 @@ def main() -> None:
             "mastery_sha256": sha256_file(mastery_path),
             "id_maps_sha256": sha256_file(id_maps_path),
         }
+        if holdout_assignments_sha256 is not None:
+            result["holdout_assignments_sha256"] = holdout_assignments_sha256
         result.update(
             compute_doa(
                 mastery=mastery,
@@ -86,8 +96,7 @@ def main() -> None:
             )
         )
 
-        if args.holdout_assignments:
-            assignments = pd.read_csv(args.holdout_assignments)
+        if assignments is not None:
             holdout_map: dict[int, set[int]] = {}
             for arow in assignments.itertuples(index=False):
                 raw = getattr(arow, "holdout_concepts", "")

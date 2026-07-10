@@ -328,3 +328,10 @@ class CognitiveDataProcessor:
             collate_fn=ResponseDataset.collate_fn,
         )
         return train_loader, valid_loader, test_loader
+
+    def evaluation_rows(self, split):
+        if split not in {"valid", "test"}:
+            raise ValueError("evaluation rows split must be valid or test")
+        source = self.valid_rows if split == "valid" else self.test_rows
+        fields = ("stu_id", "exer_id", "cpt_seq", "label")
+        return [{field: row[field] for field in fields} for row in source]

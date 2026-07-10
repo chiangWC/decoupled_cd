@@ -54,6 +54,14 @@ class EvaluationArtifactSnapshot:
     q_matrix_bytes: bytes
 
 
+@dataclass(frozen=True)
+class TestClaimSnapshot:
+    """Path and the exact bytes written through the exclusive claim FD."""
+
+    path: Path
+    payload: bytes
+
+
 def snapshot_evaluation_artifacts(
     checkpoint_path: Path,
     q_matrix_path: Path,
@@ -80,6 +88,12 @@ def sha256_bytes(payload: bytes) -> str:
 
 def _json_copy(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
+
+
+def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
+    return (
+        json.dumps(dict(value), sort_keys=True, allow_nan=False) + "\n"
+    ).encode()
 
 
 def _validation_metrics(metrics: Mapping[str, Any]) -> dict[str, float]:
@@ -290,10 +304,21 @@ def _validated_selection(
     protocol: Mapping[str, Any],
     supplied_frozen_config_id: str | None,
     artifact_snapshot: EvaluationArtifactSnapshot | None = None,
-) -> tuple[str, str, str, dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    str,
+    str,
+    str,
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    str,
+    str,
+    str,
+]:
     try:
-        selection = json.loads(Path(selection_path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        selection_bytes = Path(selection_path).read_bytes()
+        selection = json.loads(selection_bytes)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise FrozenConfigMismatchError(
             f"cannot read frozen selection: {selection_path}"
         ) from exc
@@ -360,6 +385,16 @@ def _validated_selection(
         raise FrozenConfigMismatchError(
             "supplied frozen_config_id does not match frozen selection"
         )
+    dataset = selection.get("dataset")
+    if not isinstance(dataset, str) or not dataset.strip():
+        raise FrozenConfigMismatchError("selection dataset must be a non-empty string")
+    try:
+        holdout_assignments_sha256 = _validated_sha256(
+            selection.get("holdout_assignments_sha256"),
+            "selection holdout_assignments_sha256",
+        )
+    except ValueError as exc:
+        raise FrozenConfigMismatchError(str(exc)) from exc
     return (
         config_id,
         checkpoint_sha256,
@@ -367,6 +402,9 @@ def _validated_selection(
         normalized_config,
         normalized_backbone,
         normalized_protocol,
+        sha256_bytes(selection_bytes),
+        dataset,
+        holdout_assignments_sha256,
     )
 
 
@@ -384,7 +422,8 @@ def claim_test_evaluation(
     route_head: str | None = None,
     claimed_at_utc: str | None = None,
     artifact_snapshot: EvaluationArtifactSnapshot | None = None,
-) -> Path:
+    return_snapshot: bool = False,
+) -> Path | TestClaimSnapshot:
     (
         frozen_config_id,
         checkpoint_sha256,
@@ -392,6 +431,9 @@ def claim_test_evaluation(
         normalized_config,
         normalized_backbone,
         normalized_protocol,
+        selection_sha256,
+        dataset,
+        holdout_assignments_sha256,
     ) = _validated_selection(
         selection_path=selection_path,
         checkpoint_path=checkpoint_path,
@@ -416,11 +458,15 @@ def claim_test_evaluation(
         "plugin_config": normalized_config,
         "backbone_config": normalized_backbone,
         "protocol": normalized_protocol,
+        "selection_sha256": selection_sha256,
+        "dataset": dataset,
+        "holdout_assignments_sha256": holdout_assignments_sha256,
         "selection_path": str(Path(selection_path).resolve()),
         "route_head": resolved_head,
         "claimed_at_utc": claimed_at,
         "argv": list(argv if argv is not None else sys.argv),
     }
+    claim_payload = canonical_json_bytes(record)
     ledger_dir = Path(ledger_dir)
     ledger_dir.mkdir(parents=True, exist_ok=True)
     claim_path = ledger_dir / f"{frozen_config_id}.json"
@@ -434,11 +480,12 @@ def claim_test_evaluation(
         raise DuplicateTestEvaluationError(
             f"test evaluation already claimed for {frozen_config_id}"
         ) from exc
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        json.dump(record, handle, sort_keys=True, allow_nan=False)
-        handle.write("\n")
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(claim_payload)
         handle.flush()
         os.fsync(handle.fileno())
+    if return_snapshot:
+        return TestClaimSnapshot(path=claim_path, payload=claim_payload)
     return claim_path
 
 
@@ -457,15 +504,17 @@ def prepare_evaluation_resources(
     argv: Sequence[str] | None = None,
     route_head: str | None = None,
     artifact_snapshot: EvaluationArtifactSnapshot | None = None,
+    return_test_claim_bytes: bool = False,
 ) -> Any:
     if split not in {"valid", "test"}:
         raise ValueError("evaluation split must be 'valid' or 'test'")
+    test_claim_bytes = None
     if split == "test":
         if ledger_dir is None or selection_path is None or route_root is None:
             raise ValueError(
                 "test evaluation requires ledger_dir, selection_path, and route_root"
             )
-        claim_test_evaluation(
+        claim_snapshot = claim_test_evaluation(
             ledger_dir=ledger_dir,
             selection_path=selection_path,
             checkpoint_path=checkpoint_path,
@@ -477,8 +526,96 @@ def prepare_evaluation_resources(
             argv=argv,
             route_head=route_head,
             artifact_snapshot=artifact_snapshot,
+            return_snapshot=True,
         )
-    return load_resources()
+        if not isinstance(claim_snapshot, TestClaimSnapshot):
+            raise RuntimeError("claim writer did not return an immutable snapshot")
+        test_claim_bytes = claim_snapshot.payload
+    resources = load_resources()
+    if return_test_claim_bytes:
+        return resources, test_claim_bytes
+    return resources
+
+
+def _artifact_token(value: Any) -> str:
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)) and math.isfinite(float(value)):
+        if float(value).is_integer():
+            return str(int(value))
+    return str(value)
+
+
+def _normalized_evaluation_cache_rows(
+    *,
+    interaction_rows: Sequence[Mapping[str, Any]],
+    predictions: Sequence[float],
+    labels: Sequence[float],
+) -> list[tuple[int, str, str, str, float, float]]:
+    rows = list(interaction_rows)
+    if len(rows) != len(predictions):
+        raise ValueError(
+            "evaluation cache row count must match predictions and labels"
+        )
+    normalized = []
+    required = ("stu_id", "exer_id", "cpt_seq", "label")
+    for index, (row, probability, evaluated_label) in enumerate(
+        zip(rows, predictions, labels, strict=True)
+    ):
+        if not isinstance(row, Mapping):
+            raise ValueError(f"evaluation cache row {index} must be a mapping")
+        missing = [field for field in required if field not in row]
+        if missing:
+            raise ValueError(
+                f"evaluation cache row {index} is missing: {', '.join(missing)}"
+            )
+        try:
+            raw_label = float(row["label"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"evaluation cache row {index} label must be numeric"
+            ) from exc
+        if not math.isfinite(raw_label) or raw_label != evaluated_label:
+            raise ValueError(
+                f"evaluation cache label mismatch at row {index}: "
+                f"raw={raw_label!r}, evaluated={evaluated_label!r}"
+            )
+        if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+            raise ValueError(
+                f"evaluation cache probability at row {index} must be in [0, 1]"
+            )
+        cpt_seq = row["cpt_seq"]
+        if cpt_seq is None or (
+            isinstance(cpt_seq, (float, np.floating))
+            and not math.isfinite(float(cpt_seq))
+        ):
+            normalized_cpt_seq = ""
+        else:
+            normalized_cpt_seq = _artifact_token(cpt_seq)
+        normalized.append(
+            (
+                index,
+                _artifact_token(row["stu_id"]),
+                _artifact_token(row["exer_id"]),
+                normalized_cpt_seq,
+                raw_label,
+                probability,
+            )
+        )
+    return normalized
+
+
+def _write_evaluation_cache_manifest(path: Path, payload: Mapping[str, Any]) -> None:
+    descriptor = os.open(
+        Path(path),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump(_json_copy(dict(payload)), handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def write_evaluation_artifacts(
@@ -488,6 +625,8 @@ def write_evaluation_artifacts(
     metrics: Mapping[str, Any],
     predictions: Sequence[Any],
     labels: Sequence[Any],
+    test_claim_bytes: bytes | None = None,
+    interaction_rows: Sequence[Mapping[str, Any]] | None = None,
     mastery: np.ndarray,
     id_maps: Mapping[str, Any],
     metadata: Mapping[str, Any] | None = None,
@@ -499,6 +638,68 @@ def write_evaluation_artifacts(
     labels = [float(value) for value in labels]
     if len(predictions) != len(labels):
         raise ValueError("predictions and labels must have equal length")
+    cache_rows = None
+    cache_metadata = None
+    test_claim = None
+    if interaction_rows is not None:
+        cache_rows = _normalized_evaluation_cache_rows(
+            interaction_rows=interaction_rows,
+            predictions=predictions,
+            labels=labels,
+        )
+        cache_metadata = _json_copy(dict(metadata or {}))
+        try:
+            cache_metadata["checkpoint_sha256"] = _validated_sha256(
+                cache_metadata["checkpoint_sha256"], "checkpoint_sha256"
+            )
+            cache_metadata["source_id_maps_sha256"] = _validated_sha256(
+                cache_metadata["source_id_maps_sha256"],
+                "source_id_maps_sha256",
+            )
+            cache_metadata["protocol"] = _validated_protocol(
+                cache_metadata["protocol"]
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"evaluation cache metadata is missing {exc.args[0]}"
+            ) from exc
+        if split == "test":
+            if test_claim_bytes is None:
+                raise ValueError("test cache requires guarded test claim bytes")
+            try:
+                test_claim = json.loads(test_claim_bytes)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("test claim bytes must contain JSON") from exc
+            if not isinstance(test_claim, dict):
+                raise ValueError("test claim must be a JSON object")
+            if test_claim_bytes != canonical_json_bytes(test_claim):
+                raise ValueError("test claim bytes are not canonical")
+            for field, expected in (
+                ("checkpoint_sha256", cache_metadata["checkpoint_sha256"]),
+                ("id_maps_sha256", cache_metadata["source_id_maps_sha256"]),
+                ("plugin_config", cache_metadata.get("plugin_config")),
+                ("backbone_config", cache_metadata.get("backbone_config")),
+                ("protocol", cache_metadata["protocol"]),
+            ):
+                if test_claim.get(field) != expected:
+                    raise ValueError(
+                        f"test claim {field} does not match evaluation metadata"
+                    )
+            expected_frozen_id = compute_frozen_config_id(
+                checkpoint_sha256=test_claim["checkpoint_sha256"],
+                id_maps_sha256=test_claim["id_maps_sha256"],
+                plugin_config=test_claim["plugin_config"],
+                backbone_config=test_claim["backbone_config"],
+                protocol=test_claim["protocol"],
+            )
+            if test_claim.get("frozen_config_id") != expected_frozen_id:
+                raise ValueError("test claim frozen_config_id is not canonical")
+            if not isinstance(test_claim.get("dataset"), str) or not test_claim[
+                "dataset"
+            ].strip():
+                raise ValueError("test claim dataset must be a non-empty string")
+            for field in ("selection_sha256", "holdout_assignments_sha256"):
+                _validated_sha256(test_claim.get(field), f"test claim {field}")
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_record = {
@@ -515,7 +716,54 @@ def write_evaluation_artifacts(
         writer = csv.writer(handle)
         writer.writerow(["prob", "label"])
         writer.writerows(zip(predictions, labels, strict=True))
+    cache_path = output_dir / "evaluation_cache.csv"
+    if cache_rows is not None:
+        with cache_path.open("x", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                ["row_index", "stu_id", "exer_id", "cpt_seq", "label", "prob"]
+            )
+            writer.writerows(cache_rows)
     np.save(output_dir / "mastery.npy", np.asarray(mastery))
-    with (output_dir / "id_maps.json").open("w", encoding="utf-8") as handle:
+    id_maps_path = output_dir / "id_maps.json"
+    with id_maps_path.open("w", encoding="utf-8") as handle:
         json.dump(_json_copy(dict(id_maps)), handle, sort_keys=True)
         handle.write("\n")
+    if cache_rows is not None:
+        mastery_path = output_dir / "mastery.npy"
+        manifest = {
+            "format_version": 1,
+            "evaluation_split": split,
+            "row_count": len(cache_rows),
+            "cache_file": cache_path.name,
+            "cache_sha256": sha256_file(cache_path),
+            "mastery_file": mastery_path.name,
+            "mastery_sha256": sha256_file(mastery_path),
+            "id_maps_file": id_maps_path.name,
+            "id_maps_sha256": sha256_file(id_maps_path),
+            "checkpoint_sha256": cache_metadata["checkpoint_sha256"],
+            "source_id_maps_sha256": cache_metadata[
+                "source_id_maps_sha256"
+            ],
+            "protocol": cache_metadata["protocol"],
+        }
+        for field in ("plugin_config", "backbone_config"):
+            if field in cache_metadata:
+                manifest[field] = cache_metadata[field]
+        if test_claim is not None:
+            manifest.update(
+                {
+                    "frozen_config_id": test_claim["frozen_config_id"],
+                    "selection_sha256": test_claim["selection_sha256"],
+                    "dataset": test_claim["dataset"],
+                    "holdout_assignments_sha256": test_claim[
+                        "holdout_assignments_sha256"
+                    ],
+                    "test_claim": test_claim,
+                    "test_claim_sha256": sha256_bytes(test_claim_bytes),
+                }
+            )
+        _write_evaluation_cache_manifest(
+            output_dir / "evaluation_cache_manifest.json",
+            manifest,
+        )

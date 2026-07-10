@@ -485,3 +485,10 @@ class CognitiveDataProcessor:
             DataLoader(CognitiveDataset(self.valid_triplets), shuffle=False, **kwargs),
             DataLoader(CognitiveDataset(self.test_triplets), shuffle=False, **kwargs),
         )
+
+    def evaluation_rows(self, split):
+        if split not in {"valid", "test"}:
+            raise ValueError("evaluation rows split must be valid or test")
+        frame = self.valid_data if split == "valid" else self.test_data
+        fields = ["stu_id", "exer_id", "cpt_seq", "label"]
+        return frame.loc[:, fields].to_dict(orient="records")
