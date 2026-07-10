@@ -37,8 +37,12 @@ def build_tkc_mask(data_proc, dtype):
     S, K = data_proc.num_students, data_proc.num_concepts
     exercise_concepts = {}
     for row in data_proc.train_data.drop_duplicates(subset=["exer_id"]).itertuples(index=False):
-        exercise_concepts[data_proc.exer2idx[row.exer_id]] = [
-            data_proc.cpt2idx[c] for c in data_proc._parse_concepts(row.cpt_seq)
+        exercise_index = data_proc._lookup(
+            data_proc.exer2idx, row.exer_id, "exercise"
+        )
+        exercise_concepts[exercise_index] = [
+            data_proc._lookup(data_proc.cpt2idx, concept, "concept")
+            for concept in data_proc._parse_concepts(row.cpt_seq)
         ]
     mask = torch.zeros(S, K, dtype=dtype)
     for stu_idx, exer_idx, _label in data_proc.train_triplets:
@@ -52,7 +56,10 @@ def build_concept_graph(data_proc, dtype):
     K = data_proc.num_concepts
     adj = torch.zeros(K, K, dtype=dtype)
     for row in data_proc.train_data.drop_duplicates(subset=["exer_id"]).itertuples(index=False):
-        concepts = [data_proc.cpt2idx[c] for c in data_proc._parse_concepts(row.cpt_seq)]
+        concepts = [
+            data_proc._lookup(data_proc.cpt2idx, concept, "concept")
+            for concept in data_proc._parse_concepts(row.cpt_seq)
+        ]
         for i in concepts:
             for j in concepts:
                 if i != j:

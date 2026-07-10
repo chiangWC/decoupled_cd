@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data.q_matrix import normalize_concept_sequence
+from scripts.plugin_campaign import sha256_file
 from utils import compute_doa
 
 
@@ -42,8 +43,9 @@ def main() -> None:
 
     rows = []
     for mastery_dir, model_name in zip(args.mastery_dir, args.model_name, strict=True):
-        mastery = np.load(Path(mastery_dir) / "mastery.npy")
+        mastery_path = Path(mastery_dir) / "mastery.npy"
         id_maps_path = Path(mastery_dir) / "id_maps.json"
+        mastery = np.load(mastery_path)
         id_maps = json.loads(id_maps_path.read_text(encoding="utf-8"))
         stu2row = {token: index for index, token in enumerate(id_maps["stu_ids"])}
         cpt2col = {token: index for index, token in enumerate(id_maps["cpt_ids"])}
@@ -60,7 +62,16 @@ def main() -> None:
             concept_lists.append(concepts)
             labels.append(float(row.label))
 
-        result = {"dataset": args.dataset_name, "model": model_name}
+        result = {
+            "dataset": args.dataset_name,
+            "model": model_name,
+            "split": args.split,
+            "doa_seed": args.doa_seed,
+            "min_responses": args.min_responses,
+            "max_pairs_per_concept": args.max_pairs_per_concept,
+            "mastery_sha256": sha256_file(mastery_path),
+            "id_maps_sha256": sha256_file(id_maps_path),
+        }
         result.update(
             compute_doa(
                 mastery=mastery,

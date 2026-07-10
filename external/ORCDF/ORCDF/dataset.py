@@ -1,3 +1,4 @@
+import json
 import os
 from collections import defaultdict
 
@@ -24,12 +25,53 @@ class CognitiveDataset(Dataset):
 
 
 class CognitiveDataProcessor:
-    def __init__(self, args, logger):
+    def __init__(self, args, logger, *, split_mode="all", id_maps_path=None):
+        if split_mode not in {"all", "train", "valid", "test"}:
+            raise ValueError("split_mode must be all, train, valid, or test")
+        if split_mode == "test" and id_maps_path is None:
+            raise ValueError("test mode requires frozen id_maps_path")
         self.args = args
         self.logger = logger
         self.data_dir = args.data_dir
+        self.split_mode = split_mode
+        self.id_maps_path = id_maps_path
         self.logger.info(">>> Processing Data...")
         self._load_and_process()
+
+    def _read_csv(self, filename):
+        return pd.read_csv(os.path.join(self.data_dir, filename))
+
+    @staticmethod
+    def _token(value):
+        if isinstance(value, (float, np.floating)) and float(value).is_integer():
+            return str(int(value))
+        return str(value)
+
+    def _load_frozen_ids(self):
+        try:
+            with open(self.id_maps_path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot read frozen ID schema: {self.id_maps_path}") from exc
+        ids = {}
+        for field in ("stu_ids", "exer_ids", "cpt_ids"):
+            values = payload.get(field)
+            if not isinstance(values, list) or not values:
+                raise ValueError(f"frozen ID schema requires {field}")
+            normalized = [self._token(value) for value in values]
+            if len(normalized) != len(set(normalized)):
+                raise ValueError(f"frozen ID schema has duplicate {field}")
+            ids[field] = normalized
+        return ids
+
+    def _lookup(self, mapping, value, kind):
+        token = self._token(value)
+        try:
+            return mapping[token]
+        except KeyError as exc:
+            raise ValueError(
+                f"unknown {kind} ID {token!r} in {self.split_mode} split"
+            ) from exc
 
     def _parse_concepts(self, cpt_seq):
         if pd.isna(cpt_seq):
@@ -37,18 +79,36 @@ class CognitiveDataProcessor:
         return [int(x) for x in str(cpt_seq).strip('"').split(",") if str(x).strip()]
 
     def _load_and_process(self):
-        self.train_data = pd.read_csv(os.path.join(self.data_dir, self.args.train_file))
-        self.valid_data = pd.read_csv(os.path.join(self.data_dir, self.args.valid_file))
-        self.test_data = pd.read_csv(os.path.join(self.data_dir, self.args.test_file))
+        self.train_data = self._read_csv(self.args.train_file)
+        self.valid_data = self._read_csv(self.args.valid_file)
+        schema_data = pd.concat([self.train_data, self.valid_data], ignore_index=True)
+        self.test_data = (
+            self._read_csv(self.args.test_file)
+            if self.split_mode in {"all", "test"}
+            else schema_data.iloc[0:0].copy()
+        )
+        mapping_data = (
+            pd.concat([schema_data, self.test_data], ignore_index=True)
+            if self.split_mode == "all"
+            else schema_data
+        )
 
-        all_data = pd.concat([self.train_data, self.valid_data, self.test_data], ignore_index=True)
-        self.stu_ids = sorted(all_data["stu_id"].unique())
-        self.exer_ids = sorted(all_data["exer_id"].unique())
-
-        all_concepts = set()
-        for cpt_seq in all_data["cpt_seq"]:
-            all_concepts.update(self._parse_concepts(cpt_seq))
-        self.cpt_ids = sorted(all_concepts)
+        if self.id_maps_path is not None:
+            frozen = self._load_frozen_ids()
+            self.stu_ids = frozen["stu_ids"]
+            self.exer_ids = frozen["exer_ids"]
+            self.cpt_ids = frozen["cpt_ids"]
+        else:
+            self.stu_ids = [
+                self._token(value) for value in sorted(mapping_data["stu_id"].unique())
+            ]
+            self.exer_ids = [
+                self._token(value) for value in sorted(mapping_data["exer_id"].unique())
+            ]
+            all_concepts = set()
+            for cpt_seq in mapping_data["cpt_seq"]:
+                all_concepts.update(self._parse_concepts(cpt_seq))
+            self.cpt_ids = [self._token(value) for value in sorted(all_concepts)]
 
         self.stu2idx = {x: i for i, x in enumerate(self.stu_ids)}
         self.exer2idx = {x: i for i, x in enumerate(self.exer_ids)}
@@ -61,29 +121,36 @@ class CognitiveDataProcessor:
             f"Stats: Stu={self.num_students}, Exer={self.num_exercises}, Cpt={self.num_concepts}"
         )
 
-        self.q_matrix = self._build_q_matrix(all_data).to(device)
+        self.q_matrix = self._build_q_matrix(mapping_data).to(device)
         self.train_triplets = self._process_triplets(self.train_data)
         self.valid_triplets = self._process_triplets(self.valid_data)
         self.test_triplets = self._process_triplets(self.test_data)
-        self._build_sample_conflict(all_data)
+        self._validate_concepts(self.test_data)
+        self._build_sample_conflict(mapping_data)
         self.train_response = self._process_response_array(self.train_data)
         self.graph_dict = self._build_graph_dict()
 
     def _build_q_matrix(self, all_data):
         q_matrix = torch.zeros(self.num_exercises, self.num_concepts, dtype=torch.float64)
         for row in all_data.itertuples(index=False):
-            exer_idx = self.exer2idx[row.exer_id]
+            exer_idx = self._lookup(self.exer2idx, row.exer_id, "exercise")
             for concept in self._parse_concepts(row.cpt_seq):
-                q_matrix[exer_idx, self.cpt2idx[concept]] = 1.0
+                concept_idx = self._lookup(self.cpt2idx, concept, "concept")
+                q_matrix[exer_idx, concept_idx] = 1.0
         return q_matrix
+
+    def _validate_concepts(self, data):
+        for row in data.itertuples(index=False):
+            for concept in self._parse_concepts(row.cpt_seq):
+                self._lookup(self.cpt2idx, concept, "concept")
 
     def _process_triplets(self, data):
         triplets = []
         for row in data.itertuples(index=False):
             triplets.append(
                 (
-                    self.stu2idx[row.stu_id],
-                    self.exer2idx[row.exer_id],
+                    self._lookup(self.stu2idx, row.stu_id, "student"),
+                    self._lookup(self.exer2idx, row.exer_id, "exercise"),
                     int(row.label),
                 )
             )
@@ -94,8 +161,8 @@ class CognitiveDataProcessor:
         for row in data.itertuples(index=False):
             rows.append(
                 [
-                    self.stu2idx[row.stu_id],
-                    self.exer2idx[row.exer_id],
+                    self._lookup(self.stu2idx, row.stu_id, "student"),
+                    self._lookup(self.exer2idx, row.exer_id, "exercise"),
                     int(row.label),
                 ]
             )
@@ -104,8 +171,9 @@ class CognitiveDataProcessor:
     def _build_sample_conflict(self, all_data):
         exercise_concepts = {}
         for row in all_data.drop_duplicates(subset=["exer_id"]).itertuples(index=False):
-            exercise_concepts[self.exer2idx[row.exer_id]] = [
-                self.cpt2idx[concept] for concept in self._parse_concepts(row.cpt_seq)
+            exercise_concepts[self._lookup(self.exer2idx, row.exer_id, "exercise")] = [
+                self._lookup(self.cpt2idx, concept, "concept")
+                for concept in self._parse_concepts(row.cpt_seq)
             ]
 
         student_kc_correct = defaultdict(float)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -21,6 +22,7 @@ class DoaExternalSplitTests(unittest.TestCase):
         self.mastery_dir = self.root / "mastery"
         self.split_dir.mkdir()
         self.mastery_dir.mkdir()
+        np.save(self.mastery_dir / "mastery.npy", np.zeros((1, 1)))
         (self.mastery_dir / "id_maps.json").write_text(
             json.dumps({"stu_ids": ["student-1"], "cpt_ids": ["concept-1"]}),
             encoding="utf-8",
@@ -66,6 +68,23 @@ class DoaExternalSplitTests(unittest.TestCase):
 
     def test_valid_split_reads_valid_csv(self) -> None:
         self.assertEqual(self.run_main("valid"), self.split_dir / "valid.csv")
+
+    def test_output_binds_split_protocol_and_artifact_hashes(self) -> None:
+        self.run_main("valid")
+
+        row = pd.read_csv(self.root / "doa.csv").iloc[0]
+        self.assertEqual(row["split"], "valid")
+        self.assertEqual(row["doa_seed"], 2024)
+        self.assertEqual(row["min_responses"], 1)
+        self.assertEqual(row["max_pairs_per_concept"], 100_000)
+        self.assertEqual(
+            row["mastery_sha256"],
+            hashlib.sha256((self.mastery_dir / "mastery.npy").read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            row["id_maps_sha256"],
+            hashlib.sha256((self.mastery_dir / "id_maps.json").read_bytes()).hexdigest(),
+        )
 
 
 if __name__ == "__main__":

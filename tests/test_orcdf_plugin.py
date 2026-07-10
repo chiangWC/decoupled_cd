@@ -148,6 +148,8 @@ class ORCDFPluginTests(unittest.TestCase):
         main_plugin = load_main_plugin()
         argv = [
             "main_plugin.py",
+            "--plugin-mode",
+            "train",
             "--plugin-aux-detach-item-difficulty",
             "--plugin-aux-warmup-fraction",
             "0.25",
@@ -157,6 +159,66 @@ class ORCDFPluginTests(unittest.TestCase):
 
         self.assertTrue(args.plugin_aux_detach_item_difficulty)
         self.assertEqual(args.plugin_aux_warmup_fraction, 0.25)
+
+    def test_cli_requires_explicit_plugin_mode(self) -> None:
+        main_plugin = load_main_plugin()
+
+        with mock.patch.object(sys, "argv", ["main_plugin.py"]):
+            with self.assertRaises(SystemExit):
+                main_plugin.parse_all()
+
+    def test_evaluate_cli_requires_checkpoint_split_ledger_and_selection(self) -> None:
+        main_plugin = load_main_plugin()
+        incomplete = [
+            "main_plugin.py",
+            "--plugin-mode",
+            "evaluate",
+            "--plugin-checkpoint",
+            "/tmp/checkpoint.pth",
+            "--plugin-eval-split",
+            "test",
+        ]
+        with mock.patch.object(sys, "argv", incomplete):
+            with self.assertRaises(SystemExit):
+                main_plugin.parse_all()
+
+        complete = incomplete + [
+            "--plugin-test-ledger-dir",
+            "/tmp/test-ledger",
+            "--plugin-selection-json",
+            "/tmp/selection.json",
+        ]
+        with mock.patch.object(sys, "argv", complete):
+            args = main_plugin.parse_all()
+
+        self.assertEqual(args.plugin_mode, "evaluate")
+        self.assertEqual(args.plugin_eval_split, "test")
+        self.assertEqual(args.plugin_selection_json, Path("/tmp/selection.json"))
+        self.assertIsNone(args.plugin_frozen_config_id)
+
+    def test_fresh_evaluation_initializes_orcdf_flip_graph(self) -> None:
+        main_plugin = load_main_plugin()
+        events: list[object] = []
+
+        class RecordingModel:
+            def load_state_dict(self, state_dict):
+                events.append(("load", state_dict))
+
+            def get_flip_graph(self):
+                events.append("flip")
+
+        with mock.patch.object(
+            main_plugin.torch,
+            "load",
+            return_value={"weight": "state"},
+        ):
+            main_plugin.load_evaluation_checkpoint(
+                RecordingModel(),
+                Path("checkpoint.pth"),
+                "cpu",
+            )
+
+        self.assertEqual(events, [("load", {"weight": "state"}), "flip"])
 
 
 if __name__ == "__main__":

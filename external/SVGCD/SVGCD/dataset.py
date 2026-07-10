@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 from collections import Counter
 
@@ -32,23 +33,42 @@ class ResponseDataset(Dataset):
 
 
 class CognitiveDataProcessor:
-    def __init__(self, args, logger):
+    def __init__(self, args, logger, *, split_mode="all", id_maps_path=None):
+        if split_mode not in {"all", "train", "valid", "test"}:
+            raise ValueError("split_mode must be all, train, valid, or test")
+        if split_mode == "test" and id_maps_path is None:
+            raise ValueError("test mode requires frozen id_maps_path")
         self.args = args
         self.logger = logger
         self.data_dir = args.data_dir
+        self.split_mode = split_mode
+        self.id_maps_path = id_maps_path
 
         self.logger.info(">>> Processing Data...")
         self.train_rows = self._read_csv(args.train_file)
         self.valid_rows = self._read_csv(args.valid_file)
-        self.test_rows = self._read_csv(args.test_file)
+        schema_rows = self.train_rows + self.valid_rows
+        self.test_rows = (
+            self._read_csv(args.test_file)
+            if split_mode in {"all", "test"}
+            else []
+        )
+        mapping_rows = (
+            schema_rows + self.test_rows if split_mode == "all" else schema_rows
+        )
 
-        id_rows = self.train_rows + self.valid_rows + self.test_rows
-        self.stu_ids = sorted({int(r["stu_id"]) for r in id_rows})
-        self.exer_ids = sorted({int(r["exer_id"]) for r in id_rows})
-        all_concepts = set()
-        for row in id_rows:
-            all_concepts.update(self._parse_cpts(row["cpt_seq"]))
-        self.cpt_ids = sorted(all_concepts)
+        if id_maps_path is not None:
+            frozen = self._load_frozen_ids()
+            self.stu_ids = frozen["stu_ids"]
+            self.exer_ids = frozen["exer_ids"]
+            self.cpt_ids = frozen["cpt_ids"]
+        else:
+            self.stu_ids = [str(value) for value in sorted({int(r["stu_id"]) for r in mapping_rows})]
+            self.exer_ids = [str(value) for value in sorted({int(r["exer_id"]) for r in mapping_rows})]
+            all_concepts = set()
+            for row in mapping_rows:
+                all_concepts.update(self._parse_cpts(row["cpt_seq"]))
+            self.cpt_ids = [str(value) for value in sorted(all_concepts)]
 
         self.stu2idx = {stu_id: idx for idx, stu_id in enumerate(self.stu_ids)}
         self.exer2idx = {exer_id: idx for idx, exer_id in enumerate(self.exer_ids)}
@@ -59,14 +79,16 @@ class CognitiveDataProcessor:
         self.num_concepts = len(self.cpt_ids)
 
         self.q_matrix = torch.zeros(self.num_exercises, self.num_concepts, dtype=torch.float32)
-        for row in id_rows:
-            exer = self.exer2idx[int(row["exer_id"])]
+        for row in mapping_rows:
+            exer = self._lookup(self.exer2idx, row["exer_id"], "exercise")
             for c in self._parse_cpts(row["cpt_seq"]):
-                self.q_matrix[exer, self.cpt2idx[c]] = 1.0
+                concept = self._lookup(self.cpt2idx, c, "concept")
+                self.q_matrix[exer, concept] = 1.0
 
         self.train_triplets = self._rows_to_triplets(self.train_rows)
         self.valid_triplets = self._rows_to_triplets(self.valid_rows)
         self.test_triplets = self._rows_to_triplets(self.test_rows)
+        self._validate_concepts(self.test_rows)
 
         self.student_interaction_counts = Counter(stu for stu, _, _ in self.train_triplets)
         self.correct_adj = self._build_semantic_adj(1)
@@ -82,6 +104,39 @@ class CognitiveDataProcessor:
             return list(csv.DictReader(f))
 
     @staticmethod
+    def _token(value):
+        try:
+            return str(int(value))
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _load_frozen_ids(self):
+        try:
+            with open(self.id_maps_path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot read frozen ID schema: {self.id_maps_path}") from exc
+        ids = {}
+        for field in ("stu_ids", "exer_ids", "cpt_ids"):
+            values = payload.get(field)
+            if not isinstance(values, list) or not values:
+                raise ValueError(f"frozen ID schema requires {field}")
+            normalized = [self._token(value) for value in values]
+            if len(normalized) != len(set(normalized)):
+                raise ValueError(f"frozen ID schema has duplicate {field}")
+            ids[field] = normalized
+        return ids
+
+    def _lookup(self, mapping, value, kind):
+        token = self._token(value)
+        try:
+            return mapping[token]
+        except KeyError as exc:
+            raise ValueError(
+                f"unknown {kind} ID {token!r} in {self.split_mode} split"
+            ) from exc
+
+    @staticmethod
     def _parse_cpts(cpt_seq):
         return [int(x) for x in str(cpt_seq).split(",")]
 
@@ -90,12 +145,17 @@ class CognitiveDataProcessor:
         for r in rows:
             triplets.append(
                 (
-                    self.stu2idx[int(r["stu_id"])],
-                    self.exer2idx[int(r["exer_id"])],
+                    self._lookup(self.stu2idx, r["stu_id"], "student"),
+                    self._lookup(self.exer2idx, r["exer_id"], "exercise"),
                     int(r["label"]),
                 )
             )
         return triplets
+
+    def _validate_concepts(self, rows):
+        for row in rows:
+            for concept in self._parse_cpts(row["cpt_seq"]):
+                self._lookup(self.cpt2idx, concept, "concept")
 
     def _build_semantic_adj(self, interaction_label):
         num_nodes = self.num_students + self.num_exercises
