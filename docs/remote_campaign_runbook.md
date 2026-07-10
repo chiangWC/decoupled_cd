@@ -16,6 +16,8 @@ attempt 内容；需要重跑时创建下一个 attempt。
 执行前必须满足：
 
 - 位于预期 Git worktree，且已提交当前代码；tracked/untracked 文件均不得残留。
+- `--cwd` 必须位于 `--repo-root` 指向的同一 worktree，不能借用另一仓库
+  的 clean HEAD；vendor commit 还必须存在于该 route 的提交历史中。
 - 显式列出本次使用的所有 `--dataset-file`，用于记录 SHA-256。
 - 插件路线用 `--vendor-commit NAME=COMMIT` 逐项记录 40 位 vendor
   提交；名称不得重复。当前 worktree HEAD 自动作为 route commit。
@@ -93,5 +95,7 @@ sha256sum "${ARTIFACT_ROOT}/attempt-NNN/command.log"
 （环境可提供时）、route/vendor commits、子进程及其可观察后代按 GPU UUID
 汇总的运行期峰值显存，以及声明输出和命令日志的哈希。峰值显存每秒通过
 `nvidia-smi` 采样；无 NVIDIA 工具时字段保留并标为不可用，不影响 CPU 作业。
+采样器异常会降级为审计错误；中断 runner 时会终止并回收整个命令进程组。
+产物在哈希期间消失或不可读时，错误写入对应 output 条目，attempt 仍会获得终态。
 `completed` 表示退出码为 0；
 `failed` 保留非零退出码；`dry_run` 的退出码为 `null`。

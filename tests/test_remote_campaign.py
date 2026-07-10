@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -108,10 +109,11 @@ class RemoteCampaignTests(unittest.TestCase):
             ),
         ]
 
+        vendor_head = self.run_git("rev-parse", "HEAD").stdout.strip()
         completed = self.run_runner(
             command,
             output_files=("result.txt",),
-            vendor_commits=("orcdf=" + "a" * 40, "svgcd=" + "b" * 40),
+            vendor_commits=(f"orcdf={vendor_head}", f"svgcd={vendor_head}"),
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -131,7 +133,7 @@ class RemoteCampaignTests(unittest.TestCase):
         self.assertEqual(status["code"]["route_commit"], status["git"]["head"])
         self.assertEqual(
             status["code"]["vendor_commits"],
-            {"orcdf": "a" * 40, "svgcd": "b" * 40},
+            {"orcdf": vendor_head, "svgcd": vendor_head},
         )
         self.assertEqual(status["invocation"]["cwd"], str(self.repo.resolve()))
         self.assertEqual(
@@ -174,10 +176,11 @@ class RemoteCampaignTests(unittest.TestCase):
         self.assertIsNotNone(status["ended_at_utc"])
 
     def test_duplicate_vendor_names_are_rejected_before_attempt_creation(self) -> None:
+        vendor_head = self.run_git("rev-parse", "HEAD").stdout.strip()
         completed = self.run_runner(
             [sys.executable, "-c", "pass"],
             dry_run=True,
-            vendor_commits=("orcdf=" + "a" * 40, "orcdf=" + "b" * 40),
+            vendor_commits=(f"orcdf={vendor_head}", f"orcdf={vendor_head}"),
         )
 
         self.assertNotEqual(completed.returncode, 0)
@@ -193,6 +196,56 @@ class RemoteCampaignTests(unittest.TestCase):
 
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("vendor", completed.stderr.lower())
+        self.assertFalse(self.artifact_root.exists())
+
+    def test_vendor_commit_must_exist_in_route_history(self) -> None:
+        completed = self.run_runner(
+            [sys.executable, "-c", "pass"],
+            dry_run=True,
+            vendor_commits=("orcdf=" + "a" * 40,),
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("vendor", completed.stderr.lower())
+        self.assertFalse(self.artifact_root.exists())
+
+    def test_cwd_must_belong_to_verified_route_checkout(self) -> None:
+        other_repo = self.root / "other"
+        other_repo.mkdir()
+        subprocess.run(["git", "-C", str(other_repo), "init", "-q"], check=True)
+        subprocess.run(
+            ["git", "-C", str(other_repo), "config", "user.name", "Other"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(other_repo), "config", "user.email", "other@example.invalid"],
+            check=True,
+        )
+        (other_repo / "tracked.txt").write_text("other\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(other_repo), "add", "tracked.txt"], check=True)
+        subprocess.run(["git", "-C", str(other_repo), "commit", "-qm", "other"], check=True)
+        argv = [
+            sys.executable,
+            str(RUNNER),
+            "--artifact-root",
+            str(self.artifact_root),
+            "--repo-root",
+            str(self.repo),
+            "--cwd",
+            str(other_repo),
+            "--dataset-file",
+            str(self.dataset),
+            "--dry-run",
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ]
+
+        completed = subprocess.run(argv, capture_output=True, text=True, check=False)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("checkout", completed.stderr.lower())
         self.assertFalse(self.artifact_root.exists())
 
     def test_concurrent_runners_allocate_distinct_attempts(self) -> None:
@@ -251,6 +304,138 @@ class RemoteCampaignTests(unittest.TestCase):
 
         self.assertTrue(sample["available"])
         self.assertEqual(sample["devices"], {"GPU-a": 384})
+
+    def test_gpu_sampler_degrades_when_nvidia_smi_is_unavailable(self) -> None:
+        with mock.patch.object(
+            RUNNER_MODULE.subprocess,
+            "run",
+            side_effect=FileNotFoundError("nvidia-smi"),
+        ):
+            sample = RUNNER_MODULE.sample_gpu_process_memory(100)
+
+        self.assertFalse(sample["available"])
+        self.assertEqual(sample["devices"], {})
+        self.assertIn("FileNotFoundError", sample["error"])
+
+    def test_gpu_peak_record_keeps_maximum_across_samples(self) -> None:
+        record = RUNNER_MODULE.empty_gpu_peak_record()
+        RUNNER_MODULE.update_gpu_peak_record(
+            record, {"available": True, "devices": {"GPU-a": 128}}
+        )
+        RUNNER_MODULE.update_gpu_peak_record(
+            record, {"available": True, "devices": {"GPU-a": 512}}
+        )
+        RUNNER_MODULE.update_gpu_peak_record(
+            record, {"available": True, "devices": {"GPU-a": 256}}
+        )
+
+        self.assertEqual(record["successful_samples"], 3)
+        self.assertEqual(record["devices"]["GPU-a"]["peak_used_memory_mib"], 512)
+
+    def test_sampler_exception_is_recorded_without_abandoning_child(self) -> None:
+        with (
+            open(os.devnull, "w", encoding="utf-8") as sink,
+            mock.patch.object(
+                RUNNER_MODULE,
+                "sample_gpu_process_memory",
+                side_effect=RuntimeError("sampler exploded"),
+            ),
+        ):
+            exit_code, peak = RUNNER_MODULE.run_with_gpu_sampling(
+                [sys.executable, "-c", "raise SystemExit(7)"],
+                cwd=self.repo,
+                env=os.environ.copy(),
+                stdout=sink,
+            )
+
+        self.assertEqual(exit_code, 7)
+        self.assertIn("sampler exploded", peak["last_error"])
+
+    def test_keyboard_interrupt_terminates_and_reaps_child_process(self) -> None:
+        pid_path = self.root / "child.pid"
+
+        def interrupt_after_child_starts(_root_pid: int) -> dict[str, object]:
+            deadline = time.monotonic() + 5
+            while not pid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            raise KeyboardInterrupt
+
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "import os, time; from pathlib import Path; "
+                f"Path({str(pid_path)!r}).write_text(str(os.getpid())); "
+                "time.sleep(30)"
+            ),
+        ]
+        with (
+            open(os.devnull, "w", encoding="utf-8") as sink,
+            mock.patch.object(
+                RUNNER_MODULE,
+                "sample_gpu_process_memory",
+                side_effect=interrupt_after_child_starts,
+            ),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            RUNNER_MODULE.run_with_gpu_sampling(
+                command,
+                cwd=self.repo,
+                env=os.environ.copy(),
+                stdout=sink,
+            )
+
+        child_pid = int(pid_path.read_text(encoding="utf-8"))
+        with self.assertRaises(ProcessLookupError):
+            os.kill(child_pid, 0)
+
+    def test_nonzero_child_exit_is_written_as_terminal_failure(self) -> None:
+        completed = self.run_runner([sys.executable, "-c", "raise SystemExit(7)"])
+
+        self.assertEqual(completed.returncode, 7, completed.stderr)
+        status = self.load_status("attempt-001")
+        self.assertEqual(status["status"], "failed")
+        self.assertEqual(status["exit_code"], 7)
+        self.assertIsNotNone(status["ended_at_utc"])
+
+    def test_output_hash_error_is_recorded_in_terminal_status(self) -> None:
+        argv = [
+            "--artifact-root",
+            str(self.artifact_root),
+            "--repo-root",
+            str(self.repo),
+            "--cwd",
+            str(self.repo),
+            "--dataset-file",
+            str(self.dataset),
+            "--output-file",
+            "result.txt",
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ]
+        args = RUNNER_MODULE.parse_args(argv)
+        with (
+            mock.patch.object(RUNNER_MODULE, "collect_runtime_metadata", return_value={}),
+            mock.patch.object(
+                RUNNER_MODULE,
+                "sample_gpu_process_memory",
+                return_value={"available": False, "devices": {}, "error": "cpu"},
+            ),
+            mock.patch.object(
+                RUNNER_MODULE,
+                "fingerprint_output",
+                side_effect=OSError("output disappeared"),
+            ),
+        ):
+            exit_code = RUNNER_MODULE.execute(args, ["runner", *argv])
+
+        self.assertEqual(exit_code, 0)
+        status = self.load_status("attempt-001")
+        self.assertEqual(status["status"], "completed")
+        self.assertIsNotNone(status["ended_at_utc"])
+        self.assertIn("output disappeared", status["output_hashes"]["result.txt"]["error"])
 
     def test_dirty_git_tree_is_refused_before_attempt_creation(self) -> None:
         self.dataset.write_text("stu_id,label\n1,0\n", encoding="utf-8")

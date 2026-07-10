@@ -8,6 +8,7 @@ import os
 import platform
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -148,6 +149,21 @@ def fingerprint_output(path: Path) -> dict[str, Any]:
     }
 
 
+def safely_fingerprint_output(path: Path) -> dict[str, Any]:
+    try:
+        return fingerprint_output(path)
+    except Exception as exc:
+        try:
+            exists: bool | None = path.exists()
+        except OSError:
+            exists = None
+        return {
+            "path": str(path),
+            "exists": exists,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def run_git(repo_root: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", *args],
@@ -171,6 +187,50 @@ def collect_git_metadata(repo_root: Path) -> dict[str, Any]:
         "clean": not bool(status),
         "status_porcelain": status,
     }
+
+
+def verify_execution_checkout(repo_root: Path, cwd: Path) -> None:
+    repo_top_level = Path(run_git(repo_root, "rev-parse", "--show-toplevel")).resolve()
+    try:
+        cwd_top_level = Path(run_git(cwd, "rev-parse", "--show-toplevel")).resolve()
+    except CampaignError as exc:
+        raise CampaignError(
+            f"Command cwd is not inside the verified route checkout: {cwd}"
+        ) from exc
+    if repo_top_level != repo_root.resolve() or cwd_top_level != repo_top_level:
+        raise CampaignError(
+            "Command cwd must belong to the same verified route checkout as --repo-root: "
+            f"repo={repo_top_level}, cwd={cwd_top_level}"
+        )
+
+
+def verify_vendor_commits(
+    repo_root: Path,
+    route_commit: str,
+    vendor_commits: dict[str, str],
+) -> None:
+    for name, commit in vendor_commits.items():
+        try:
+            resolved = run_git(repo_root, "rev-parse", "--verify", f"{commit}^{{commit}}")
+        except CampaignError as exc:
+            raise CampaignError(
+                f"Vendor commit {name}={commit} does not exist in the route repository"
+            ) from exc
+        if resolved.lower() != commit.lower():
+            raise CampaignError(
+                f"Vendor commit {name} did not resolve exactly: {commit} -> {resolved}"
+            )
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", commit, route_commit],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if ancestor.returncode != 0:
+            raise CampaignError(
+                f"Vendor commit {name}={commit} is not an ancestor of route {route_commit}"
+            )
 
 
 def collect_runtime_metadata() -> dict[str, Any]:
@@ -340,6 +400,26 @@ def update_gpu_peak_record(record: dict[str, Any], sample: dict[str, Any]) -> No
         record["last_error"] = sample["error"]
 
 
+def terminate_process_tree(process: subprocess.Popen[Any]) -> None:
+    if process.poll() is not None:
+        process.wait()
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=5)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+
+
 def run_with_gpu_sampling(
     command: Sequence[str],
     *,
@@ -354,16 +434,28 @@ def run_with_gpu_sampling(
         stdout=stdout,
         stderr=subprocess.STDOUT,
         text=True,
+        start_new_session=True,
     )
     peak = empty_gpu_peak_record()
-    while True:
-        update_gpu_peak_record(peak, sample_gpu_process_memory(process.pid))
-        try:
-            exit_code = process.wait(timeout=GPU_SAMPLE_INTERVAL_SECONDS)
-            break
-        except subprocess.TimeoutExpired:
-            continue
-    return exit_code, peak
+    try:
+        while True:
+            try:
+                sample = sample_gpu_process_memory(process.pid)
+            except Exception as exc:
+                sample = {
+                    "available": False,
+                    "devices": {},
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            update_gpu_peak_record(peak, sample)
+            try:
+                exit_code = process.wait(timeout=GPU_SAMPLE_INTERVAL_SECONDS)
+                return exit_code, peak
+            except subprocess.TimeoutExpired:
+                continue
+    except BaseException:
+        terminate_process_tree(process)
+        raise
 
 
 def reserve_attempt(artifact_root: Path) -> Path:
@@ -424,12 +516,18 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
         raise CampaignError(f"Command working directory does not exist: {args.cwd}")
     if not args.repo_root.is_dir():
         raise CampaignError(f"Git worktree does not exist: {args.repo_root}")
+    verify_execution_checkout(args.repo_root, args.cwd)
     git_metadata = collect_git_metadata(args.repo_root)
     if not git_metadata["clean"]:
         raise CampaignError(
             "Refusing to create an attempt from a dirty Git tree:\n"
             + str(git_metadata["status_porcelain"])
         )
+    verify_vendor_commits(
+        args.repo_root,
+        git_metadata["head"],
+        args.vendor_commits,
+    )
     datasets = [fingerprint_file(path) for path in args.dataset_file]
     runtime = collect_runtime_metadata()
     gpu_peak_memory = empty_gpu_peak_record(reason="command not started")
@@ -498,6 +596,10 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
     except FileNotFoundError as exc:
         exit_code = 127
         error = f"{type(exc).__name__}: {exc}"
+    except KeyboardInterrupt as exc:
+        exit_code = 130
+        error = f"{type(exc).__name__}: command interrupted"
+        gpu_peak_memory["reason"] = "command interrupted"
     except Exception as exc:  # Ensure an allocated attempt always receives a terminal status.
         exit_code = 1
         error = f"{type(exc).__name__}: {exc}"
@@ -514,7 +616,7 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
         status["error"] = error
     status["runtime"]["gpu_peak_memory"] = gpu_peak_memory
     status["output_hashes"] = {
-        name: fingerprint_output(path) for name, path in outputs.items()
+        name: safely_fingerprint_output(path) for name, path in outputs.items()
     }
     atomic_write_json(status_path, status)
     print(attempt_dir)
