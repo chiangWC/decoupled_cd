@@ -16,11 +16,18 @@ Both are flag-gated and zero-initialised, so with the flags off the model is
 bit-identical to baseline ORCDF.
 """
 from collections import defaultdict
+from pathlib import Path
+import sys
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from models.mastery_auxiliary import MasteryAuxiliaryObjective
 
 from .model import ORCDFNet
 
@@ -54,8 +61,39 @@ def build_concept_graph(data_proc, dtype):
     return adj
 
 
+def add_plugin_parameters_to_optimizer(optimizer, model, *, lr, weight_decay):
+    """Append direct plugin parameters without modifying ORCDF's two base groups."""
+    existing = {
+        id(parameter)
+        for group in optimizer.param_groups
+        for parameter in group["params"]
+    }
+    plugin_parameters = [
+        parameter
+        for parameter in model.parameters(recurse=False)
+        if parameter.requires_grad and id(parameter) not in existing
+    ]
+    if plugin_parameters:
+        optimizer.add_param_group(
+            {
+                "params": plugin_parameters,
+                "lr": lr,
+                "weight_decay": weight_decay,
+            }
+        )
+    return plugin_parameters
+
+
 class DecoupledORCDF(ORCDFNet):
-    def __init__(self, *args, decouple=False, aux_weight=0.0, **kwargs):
+    def __init__(
+        self,
+        *args,
+        decouple=False,
+        aux_weight=0.0,
+        aux_detach_item_difficulty=False,
+        aux_warmup_fraction=0.0,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.decouple = decouple
         self.aux_weight = aux_weight
@@ -67,14 +105,23 @@ class DecoupledORCDF(ORCDFNet):
         if decouple:
             # Zero-init gate on the UKC structure-routing delta: starts as a no-op.
             self.ukc_gate = nn.Parameter(torch.zeros(1, dtype=dtype, device=device))
-        if aux_weight > 0.0:
-            self.aux_scale = nn.Parameter(torch.tensor(2.0, dtype=dtype, device=device))
+        self.mastery_auxiliary = (
+            MasteryAuxiliaryObjective(
+                aux_weight=aux_weight,
+                detach_item_difficulty=aux_detach_item_difficulty,
+                warmup_fraction=aux_warmup_fraction,
+            )
+            if aux_weight > 0.0
+            else None
+        )
 
     def set_decouple_tensors(self, tkc_mask, concept_graph):
         self.tkc_mask = tkc_mask.to(self.extractor.device)
         self.concept_graph = concept_graph.to(self.extractor.device)
 
-    def forward(self, stu_id, exer_id, kn_emb, label=None):
+    def forward(
+        self, stu_id, exer_id, kn_emb, label=None, *, epoch=1, total_epochs=1
+    ):
         student_ts, diff_ts, disc_ts, knowledge_ts, extras = self.extractor.extract(stu_id, exer_id, kn_emb)
 
         if self.decouple:
@@ -93,13 +140,15 @@ class DecoupledORCDF(ORCDFNet):
         )
         extra_loss = extras["extra_loss"]
 
-        if self.aux_weight > 0.0 and label is not None:
-            mastery = torch.sigmoid(student_ts)
-            diff = torch.sigmoid(diff_ts)
-            per = kn_emb * (mastery - diff)
-            aux_logit = F.softplus(self.aux_scale) * per.sum(dim=1) / kn_emb.sum(dim=1).clamp_min(1.0)
-            aux_bce = F.binary_cross_entropy_with_logits(aux_logit, label)
-            extra_loss = extra_loss + self.aux_weight * aux_bce
+        if self.mastery_auxiliary is not None and label is not None:
+            extra_loss = extra_loss + self.mastery_auxiliary(
+                student_ts,
+                diff_ts,
+                kn_emb,
+                label,
+                epoch=epoch,
+                total_epochs=total_epochs,
+            )
 
         return pred, extra_loss
 

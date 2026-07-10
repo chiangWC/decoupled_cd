@@ -1,32 +1,66 @@
 """SVGCD + mastery-aux-BCE plugin runner. Dumps predictions + mastery for DOA."""
 import argparse, csv, json, os, sys, time
+from pathlib import Path
+
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from models.mastery_auxiliary import MasteryAuxiliaryObjective
+
 from SVGCD.config import parse_args as base_parse_args
 from SVGCD.dataset import CognitiveDataProcessor
 from SVGCD.model import SVGCDNet
-from SVGCD.trainer import Trainer
+from SVGCD.trainer import Trainer, train_three_stage_batch
 from SVGCD.utils import get_device, set_seed, setup_logger
 
 
 class AuxSVGCD(SVGCDNet):
-    def __init__(self, *a, aux_weight=0.0, **k):
-        super().__init__(*a, **k)
-        self.aux_weight = aux_weight
-        if aux_weight > 0.0:
-            self.aux_scale = torch.nn.Parameter(torch.tensor(2.0))
+    def __init__(
+        self,
+        *args,
+        aux_weight=0.0,
+        aux_detach_item_difficulty=False,
+        aux_warmup_fraction=0.0,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.aux_weight = float(aux_weight)
+        self.mastery_auxiliary = (
+            MasteryAuxiliaryObjective(
+                aux_weight=aux_weight,
+                detach_item_difficulty=aux_detach_item_difficulty,
+                warmup_fraction=aux_warmup_fraction,
+            )
+            if aux_weight > 0.0
+            else None
+        )
 
-    def aux_bce(self, stu_id, exer_id, Q_mat, label):
+    def auxiliary_loss(
+        self,
+        stu_id,
+        exer_id,
+        Q_mat,
+        label,
+        *,
+        epoch,
+        total_epochs,
+    ):
+        if self.mastery_auxiliary is None:
+            return label.detach().new_zeros((), dtype=torch.float32)
         stu_abit, exer_diff = self.graph_representations()
-        mastery = torch.sigmoid(self.prednet_stu(stu_abit[stu_id]))
-        diff = torch.sigmoid(self.prednet_exer(exer_diff[exer_id]))
-        q = Q_mat[exer_id]
-        per = q * (mastery - diff)
-        logit = F.softplus(self.aux_scale) * per.sum(1) / q.sum(1).clamp(min=1.0)
-        return F.binary_cross_entropy_with_logits(logit, label.float())
+        return self.mastery_auxiliary(
+            self.prednet_stu(stu_abit[stu_id]),
+            self.prednet_exer(exer_diff[exer_id]),
+            Q_mat[exer_id],
+            label,
+            epoch=epoch,
+            total_epochs=total_epochs,
+        )
 
     def mastery_matrix(self):
         with torch.no_grad():
@@ -37,6 +71,8 @@ class AuxSVGCD(SVGCDNet):
 def parse_all():
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--plugin-aux-weight", type=float, default=0.0)
+    pre.add_argument("--plugin-aux-detach-item-difficulty", action="store_true")
+    pre.add_argument("--plugin-aux-warmup-fraction", type=float, default=0.0)
     pa, remaining = pre.parse_known_args()
     saved = sys.argv
     sys.argv = [saved[0]] + remaining
@@ -45,6 +81,10 @@ def parse_all():
     finally:
         sys.argv = saved
     args.plugin_aux_weight = pa.plugin_aux_weight
+    args.plugin_aux_detach_item_difficulty = (
+        pa.plugin_aux_detach_item_difficulty
+    )
+    args.plugin_aux_warmup_fraction = pa.plugin_aux_warmup_fraction
     return args
 
 
@@ -60,6 +100,8 @@ def main():
         student_n=proc.num_students, exer_n=proc.num_exercises, knowledge_n=proc.num_concepts,
         args=args, pos_graph=proc.correct_adj, neg_graph=proc.wrong_adj, device=device,
         aux_weight=args.plugin_aux_weight,
+        aux_detach_item_difficulty=args.plugin_aux_detach_item_difficulty,
+        aux_warmup_fraction=args.plugin_aux_warmup_fraction,
     ).to(device)
     trainer = Trainer(model, loaders, proc, args, logger)
 
@@ -69,17 +111,27 @@ def main():
         last = 0.0
         for batch in trainer.train_loader:
             batch = trainer._move_batch(batch)
-            trainer.optimizer.zero_grad()
-            loss_cl, _ = model.cal_loss_cl(**batch); loss_cl.backward(); trainer.optimizer.step()
-            loss_kl, _ = model.cal_loss_kl(**batch); loss_kl.backward(); trainer.optimizer.step()
-            loss_main, _ = model.cal_loss(**batch)
-            if model.aux_weight > 0.0:
-                loss_main = loss_main + model.aux_weight * model.aux_bce(
-                    batch["stu_id"], batch["exer_id"], batch["Q_mat"], batch["label"])
-            loss_main.backward(); trainer.optimizer.step()
-            trainer.optimizer.zero_grad()
+
+            def add_auxiliary_loss(loss_main):
+                if model.mastery_auxiliary is None:
+                    return loss_main
+                return loss_main + model.auxiliary_loss(
+                    batch["stu_id"],
+                    batch["exer_id"],
+                    batch["Q_mat"],
+                    batch["label"],
+                    epoch=epoch,
+                    total_epochs=args.epochs,
+                )
+
+            loss_main, _ = train_three_stage_batch(
+                model=model,
+                optimizer=trainer.optimizer,
+                scheduler=trainer.scheduler,
+                batch=batch,
+                main_loss_augmenter=add_auxiliary_loss,
+            )
             last = float(loss_main.item())
-        trainer.scheduler.step()
         logger.info(f"Epoch {epoch} | {time.time()-t0:.1f}s | Main {last:.4f}")
 
     best_auc, patience = 0.0, 0
@@ -112,7 +164,12 @@ def main():
     with open(os.path.join(args.log_dir, "id_maps.json"), "w") as f:
         json.dump({"stu_ids": [str(x) for x in proc.stu_ids], "cpt_ids": [str(x) for x in proc.cpt_ids]}, f)
     with open(os.path.join(args.log_dir, "metrics.json"), "w") as f:
-        json.dump({**test, "aux_weight": args.plugin_aux_weight}, f)
+        json.dump({
+            **test,
+            "aux_weight": args.plugin_aux_weight,
+            "aux_detach_item_difficulty": args.plugin_aux_detach_item_difficulty,
+            "aux_warmup_fraction": args.plugin_aux_warmup_fraction,
+        }, f)
 
 
 if __name__ == "__main__":

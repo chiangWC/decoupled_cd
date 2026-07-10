@@ -8,6 +8,40 @@ import torch.optim as optim
 from sklearn.metrics import accuracy_score, mean_squared_error, roc_auc_score
 
 
+def _take_optimizer_step(loss, optimizer, scheduler):
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    scheduler.step()
+
+
+def train_three_stage_batch(
+    *,
+    model,
+    optimizer,
+    scheduler,
+    batch,
+    main_loss_augmenter=None,
+):
+    """Run SVGCD's CL, KL, and main stages with isolated gradients."""
+    loss_cl, loss_cl_dict = model.cal_loss_cl(**batch)
+    _take_optimizer_step(loss_cl, optimizer, scheduler)
+
+    loss_kl, loss_kl_dict = model.cal_loss_kl(**batch)
+    _take_optimizer_step(loss_kl, optimizer, scheduler)
+
+    loss_main, loss_main_dict = model.cal_loss(**batch)
+    if main_loss_augmenter is not None:
+        loss_main = main_loss_augmenter(loss_main)
+    _take_optimizer_step(loss_main, optimizer, scheduler)
+
+    return loss_main, {
+        **loss_main_dict,
+        **loss_cl_dict,
+        **loss_kl_dict,
+    }
+
+
 class Trainer:
     def __init__(self, model, loaders, data_proc, args, logger):
         self.model = model
@@ -27,7 +61,7 @@ class Trainer:
             self.optimizer,
             max_lr=args.lr,
             epochs=args.epochs,
-            steps_per_epoch=max(1, len(self.train_loader)),
+            steps_per_epoch=3 * max(1, len(self.train_loader)),
             pct_start=0.1,
             div_factor=10.0,
             final_div_factor=100.0,
@@ -46,24 +80,13 @@ class Trainer:
         for batch in self.train_loader:
             batch = self._move_batch(batch)
 
-            self.optimizer.zero_grad()
-            loss_cl, loss_cl_dict = self.model.cal_loss_cl(**batch)
-            loss_cl.backward()
-            self.optimizer.step()
-
-            loss_kl, loss_kl_dict = self.model.cal_loss_kl(**batch)
-            loss_kl.backward()
-            self.optimizer.step()
-
-            loss_main, loss_main_dict = self.model.cal_loss(**batch)
-            loss_main.backward()
-            self.optimizer.step()
-
+            loss_main, last_loss_dict = train_three_stage_batch(
+                model=self.model,
+                optimizer=self.optimizer,
+                scheduler=self.scheduler,
+                batch=batch,
+            )
             last_main = float(loss_main.item())
-            last_loss_dict = {**loss_main_dict, **loss_cl_dict, **loss_kl_dict}
-            self.optimizer.zero_grad()
-
-        self.scheduler.step()
 
         self.logger.info(f"Epoch {epoch} | T: {time.time() - start:.1f}s | MainLoss: {last_main:.4f}")
         return last_main, last_loss_dict
