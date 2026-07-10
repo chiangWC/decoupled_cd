@@ -8,6 +8,49 @@ from .decoupled_cdm import DecoupledForwardOutput
 from .propagation_v2 import DecoupledPropagationV2, ResponseGraphEncoder
 
 
+def _legacy_local_graph_density_feature(
+    concept_graph: torch.Tensor,
+    student_tkc_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Historical r22 row-sum feature, retained only for checkpoint parity."""
+    degree = concept_graph.sum(dim=1)
+    density = (
+        student_tkc_mask * degree.unsqueeze(0)
+    ).sum(dim=1) / student_tkc_mask.sum(dim=1).clamp_min(1.0)
+    return torch.log1p(density).unsqueeze(-1)
+
+
+def _compute_ukc_reachability_support(
+    concept_graph: torch.Tensor,
+    student_tkc_mask: torch.Tensor,
+    student_ukc_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Fraction of each student's UKCs reachable from at least one TKC."""
+    if concept_graph.dim() != 2 or concept_graph.size(0) != concept_graph.size(1):
+        raise ValueError("concept_graph must be a square matrix.")
+    if student_tkc_mask.shape != student_ukc_mask.shape:
+        raise ValueError("student TKC and UKC masks must have identical shapes.")
+    if student_tkc_mask.dim() != 2 or student_tkc_mask.size(1) != concept_graph.size(0):
+        raise ValueError("student concept masks must align with concept_graph.")
+
+    # A[target, source] follows the propagation convention. Work on a clone so
+    # removing self loops cannot mutate the normalized propagation graph.
+    topology = concept_graph.ne(0).clone()
+    topology.fill_diagonal_(False)
+    tkc = student_tkc_mask.ne(0)
+    ukc = student_ukc_mask.ne(0)
+    reachable = (
+        tkc.to(dtype=concept_graph.dtype)
+        @ topology.transpose(0, 1).to(dtype=concept_graph.dtype)
+    ).gt(0)
+    ukc_count = ukc.sum(dim=1)
+    reachable_ukc_count = (reachable & ukc).sum(dim=1)
+    ratio = reachable_ukc_count.to(dtype=concept_graph.dtype) / ukc_count.clamp_min(1).to(
+        dtype=concept_graph.dtype
+    )
+    return torch.where(ukc_count.eq(0), torch.ones_like(ratio), ratio)
+
+
 class DecoupledCDMV2(nn.Module):
     """
     V2 mainline model: the v1 core without any residual adapters (including the
@@ -62,6 +105,7 @@ class DecoupledCDMV2(nn.Module):
         rg_mastery: bool = False,
         dual_graph: bool = False,
         dual_graph_adaptive: bool = False,
+        dual_graph_support_adaptive: bool = False,
         router: bool = False,
         attn_readout: bool = False,
         irt_head: bool = False,
@@ -70,8 +114,19 @@ class DecoupledCDMV2(nn.Module):
         gs_max_slip: float = 0.3,
     ):
         super().__init__()
-        self.dual_graph = dual_graph or dual_graph_adaptive or router
+        if dual_graph_support_adaptive and (dual_graph_adaptive or router):
+            raise ValueError(
+                "dual_graph_support_adaptive is mutually exclusive with "
+                "dual_graph_adaptive and router."
+            )
+        self.dual_graph = (
+            dual_graph
+            or dual_graph_adaptive
+            or dual_graph_support_adaptive
+            or router
+        )
         self.dual_graph_adaptive = dual_graph_adaptive
+        self.dual_graph_support_adaptive = dual_graph_support_adaptive
         self.router = router
         self.attn_readout = attn_readout
         self.irt_head = irt_head
@@ -252,14 +307,17 @@ class DecoupledCDMV2(nn.Module):
                 dim=concept_dim, layers=response_graph_layers,
             )
             self.dg_proj = nn.Linear(concept_dim, concept_dim, bias=False)
-            # +1 input dim carries the per-student local graph-density feature,
-            # so the gate can suppress the response-graph channel where the
-            # concept graph is already dense (preserving decoupling diagnosis).
+            # Historical r22 adaptive/router checkpoints used a third scalar
+            # input. The corrected support route deliberately preserves Mo-1's
+            # original Linear(2D, 1) initialization and adds a scalar logit term.
             gate_in = concept_dim * 2 + (1 if (dual_graph_adaptive or router) else 0)
             self.dg_gate = nn.Linear(gate_in, 1)
+            if dual_graph_support_adaptive:
+                self.support_weight = nn.Parameter(self.dg_gate.weight.new_zeros(()))
+            else:
+                self.register_parameter("support_weight", None)
             if router:
-                # Meta-router: reads only structure signals (density, coverage)
-                # to decide how much response-graph signal to admit per student.
+                # Legacy r22 meta-router retained for historical checkpoints.
                 self.router_gate = nn.Sequential(
                     nn.Linear(2, 16), nn.ReLU(), nn.Linear(16, 1),
                 )
@@ -270,6 +328,7 @@ class DecoupledCDMV2(nn.Module):
             self.dg_proj = None
             self.dg_gate = None
             self.router_gate = None
+            self.register_parameter("support_weight", None)
 
         if attn_readout:
             # Mo-2: target-conditioned attention pooling of per-concept states,
@@ -400,13 +459,12 @@ class DecoupledCDMV2(nn.Module):
             )
             dg_state = self.dg_proj(dg_student[target_student_ids])
             if self.dual_graph_adaptive or self.router:
-                # Per-student local concept-graph density = mean degree over the
-                # concepts the student has been tested on. High = concept graph
-                # already informative -> gate should keep the decoupling state.
-                degree = concept_graph.sum(dim=1)                       # (K,)
-                tkc = student_tkc_mask[target_student_ids]              # (B, K)
-                density = (tkc * degree.unsqueeze(0)).sum(dim=1) / tkc.sum(dim=1).clamp_min(1.0)
-                density_feat = torch.log1p(density).unsqueeze(-1)       # (B, 1)
+                # Legacy r22 feature: normalized graph row sums make it
+                # effectively constant (log(2)) for non-empty TKC sets.
+                density_feat = _legacy_local_graph_density_feature(
+                    concept_graph,
+                    student_tkc_mask[target_student_ids],
+                )
             if self.router:
                 coverage = student_tkc_mask[target_student_ids].mean(dim=1, keepdim=True)
                 # Structure-only router: g -> keep decoupling state at high
@@ -416,6 +474,25 @@ class DecoupledCDMV2(nn.Module):
             elif self.dual_graph_adaptive:
                 gate = torch.sigmoid(
                     self.dg_gate(torch.cat([student_state, dg_state, density_feat], dim=-1))
+                )
+                student_state = gate * student_state + (1.0 - gate) * dg_state
+            elif self.dual_graph_support_adaptive:
+                if student_indices is None:
+                    support_tkc_mask = student_tkc_mask
+                    support_ukc_mask = student_ukc_mask
+                else:
+                    support_tkc_mask = student_tkc_mask.index_select(0, student_indices)
+                    support_ukc_mask = student_ukc_mask.index_select(0, student_indices)
+                support = _compute_ukc_reachability_support(
+                    concept_graph,
+                    support_tkc_mask,
+                    support_ukc_mask,
+                )[state_target_student_ids].unsqueeze(-1)
+                base_gate_logit = self.dg_gate(
+                    torch.cat([student_state, dg_state], dim=-1)
+                )
+                gate = torch.sigmoid(
+                    base_gate_logit + self.support_weight * support
                 )
                 student_state = gate * student_state + (1.0 - gate) * dg_state
             else:

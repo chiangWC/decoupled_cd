@@ -124,7 +124,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--v2-rg-layers", type=int, default=2)
     parser.add_argument("--v2-dual-graph", action="store_true", help="Mo-1: student-exercise response-graph co-propagation channel (gated fusion).")
-    parser.add_argument("--v2-dual-graph-adaptive", action="store_true", help="Mo-1b: density-conditioned dual-graph gate (suppress on dense concept graphs).")
+    parser.add_argument(
+        "--v2-dual-graph-adaptive",
+        action="store_true",
+        help=(
+            "Legacy r22 gate with a normalized-row-sum feature; retained only "
+            "for historical checkpoints and no longer interpreted as density adaptive."
+        ),
+    )
+    parser.add_argument(
+        "--v2-dual-graph-support-adaptive",
+        action="store_true",
+        help=(
+            "Corrected Mo-1 gate: add a learned scalar times the fraction of "
+            "UKCs reachable from the student's TKCs, excluding self loops."
+        ),
+    )
     parser.add_argument("--v2-router", action="store_true", help="Meta-router: structure-signal (density,coverage) gate over decoupling vs response-graph state.")
     parser.add_argument("--v2-attn-readout", action="store_true", help="Mo-2: target-conditioned attention pooling of per-concept states.")
     parser.add_argument("--v2-irt-head", action="store_true", help="Mo-3: MIRT structured cognitive logit term.")
@@ -673,6 +688,7 @@ V2_ONLY_FLAG_ATTRS = (
     "v2_response_graph",
     "v2_rg_primary",
     "v2_rg_mastery",
+    "v2_dual_graph_support_adaptive",
 )
 
 
@@ -706,6 +722,23 @@ def validate_model_args(args: argparse.Namespace) -> None:
         raise ValueError("--v2-rg-mastery requires --v2-target-aware-readout or --v2-hybrid-readout.")
     if args.v2_rg_mastery and args.v2_lowrank_mastery:
         raise ValueError("--v2-rg-mastery and --v2-lowrank-mastery are mutually exclusive.")
+    if args.v2_dual_graph_support_adaptive and (
+        args.v2_dual_graph_adaptive or args.v2_router
+    ):
+        raise ValueError(
+            "--v2-dual-graph-support-adaptive is mutually exclusive with "
+            "--v2-dual-graph-adaptive and --v2-router."
+        )
+    if args.v2_consistency_weight < 0.0:
+        raise ValueError("--v2-consistency-weight must be non-negative.")
+    if args.v2_consistency_weight > 0.0:
+        if args.model != "v2":
+            raise ValueError("--v2-consistency-weight requires --model v2.")
+        if args.training_mode != "student_recompute_minibatch":
+            raise ValueError(
+                "--v2-consistency-weight is only active with "
+                "--training-mode student_recompute_minibatch."
+            )
     if args.v2_lowrank_dim < 1:
         raise ValueError("--v2-lowrank-dim must be positive.")
     if args.v2_mastery_aux_weight < 0.0:
@@ -925,6 +958,7 @@ def main() -> None:
             rg_mastery=args.v2_rg_mastery,
             dual_graph=args.v2_dual_graph,
             dual_graph_adaptive=args.v2_dual_graph_adaptive,
+            dual_graph_support_adaptive=args.v2_dual_graph_support_adaptive,
             router=args.v2_router,
             attn_readout=args.v2_attn_readout,
             irt_head=args.v2_irt_head,
@@ -1040,6 +1074,7 @@ def main() -> None:
         "v2_rg_primary": args.v2_rg_primary,
         "v2_dual_graph": args.v2_dual_graph,
         "v2_dual_graph_adaptive": args.v2_dual_graph_adaptive,
+        "v2_dual_graph_support_adaptive": args.v2_dual_graph_support_adaptive,
         "v2_router": args.v2_router,
         "v2_consistency_adaptive": args.v2_consistency_adaptive,
         "v2_attn_readout": args.v2_attn_readout,
