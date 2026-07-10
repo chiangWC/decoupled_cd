@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -388,6 +389,61 @@ class RemoteCampaignTests(unittest.TestCase):
         child_pid = int(pid_path.read_text(encoding="utf-8"))
         with self.assertRaises(ProcessLookupError):
             os.kill(child_pid, 0)
+
+    def test_cleanup_kills_descendant_that_ignores_sigterm_after_leader_exits(self) -> None:
+        grandchild_pid_path = self.root / "grandchild.pid"
+        grandchild_code = (
+            "import os, signal, time; from pathlib import Path; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            f"Path({str(grandchild_pid_path)!r}).write_text(str(os.getpid())); "
+            "time.sleep(30)"
+        )
+        parent_code = (
+            "import subprocess, sys, time; "
+            f"subprocess.Popen([sys.executable, '-c', {grandchild_code!r}]); "
+            "time.sleep(30)"
+        )
+
+        def interrupt_after_grandchild_starts(_root_pid: int) -> dict[str, object]:
+            deadline = time.monotonic() + 5
+            while not grandchild_pid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            raise KeyboardInterrupt
+
+        with (
+            open(os.devnull, "w", encoding="utf-8") as sink,
+            mock.patch.object(
+                RUNNER_MODULE,
+                "sample_gpu_process_memory",
+                side_effect=interrupt_after_grandchild_starts,
+            ),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            RUNNER_MODULE.run_with_gpu_sampling(
+                [sys.executable, "-c", parent_code],
+                cwd=self.repo,
+                env=os.environ.copy(),
+                stdout=sink,
+            )
+
+        grandchild_pid = int(grandchild_pid_path.read_text(encoding="utf-8"))
+
+        def process_is_active() -> bool:
+            stat_path = Path(f"/proc/{grandchild_pid}/stat")
+            try:
+                state = stat_path.read_text(encoding="utf-8").split()[2]
+            except (FileNotFoundError, IndexError):
+                return False
+            return state != "Z"
+
+        try:
+            deadline = time.monotonic() + 2
+            while process_is_active() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(process_is_active())
+        finally:
+            if process_is_active():
+                os.kill(grandchild_pid, signal.SIGKILL)
 
     def test_nonzero_child_exit_is_written_as_terminal_failure(self) -> None:
         completed = self.run_runner([sys.executable, "-c", "raise SystemExit(7)"])

@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -22,6 +23,7 @@ COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 VENDOR_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 DEFAULT_CAPTURE_ENV = ("CONDA_DEFAULT_ENV", "CUDA_VISIBLE_DEVICES", "PYTHONPATH")
 GPU_SAMPLE_INTERVAL_SECONDS = 1.0
+PROCESS_TERMINATION_GRACE_SECONDS = 2.0
 
 
 class CampaignError(RuntimeError):
@@ -400,24 +402,42 @@ def update_gpu_peak_record(record: dict[str, Any], sample: dict[str, Any]) -> No
         record["last_error"] = sample["error"]
 
 
+def process_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def terminate_process_tree(process: subprocess.Popen[Any]) -> None:
-    if process.poll() is not None:
-        process.wait()
-        return
+    process_group_id = process.pid
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        os.killpg(process_group_id, signal.SIGTERM)
     except ProcessLookupError:
         pass
-    try:
+
+    deadline = time.monotonic() + PROCESS_TERMINATION_GRACE_SECONDS
+    while process_group_exists(process_group_id) and time.monotonic() < deadline:
+        if process.poll() is None:
+            try:
+                process.wait(timeout=0.05)
+            except subprocess.TimeoutExpired:
+                pass
+        else:
+            time.sleep(0.05)
+
+    if process_group_exists(process_group_id):
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if process.poll() is None:
         process.wait(timeout=5)
-        return
-    except subprocess.TimeoutExpired:
-        pass
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    process.wait()
+    else:
+        process.wait()
 
 
 def run_with_gpu_sampling(
