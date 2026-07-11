@@ -83,17 +83,20 @@ class UntestedKnowledgeInferenceNetwork(nn.Module):
     ) -> InferredKnowledgeState:
         topology = concept_graph.ne(0).to(tkc_states.dtype)
         topology = topology - torch.diag_embed(torch.diagonal(topology))
-        source = topology * direct_reliability.unsqueeze(1)
+        incoming_topology = topology.transpose(0, 1)
+        eligible_source = direct_reliability * tkc_mask
+        source = incoming_topology * eligible_source.unsqueeze(1)
         first_transition = source / source.sum(
             dim=-1,
             keepdim=True,
         ).clamp_min(1e-8)
-        later_transition = topology / topology.sum(
+        later_transition = incoming_topology / incoming_topology.sum(
             dim=-1,
             keepdim=True,
         ).clamp_min(1e-8)
 
         hidden = tkc_states
+        structurally_reachable = tkc_mask.bool() & direct_reliability.gt(0)
         for index, layer in enumerate(self.layers):
             transition = (
                 first_transition
@@ -110,8 +113,16 @@ class UntestedKnowledgeInferenceNetwork(nn.Module):
                 tkc_states,
                 torch.tanh(propagated),
             )
+            propagated_reachability = torch.einsum(
+                "kj,sj->sk",
+                incoming_topology,
+                structurally_reachable.to(tkc_states.dtype),
+            ).gt(0)
+            structurally_reachable = (
+                structurally_reachable | propagated_reachability
+            )
 
-        reachable = hidden.abs().sum(dim=-1).gt(0) & ukc_mask.bool()
+        reachable = structurally_reachable & ukc_mask.bool()
         prior = self.concept_prior.unsqueeze(0).expand_as(hidden)
         ukc_states = torch.where(
             reachable.unsqueeze(-1),

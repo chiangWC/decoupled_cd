@@ -63,7 +63,7 @@ class UnifiedComponentTests(unittest.TestCase):
 
         output = model(
             q_matrix=torch.tensor([[1.0, 0.0]]),
-            concept_graph=torch.tensor([[0.0, 0.0], [1.0, 0.0]]),
+            concept_graph=torch.tensor([[0.0, 1.0], [0.0, 0.0]]),
             student_exercise_mask=torch.ones(2, 1),
             response_matrix=torch.tensor([[0.0], [1.0]]),
             student_tkc_mask=torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
@@ -102,7 +102,7 @@ class UnifiedComponentTests(unittest.TestCase):
             layers=2,
         )
         graph = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+            [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
         )
         tkc_mask = torch.tensor([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
         ukc_mask = 1.0 - tkc_mask
@@ -118,6 +118,85 @@ class UnifiedComponentTests(unittest.TestCase):
         )
         self.assertFalse(torch.equal(out.ukc_states[0, 1], out.ukc_states[1, 1]))
 
+    def test_m2_propagates_from_source_to_destination(self):
+        module = UntestedKnowledgeInferenceNetwork(
+            num_concepts=3,
+            dim=2,
+            layers=1,
+        )
+        with torch.no_grad():
+            module.layers[0].weight.copy_(torch.eye(2))
+            module.concept_prior.fill_(7.0)
+
+        out = module(
+            tkc_states=torch.tensor([[[1.0, -1.0], [0.0, 0.0], [0.0, 0.0]]]),
+            tkc_mask=torch.tensor([[1.0, 0.0, 0.0]]),
+            ukc_mask=torch.tensor([[0.0, 1.0, 1.0]]),
+            concept_graph=torch.tensor(
+                [[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+            ),
+            direct_reliability=torch.tensor([[1.0, 0.0, 0.0]]),
+        )
+
+        self.assertTrue(
+            torch.equal(
+                out.reachable_mask,
+                torch.tensor([[False, True, False]]),
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                out.ukc_states[0, 1],
+                torch.tanh(torch.tensor([1.0, -1.0])),
+            )
+        )
+        self.assertTrue(
+            torch.equal(out.ukc_states[0, 2], module.concept_prior[2])
+        )
+
+    def test_m2_structural_reachability_ignores_zero_message_values(self):
+        module = UntestedKnowledgeInferenceNetwork(
+            num_concepts=3,
+            dim=2,
+            layers=2,
+        )
+        with torch.no_grad():
+            for layer in module.layers:
+                layer.weight.copy_(torch.eye(2))
+            module.concept_prior.copy_(
+                torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+            )
+
+        out = module(
+            tkc_states=torch.zeros(2, 3, 2),
+            tkc_mask=torch.tensor([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+            ukc_mask=torch.tensor([[0.0, 1.0, 1.0], [0.0, 1.0, 1.0]]),
+            concept_graph=torch.tensor(
+                [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
+            ),
+            direct_reliability=torch.tensor(
+                [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+            ),
+        )
+
+        expected_reachability = torch.tensor(
+            [[False, True, True], [False, False, False]]
+        )
+        self.assertTrue(torch.equal(out.reachable_mask, expected_reachability))
+        self.assertTrue(
+            torch.equal(
+                out.inferred_reliability,
+                expected_reachability.float(),
+            )
+        )
+        self.assertTrue(torch.equal(out.ukc_states[0, 1:], torch.zeros(2, 2)))
+        self.assertTrue(
+            torch.equal(
+                out.ukc_states[1, 1:],
+                module.concept_prior[1:],
+            )
+        )
+
     def test_m2_unreachable_ukc_uses_prior_not_static_broadcast(self):
         module = UntestedKnowledgeInferenceNetwork(
             num_concepts=3,
@@ -125,7 +204,7 @@ class UnifiedComponentTests(unittest.TestCase):
             layers=1,
         )
         graph = torch.tensor(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+            [[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
         )
         tkc_mask = torch.tensor([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
         ukc_mask = 1.0 - tkc_mask
