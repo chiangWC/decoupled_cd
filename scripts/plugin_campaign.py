@@ -353,7 +353,7 @@ def _validated_selection(
     dict[str, Any],
     str,
     str,
-    str,
+    str | None,
 ]:
     try:
         selection_bytes = Path(selection_path).read_bytes()
@@ -428,13 +428,22 @@ def _validated_selection(
     dataset = selection.get("dataset")
     if not isinstance(dataset, str) or not dataset.strip():
         raise FrozenConfigMismatchError("selection dataset must be a non-empty string")
-    try:
-        holdout_assignments_sha256 = _validated_sha256(
-            selection.get("holdout_assignments_sha256"),
-            "selection holdout_assignments_sha256",
+    kind = protocol_data_kind(normalized_protocol)
+    raw_holdout_sha = selection.get("holdout_assignments_sha256")
+    if kind == "holdout":
+        try:
+            holdout_assignments_sha256 = _validated_sha256(
+                raw_holdout_sha,
+                "selection holdout_assignments_sha256",
+            )
+        except ValueError as exc:
+            raise FrozenConfigMismatchError(str(exc)) from exc
+    elif "holdout_assignments_sha256" in selection:
+        raise FrozenConfigMismatchError(
+            "standard selection must not bind holdout assignments"
         )
-    except ValueError as exc:
-        raise FrozenConfigMismatchError(str(exc)) from exc
+    else:
+        holdout_assignments_sha256 = None
     return (
         config_id,
         checkpoint_sha256,
@@ -500,12 +509,13 @@ def claim_test_evaluation(
         "protocol": normalized_protocol,
         "selection_sha256": selection_sha256,
         "dataset": dataset,
-        "holdout_assignments_sha256": holdout_assignments_sha256,
         "selection_path": str(Path(selection_path).resolve()),
         "route_head": resolved_head,
         "claimed_at_utc": claimed_at,
         "argv": list(argv if argv is not None else sys.argv),
     }
+    if holdout_assignments_sha256 is not None:
+        record["holdout_assignments_sha256"] = holdout_assignments_sha256
     claim_payload = canonical_json_bytes(record)
     ledger_dir = Path(ledger_dir)
     ledger_dir.mkdir(parents=True, exist_ok=True)
@@ -738,8 +748,20 @@ def write_evaluation_artifacts(
                 "dataset"
             ].strip():
                 raise ValueError("test claim dataset must be a non-empty string")
-            for field in ("selection_sha256", "holdout_assignments_sha256"):
-                _validated_sha256(test_claim.get(field), f"test claim {field}")
+            _validated_sha256(
+                test_claim.get("selection_sha256"),
+                "test claim selection_sha256",
+            )
+            kind = protocol_data_kind(cache_metadata["protocol"])
+            if kind == "holdout":
+                _validated_sha256(
+                    test_claim.get("holdout_assignments_sha256"),
+                    "test claim holdout_assignments_sha256",
+                )
+            elif "holdout_assignments_sha256" in test_claim:
+                raise ValueError(
+                    "standard test claim must not bind holdout assignments"
+                )
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_record = {
@@ -796,13 +818,14 @@ def write_evaluation_artifacts(
                     "frozen_config_id": test_claim["frozen_config_id"],
                     "selection_sha256": test_claim["selection_sha256"],
                     "dataset": test_claim["dataset"],
-                    "holdout_assignments_sha256": test_claim[
-                        "holdout_assignments_sha256"
-                    ],
                     "test_claim": test_claim,
                     "test_claim_sha256": sha256_bytes(test_claim_bytes),
                 }
             )
+            if protocol_data_kind(cache_metadata["protocol"]) == "holdout":
+                manifest["holdout_assignments_sha256"] = test_claim[
+                    "holdout_assignments_sha256"
+                ]
         _write_evaluation_cache_manifest(
             output_dir / "evaluation_cache_manifest.json",
             manifest,

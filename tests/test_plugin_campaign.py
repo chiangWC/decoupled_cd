@@ -54,35 +54,49 @@ HOLDOUT_ASSIGNMENTS_SHA256 = "9" * 64
 ID_MAPS_BYTES = b'{"cpt_ids":["c1"],"exer_ids":["e1"],"stu_ids":["s1"]}\n'
 
 
-def frozen_id(checkpoint_bytes: bytes, id_maps_bytes: bytes = ID_MAPS_BYTES) -> str:
+def frozen_id(
+    checkpoint_bytes: bytes,
+    id_maps_bytes: bytes = ID_MAPS_BYTES,
+    protocol: dict | None = None,
+) -> str:
     return compute_frozen_config_id(
         checkpoint_sha256=hashlib.sha256(checkpoint_bytes).hexdigest(),
         id_maps_sha256=hashlib.sha256(id_maps_bytes).hexdigest(),
         plugin_config=PLUGIN_CONFIG,
         backbone_config=BACKBONE_CONFIG,
-        protocol=PROTOCOL,
+        protocol=protocol or PROTOCOL,
     )
 
 
-def write_selection(path: Path, checkpoint_bytes: bytes = b"checkpoint") -> str:
+def write_selection(
+    path: Path,
+    checkpoint_bytes: bytes = b"checkpoint",
+    *,
+    protocol: dict | None = None,
+    holdout_sha: str | None = HOLDOUT_ASSIGNMENTS_SHA256,
+) -> str:
+    protocol = protocol or PROTOCOL
     id_maps_path = path.parent / "id_maps.json"
     if not id_maps_path.exists():
         id_maps_path.write_bytes(ID_MAPS_BYTES)
     id_maps_sha256 = hashlib.sha256(id_maps_path.read_bytes()).hexdigest()
-    config_id = frozen_id(checkpoint_bytes, id_maps_path.read_bytes())
-    path.write_text(
-        json.dumps({
+    config_id = frozen_id(
+        checkpoint_bytes,
+        id_maps_path.read_bytes(),
+        protocol,
+    )
+    selection = {
             "checkpoint_sha256": hashlib.sha256(checkpoint_bytes).hexdigest(),
             "id_maps_sha256": id_maps_sha256,
             "plugin_config": PLUGIN_CONFIG,
             "backbone_config": BACKBONE_CONFIG,
-            "protocol": PROTOCOL,
+            "protocol": protocol,
             "frozen_config_id": config_id,
             "dataset": "fixture",
-            "holdout_assignments_sha256": HOLDOUT_ASSIGNMENTS_SHA256,
-        }),
-        encoding="utf-8",
-    )
+    }
+    if holdout_sha is not None:
+        selection["holdout_assignments_sha256"] = holdout_sha
+    path.write_text(json.dumps(selection), encoding="utf-8")
     return config_id
 
 
@@ -90,13 +104,16 @@ def test_claim_bytes(
     *,
     checkpoint_sha256: str = "d" * 64,
     id_maps_sha256: str = "e" * 64,
+    protocol: dict | None = None,
+    holdout_sha: str | None = HOLDOUT_ASSIGNMENTS_SHA256,
 ) -> bytes:
+    protocol = protocol or PROTOCOL
     config_id = compute_frozen_config_id(
         checkpoint_sha256=checkpoint_sha256,
         id_maps_sha256=id_maps_sha256,
         plugin_config=PLUGIN_CONFIG,
         backbone_config=BACKBONE_CONFIG,
-        protocol=PROTOCOL,
+        protocol=protocol,
     )
     record = {
         "frozen_config_id": config_id,
@@ -104,15 +121,16 @@ def test_claim_bytes(
         "id_maps_sha256": id_maps_sha256,
         "plugin_config": PLUGIN_CONFIG,
         "backbone_config": BACKBONE_CONFIG,
-        "protocol": PROTOCOL,
+        "protocol": protocol,
         "selection_sha256": "f" * 64,
         "dataset": "fixture",
-        "holdout_assignments_sha256": HOLDOUT_ASSIGNMENTS_SHA256,
         "selection_path": "/frozen/selection.json",
         "route_head": "a" * 40,
         "claimed_at_utc": "2026-07-10T12:00:00Z",
         "argv": ["evaluate", "--split", "test"],
     }
+    if holdout_sha is not None:
+        record["holdout_assignments_sha256"] = holdout_sha
     return (
         json.dumps(record, sort_keys=True, allow_nan=False) + "\n"
     ).encode()
@@ -386,6 +404,156 @@ class PluginCampaignTests(unittest.TestCase):
                 argv=[],
                 route_head="b" * 40,
             )
+
+    def test_standard_claim_omits_holdout_but_holdout_still_requires_it(self) -> None:
+        checkpoint = self.root / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        standard_protocol = {
+            **PROTOCOL,
+            "data_protocol": "standard",
+            "dataset_name": "fixture",
+        }
+        holdout_protocol = {
+            **PROTOCOL,
+            "data_protocol": "holdout",
+            "dataset_name": "fixture",
+        }
+        standard_selection = self.root / "standard-selection.json"
+        standard_id = write_selection(
+            standard_selection,
+            protocol=standard_protocol,
+            holdout_sha=None,
+        )
+
+        standard_claim = claim_test_evaluation(
+            ledger_dir=self.root / "ledger",
+            selection_path=standard_selection,
+            checkpoint_path=checkpoint,
+            plugin_config=PLUGIN_CONFIG,
+            backbone_config=BACKBONE_CONFIG,
+            protocol=standard_protocol,
+            route_root=self.root,
+            route_head="1" * 40,
+        )
+
+        self.assertEqual(standard_claim.name, f"{standard_id}.json")
+        self.assertNotIn(
+            "holdout_assignments_sha256",
+            json.loads(standard_claim.read_text(encoding="utf-8")),
+        )
+        bound_standard_selection = self.root / "bound-standard-selection.json"
+        write_selection(
+            bound_standard_selection,
+            protocol=standard_protocol,
+        )
+        with self.assertRaisesRegex(
+            FrozenConfigMismatchError,
+            "standard selection",
+        ):
+            claim_test_evaluation(
+                ledger_dir=self.root / "bound-standard-ledger",
+                selection_path=bound_standard_selection,
+                checkpoint_path=checkpoint,
+                plugin_config=PLUGIN_CONFIG,
+                backbone_config=BACKBONE_CONFIG,
+                protocol=standard_protocol,
+                route_root=self.root,
+                route_head="5" * 40,
+            )
+        null_standard_selection = self.root / "null-standard-selection.json"
+        write_selection(
+            null_standard_selection,
+            protocol=standard_protocol,
+            holdout_sha=None,
+        )
+        null_bound_selection = json.loads(
+            null_standard_selection.read_text(encoding="utf-8")
+        )
+        null_bound_selection["holdout_assignments_sha256"] = None
+        null_standard_selection.write_text(
+            json.dumps(null_bound_selection),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            FrozenConfigMismatchError,
+            "standard selection",
+        ):
+            claim_test_evaluation(
+                ledger_dir=self.root / "null-standard-ledger",
+                selection_path=null_standard_selection,
+                checkpoint_path=checkpoint,
+                plugin_config=PLUGIN_CONFIG,
+                backbone_config=BACKBONE_CONFIG,
+                protocol=standard_protocol,
+                route_root=self.root,
+                route_head="6" * 40,
+            )
+        missing_holdout_selection = self.root / "missing-holdout-selection.json"
+        write_selection(
+            missing_holdout_selection,
+            protocol=holdout_protocol,
+            holdout_sha=None,
+        )
+        with self.assertRaises(FrozenConfigMismatchError):
+            claim_test_evaluation(
+                ledger_dir=self.root / "missing-holdout-ledger",
+                selection_path=missing_holdout_selection,
+                checkpoint_path=checkpoint,
+                plugin_config=PLUGIN_CONFIG,
+                backbone_config=BACKBONE_CONFIG,
+                protocol=holdout_protocol,
+                route_root=self.root,
+                route_head="2" * 40,
+            )
+
+    def test_standard_and_holdout_use_distinct_frozen_claim_paths(self) -> None:
+        checkpoint = self.root / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        standard_protocol = {
+            **PROTOCOL,
+            "data_protocol": "standard",
+            "dataset_name": "fixture",
+        }
+        holdout_protocol = {
+            **PROTOCOL,
+            "data_protocol": "holdout",
+            "dataset_name": "fixture",
+        }
+        standard_selection = self.root / "standard-selection.json"
+        holdout_selection = self.root / "holdout-selection.json"
+        standard_id = write_selection(
+            standard_selection,
+            protocol=standard_protocol,
+            holdout_sha=None,
+        )
+        holdout_id = write_selection(
+            holdout_selection,
+            protocol=holdout_protocol,
+        )
+
+        standard_claim = claim_test_evaluation(
+            ledger_dir=self.root / "ledger",
+            selection_path=standard_selection,
+            checkpoint_path=checkpoint,
+            plugin_config=PLUGIN_CONFIG,
+            backbone_config=BACKBONE_CONFIG,
+            protocol=standard_protocol,
+            route_root=self.root,
+            route_head="3" * 40,
+        )
+        holdout_claim = claim_test_evaluation(
+            ledger_dir=self.root / "ledger",
+            selection_path=holdout_selection,
+            checkpoint_path=checkpoint,
+            plugin_config=PLUGIN_CONFIG,
+            backbone_config=BACKBONE_CONFIG,
+            protocol=holdout_protocol,
+            route_root=self.root,
+            route_head="4" * 40,
+        )
+
+        self.assertNotEqual(standard_id, holdout_id)
+        self.assertNotEqual(standard_claim, holdout_claim)
 
     def test_changing_frozen_id_cannot_create_a_second_test_claim(self) -> None:
         checkpoint = self.root / "checkpoint.pth"
@@ -731,6 +899,50 @@ class PluginCampaignTests(unittest.TestCase):
                 },
             )
         self.assertFalse(output.exists())
+
+    def test_standard_test_cache_omits_holdout_assignment_binding(self) -> None:
+        output = self.root / "standard-test-evaluation"
+        standard_protocol = {
+            **PROTOCOL,
+            "data_protocol": "standard",
+            "dataset_name": "fixture",
+        }
+        write_evaluation_artifacts(
+            output_dir=output,
+            split="test",
+            metrics={"auc": 0.8, "acc": 0.7, "rmse": 0.4},
+            predictions=[0.2],
+            labels=[0.0],
+            test_claim_bytes=test_claim_bytes(
+                protocol=standard_protocol,
+                holdout_sha=None,
+            ),
+            interaction_rows=[
+                {"stu_id": 1, "exer_id": 10, "cpt_seq": 100, "label": 0}
+            ],
+            mastery=np.array([[0.1]], dtype=np.float32),
+            id_maps={
+                "stu_ids": ["1"],
+                "exer_ids": ["10"],
+                "cpt_ids": ["100"],
+            },
+            metadata={
+                "checkpoint_sha256": "d" * 64,
+                "source_id_maps_sha256": "e" * 64,
+                "plugin_config": PLUGIN_CONFIG,
+                "backbone_config": BACKBONE_CONFIG,
+                "protocol": standard_protocol,
+            },
+        )
+
+        manifest = json.loads(
+            (output / "evaluation_cache_manifest.json").read_text()
+        )
+        self.assertNotIn("holdout_assignments_sha256", manifest)
+        self.assertNotIn(
+            "holdout_assignments_sha256",
+            manifest["test_claim"],
+        )
 
     def test_evaluation_cache_rejects_row_or_label_misalignment_before_writing(self) -> None:
         common = {

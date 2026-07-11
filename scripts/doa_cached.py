@@ -17,7 +17,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data.q_matrix import normalize_concept_sequence
-from scripts.plugin_campaign import canonical_json_bytes, compute_frozen_config_id
+from scripts.plugin_campaign import (
+    canonical_json_bytes,
+    compute_frozen_config_id,
+    protocol_data_kind,
+)
 from utils import compute_doa
 
 
@@ -192,6 +196,8 @@ def _load_evaluation(evaluation_dir: Path) -> dict[str, Any]:
     if not isinstance(row_count, int) or isinstance(row_count, bool) or row_count < 0:
         raise ValueError("cache manifest row_count must be a non-negative integer")
     protocol = _validated_protocol(manifest.get("protocol"))
+    if protocol_data_kind(protocol) != "holdout":
+        raise ValueError("cached DOA requires holdout data protocol")
     checkpoint_sha256 = _validated_sha256(
         manifest.get("checkpoint_sha256"), "checkpoint_sha256"
     )

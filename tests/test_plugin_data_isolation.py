@@ -250,6 +250,100 @@ class PluginDataIsolationTests(unittest.TestCase):
                 self.assertEqual(len(processor.test_triplets), 1)
                 self.assertEqual(processor.test_triplets[0][1], 2)
 
+    def test_standard_and_holdout_claim_precede_first_test_read(self) -> None:
+        protocols = (
+            (
+                "standard",
+                {
+                    **PROTOCOL,
+                    "data_protocol": "standard",
+                    "dataset_name": "fixture",
+                },
+                None,
+            ),
+            (
+                "holdout",
+                {
+                    **PROTOCOL,
+                    "data_protocol": "holdout",
+                    "dataset_name": "fixture",
+                },
+                "8" * 64,
+            ),
+        )
+        for protocol_index, (kind, protocol, holdout_sha) in enumerate(protocols):
+            config_id = compute_frozen_config_id(
+                checkpoint_sha256=hashlib.sha256(
+                    self.checkpoint.read_bytes()
+                ).hexdigest(),
+                id_maps_sha256=hashlib.sha256(self.schema.read_bytes()).hexdigest(),
+                plugin_config=PLUGIN_CONFIG,
+                backbone_config=BACKBONE_CONFIG,
+                protocol=protocol,
+            )
+            selection = self.root / f"{kind}-selection.json"
+            record = {
+                "checkpoint_sha256": hashlib.sha256(
+                    self.checkpoint.read_bytes()
+                ).hexdigest(),
+                "id_maps_sha256": hashlib.sha256(
+                    self.schema.read_bytes()
+                ).hexdigest(),
+                "plugin_config": PLUGIN_CONFIG,
+                "backbone_config": BACKBONE_CONFIG,
+                "protocol": protocol,
+                "frozen_config_id": config_id,
+                "dataset": "fixture",
+            }
+            if holdout_sha is not None:
+                record["holdout_assignments_sha256"] = holdout_sha
+            selection.write_text(json.dumps(record), encoding="utf-8")
+            for processor_index, (
+                name,
+                module,
+                processor_class,
+                args,
+            ) in enumerate(self.processors()):
+                with self.subTest(kind=kind, name=name):
+                    ledger = self.root / f"{kind}-ledger-{name}"
+                    claim_path = ledger / f"{config_id}.json"
+                    original_read = processor_class._read_csv
+
+                    def spy(instance, filename, _original=original_read):
+                        if filename == "test.csv":
+                            self.assertTrue(claim_path.is_file())
+                        return _original(instance, filename)
+
+                    def load_processor():
+                        with self.processor_context(
+                            name,
+                            module,
+                            processor_class,
+                            spy,
+                        ):
+                            return processor_class(
+                                args,
+                                mock.Mock(),
+                                split_mode="test",
+                                id_maps_path=self.schema,
+                                q_matrix_path=self.q_matrix,
+                            )
+
+                    prepare_evaluation_resources(
+                        split="test",
+                        load_resources=load_processor,
+                        checkpoint_path=self.checkpoint,
+                        ledger_dir=ledger,
+                        selection_path=selection,
+                        plugin_config=PLUGIN_CONFIG,
+                        backbone_config=BACKBONE_CONFIG,
+                        protocol=protocol,
+                        route_root=self.root,
+                        route_head=(
+                            f"{protocol_index + processor_index + 5:x}" * 40
+                        )[:40],
+                    )
+
     def test_unknown_test_ids_fail_after_claim_without_expanding_schema(self) -> None:
         self.write_split("test.csv", [(999, 30, "300", 1)])
         for index, (name, module, processor_class, args) in enumerate(self.processors()):

@@ -28,7 +28,12 @@ ASSIGNMENTS_BYTES = b"stu_id,holdout_concepts\n1,100\n2,100\n3,100\n"
 ASSIGNMENTS_SHA256 = hashlib.sha256(ASSIGNMENTS_BYTES).hexdigest()
 
 
-def test_claim_bytes() -> bytes:
+def test_claim_bytes(
+    *,
+    protocol: dict | None = None,
+    holdout_sha: str | None = ASSIGNMENTS_SHA256,
+) -> bytes:
+    protocol = protocol or PROTOCOL
     checkpoint_sha256 = "a" * 64
     id_maps_sha256 = "b" * 64
     plugin_config = {"aux_weight": 0.5}
@@ -39,21 +44,22 @@ def test_claim_bytes() -> bytes:
             id_maps_sha256=id_maps_sha256,
             plugin_config=plugin_config,
             backbone_config=backbone_config,
-            protocol=PROTOCOL,
+            protocol=protocol,
         ),
         "checkpoint_sha256": checkpoint_sha256,
         "id_maps_sha256": id_maps_sha256,
         "plugin_config": plugin_config,
         "backbone_config": backbone_config,
-        "protocol": PROTOCOL,
+        "protocol": protocol,
         "selection_sha256": "c" * 64,
         "dataset": "fixture",
-        "holdout_assignments_sha256": ASSIGNMENTS_SHA256,
         "selection_path": "/frozen/selection.json",
         "route_head": "d" * 40,
         "claimed_at_utc": "2026-07-10T12:00:00Z",
         "argv": ["evaluate", "--split", "test"],
     }
+    if holdout_sha is not None:
+        record["holdout_assignments_sha256"] = holdout_sha
     return (json.dumps(record, sort_keys=True, allow_nan=False) + "\n").encode()
 
 
@@ -69,7 +75,14 @@ class CachedDoaTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def make_evaluation(self, name: str = "evaluation") -> Path:
+    def make_evaluation(
+        self,
+        name: str = "evaluation",
+        *,
+        protocol: dict | None = None,
+        holdout_sha: str | None = ASSIGNMENTS_SHA256,
+    ) -> Path:
+        protocol = protocol or PROTOCOL
         evaluation = self.root / name
         write_evaluation_artifacts(
             output_dir=evaluation,
@@ -77,7 +90,10 @@ class CachedDoaTests(unittest.TestCase):
             metrics={"auc": 0.75, "acc": 2 / 3, "rmse": 0.4},
             predictions=[0.2, 0.8, 0.7],
             labels=[0.0, 1.0, 1.0],
-            test_claim_bytes=test_claim_bytes(),
+            test_claim_bytes=test_claim_bytes(
+                protocol=protocol,
+                holdout_sha=holdout_sha,
+            ),
             interaction_rows=[
                 {"stu_id": 1, "exer_id": 10, "cpt_seq": 100, "label": 0},
                 {"stu_id": 2, "exer_id": 10, "cpt_seq": 100, "label": 1},
@@ -94,7 +110,7 @@ class CachedDoaTests(unittest.TestCase):
                 "source_id_maps_sha256": "b" * 64,
                 "plugin_config": {"aux_weight": 0.5},
                 "backbone_config": {"latent_dim": 32},
-                "protocol": PROTOCOL,
+                "protocol": protocol,
             },
         )
         return evaluation
@@ -187,6 +203,32 @@ class CachedDoaTests(unittest.TestCase):
                 row[field],
                 hashlib.sha256(path.read_bytes()).hexdigest(),
             )
+
+    def test_rejects_standard_evaluation_cache(self) -> None:
+        standard_protocol = {
+            **PROTOCOL,
+            "data_protocol": "standard",
+            "dataset_name": "fixture",
+        }
+        evaluation = self.make_evaluation(
+            "standard",
+            protocol=standard_protocol,
+            holdout_sha=None,
+        )
+
+        with mock.patch.object(sys, "argv", self.argv(evaluation)):
+            with self.assertRaisesRegex(ValueError, "holdout"):
+                doa_cached.main()
+
+    def test_legacy_cache_without_data_protocol_remains_holdout_compatible(self) -> None:
+        evaluation = self.make_evaluation("legacy-holdout")
+
+        loaded = doa_cached._load_evaluation(evaluation)
+
+        self.assertEqual(
+            loaded["holdout_assignments_sha256"],
+            ASSIGNMENTS_SHA256,
+        )
 
     def test_rejects_each_tampered_cached_artifact_before_doa(self) -> None:
         for filename in ("evaluation_cache.csv", "mastery.npy", "id_maps.json"):
