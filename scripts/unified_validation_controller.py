@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import re
 import secrets
+import stat
 import subprocess
 import sys
 from typing import Any, Mapping, Sequence
@@ -62,10 +63,104 @@ def _strict_git_env() -> dict[str, str]:
     }
 
 
-def _trusted_git_command(*arguments: str) -> list[str]:
+def _read_git_metadata(path: Path, *, label: str) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise ValueError(f"cannot read {label}: {path}") from error
+    with os.fdopen(descriptor, "rb") as handle:
+        before = os.fstat(handle.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_size > 4096:
+            raise ValueError(f"invalid {label}: {path}")
+        data = handle.read(4097)
+        after = os.fstat(handle.fileno())
+    before_identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    )
+    if len(data) > 4096 or before_identity != after_identity:
+        raise ValueError(f"unstable {label}: {path}")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"invalid UTF-8 in {label}: {path}") from error
+
+
+def _resolve_git_dir(repo_root: Path) -> Path:
+    marker = repo_root / ".git"
+    if marker.is_symlink():
+        raise ValueError("route .git marker must not be a symlink")
+    if marker.is_dir():
+        return marker.resolve(strict=True)
+    if not marker.is_file():
+        raise ValueError(f"route has no .git metadata: {repo_root}")
+    content = _read_git_metadata(marker, label="linked-worktree .git file")
+    lines = content.splitlines()
+    if len(lines) != 1 or not lines[0].startswith("gitdir: "):
+        raise ValueError("linked-worktree .git file is malformed")
+    raw_git_dir = lines[0][len("gitdir: ") :]
+    if not raw_git_dir or "\x00" in raw_git_dir:
+        raise ValueError("linked-worktree gitdir path is invalid")
+    candidate = Path(raw_git_dir)
+    git_dir = (
+        candidate if candidate.is_absolute() else marker.parent / candidate
+    ).resolve(strict=True)
+    if not git_dir.is_dir():
+        raise ValueError("linked-worktree gitdir is not a directory")
+
+    backpointer_text = _read_git_metadata(
+        git_dir / "gitdir", label="linked-worktree gitdir backpointer"
+    ).strip()
+    if not backpointer_text or "\x00" in backpointer_text:
+        raise ValueError("linked-worktree gitdir backpointer is invalid")
+    backpointer = Path(backpointer_text)
+    if not backpointer.is_absolute():
+        backpointer = git_dir / backpointer
+    if backpointer.resolve(strict=True) != marker.resolve(strict=True):
+        raise ValueError("linked-worktree gitdir backpointer mismatch")
+
+    common_text = _read_git_metadata(
+        git_dir / "commondir", label="linked-worktree common-dir pointer"
+    ).strip()
+    if not common_text or "\x00" in common_text:
+        raise ValueError("linked-worktree common-dir pointer is invalid")
+    common = Path(common_text)
+    if not common.is_absolute():
+        common = git_dir / common
+    if not common.resolve(strict=True).is_dir():
+        raise ValueError("linked-worktree common-dir is not a directory")
+    return git_dir
+
+
+def _trusted_git_command(
+    repo_root: Path,
+    git_dir: Path,
+    *arguments: str,
+) -> list[str]:
     if not TRUSTED_GIT.is_file() or not os.access(TRUSTED_GIT, os.X_OK):
         raise ValueError(f"trusted Git executable is unavailable: {TRUSTED_GIT}")
-    return [str(TRUSTED_GIT), "--no-optional-locks", *arguments]
+    return [
+        str(TRUSTED_GIT),
+        "--no-optional-locks",
+        f"--git-dir={git_dir}",
+        f"--work-tree={repo_root}",
+        "-c",
+        f"core.worktree={repo_root}",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        *arguments,
+    ]
 
 
 def _architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
@@ -87,9 +182,37 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
 
 
 def _route_head(repo_root: Path) -> str:
+    repo_root = repo_root.resolve(strict=True)
+    if not repo_root.is_dir():
+        raise ValueError(f"route root is not a directory: {repo_root}")
+    git_dir = _resolve_git_dir(repo_root)
     environment = _strict_git_env()
+    top_level = subprocess.run(
+        _trusted_git_command(
+            repo_root, git_dir, "rev-parse", "--show-toplevel"
+        ),
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    top_level_text = top_level.stdout.strip()
+    if top_level.returncode != 0 or not top_level_text:
+        detail = top_level.stderr.strip() or top_level_text
+        raise ValueError(f"cannot resolve route top-level: {detail}")
+    try:
+        resolved_top_level = Path(top_level_text).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as error:
+        detail = top_level.stderr.strip() or top_level.stdout.strip()
+        raise ValueError(f"cannot resolve route top-level: {detail}") from error
+    if resolved_top_level != repo_root:
+        raise ValueError(
+            f"route top-level mismatch: expected {repo_root}, "
+            f"actual {resolved_top_level}"
+        )
     completed = subprocess.run(
-        _trusted_git_command("rev-parse", "HEAD"),
+        _trusted_git_command(repo_root, git_dir, "rev-parse", "HEAD"),
         cwd=repo_root,
         check=False,
         capture_output=True,
@@ -102,6 +225,8 @@ def _route_head(repo_root: Path) -> str:
         raise ValueError(f"cannot resolve exact route HEAD: {detail}")
     status = subprocess.run(
         _trusted_git_command(
+            repo_root,
+            git_dir,
             "status",
             "--porcelain=v1",
             "--untracked-files=all",

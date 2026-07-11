@@ -666,6 +666,75 @@ print(attempt_dir)
 
         self.assertFalse(blocked_output.exists())
 
+    def test_local_core_worktree_cannot_redirect_route_verification(self) -> None:
+        self.initialize()
+        alternate = self.root / "local-config-clean-route"
+        subprocess.run(
+            ["/usr/bin/git", "clone", "-q", str(self.repo_root), str(alternate)],
+            check=True,
+        )
+        subprocess.run(
+            ["/usr/bin/git", "config", "core.worktree", str(alternate)],
+            cwd=self.repo_root,
+            check=True,
+        )
+        self.route_runner.write_text("# dirty real work tree\n", encoding="utf-8")
+        blocked_output = self.root / "local-config-token.json"
+
+        with self.assertRaisesRegex(ValueError, "dirty"):
+            authorize_next(
+                state_dir=self.state_dir,
+                repo_root=self.repo_root,
+                output_path=blocked_output,
+            )
+
+        self.assertFalse(blocked_output.exists())
+
+    def test_local_fsmonitor_hook_is_disabled_for_route_verification(self) -> None:
+        marker = self.root / "fsmonitor-executed"
+        monitor = self.root / "fsmonitor-hook"
+        monitor.write_text(
+            "#!/bin/sh\n"
+            f"touch {marker}\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        monitor.chmod(0o755)
+        subprocess.run(
+            ["/usr/bin/git", "config", "core.fsmonitor", str(monitor)],
+            cwd=self.repo_root,
+            check=True,
+        )
+
+        controller_module._route_head(self.repo_root)
+
+        self.assertFalse(marker.exists())
+
+    def test_clean_linked_worktree_route_is_supported(self) -> None:
+        linked = self.root / "linked-route"
+        subprocess.run(
+            [
+                "/usr/bin/git",
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "linked-route-fixture",
+                str(linked),
+            ],
+            cwd=self.repo_root,
+            check=True,
+        )
+        expected = subprocess.run(
+            ["/usr/bin/git", "rev-parse", "HEAD"],
+            cwd=linked,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        self.assertEqual(controller_module._route_head(linked), expected)
+
     def test_first_authorization_issues_only_first_dataset_pair(self) -> None:
         self.initialize()
 
