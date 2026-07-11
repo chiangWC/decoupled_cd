@@ -612,7 +612,15 @@ def _write_synthetic_fixture(root: Path) -> tuple[Path, Path, Path]:
         (2, 1, "1", 1),
         (2, 2, "2", 0),
     ]
-    for path, selected in ((train_path, rows), (valid_path, rows[::-1])):
+    valid_rows = [
+        (0, 3, "0", 0),
+        (0, 4, "1", 1),
+        (1, 3, "0", 1),
+        (1, 5, "2", 0),
+        (2, 4, "1", 0),
+        (2, 5, "2", 1),
+    ]
+    for path, selected in ((train_path, rows), (valid_path, valid_rows)):
         with path.open("x", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(("stu_id", "exer_id", "cpt_seq", "label"))
@@ -620,7 +628,9 @@ def _write_synthetic_fixture(root: Path) -> tuple[Path, Path, Path]:
     with q_path.open("x", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(("exer_id", "cpt_seq"))
-        writer.writerows(((0, "0"), (1, "1"), (2, "2")))
+        writer.writerows(
+            ((0, "0"), (1, "1"), (2, "2"), (3, "0"), (4, "1"), (5, "2"))
+        )
     return train_path, valid_path, q_path
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -14,10 +15,26 @@ from scripts.run_unified_validation import (
     parse_gpu_inventory,
     select_gpu_index,
     validate_smoke_summary,
+    _write_synthetic_fixture,
 )
 
 
 class UnifiedValidationRunnerTests(unittest.TestCase):
+    def test_synthetic_validation_targets_are_disjoint_from_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            train_path, valid_path, _ = _write_synthetic_fixture(Path(directory))
+
+            def interaction_pairs(path: Path) -> set[tuple[str, str]]:
+                rows = path.read_text(encoding="utf-8").splitlines()[1:]
+                return {
+                    tuple(row.split(",")[:2])
+                    for row in rows
+                }
+
+            self.assertFalse(
+                interaction_pairs(train_path) & interaction_pairs(valid_path)
+            )
+
     def test_script_entrypoint_imports_from_project_root(self):
         completed = subprocess.run(
             [sys.executable, "scripts/run_unified_validation.py", "--help"],
