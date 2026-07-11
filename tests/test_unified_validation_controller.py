@@ -30,6 +30,30 @@ class UnifiedValidationControllerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
+        self.repo_root = self.root / "route-repo"
+        (self.repo_root / "scripts").mkdir(parents=True)
+        self.route_runner = self.repo_root / "scripts" / "run_remote_campaign.py"
+        self.route_runner.write_text("# tracked route runner\n", encoding="utf-8")
+        (self.repo_root / ".gitignore").write_text(
+            "ignored-runtime/\n", encoding="utf-8"
+        )
+        subprocess.run(["git", "init", "-q"], cwd=self.repo_root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "fixture@example.com"],
+            cwd=self.repo_root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Fixture"],
+            cwd=self.repo_root,
+            check=True,
+        )
+        subprocess.run(["git", "add", "."], cwd=self.repo_root, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "route fixture"],
+            cwd=self.repo_root,
+            check=True,
+        )
         self.state_dir = self.root / "controller"
         self.cohort_path = self.root / "cohort.json"
         cohort: dict[str, object] = {
@@ -89,7 +113,7 @@ class UnifiedValidationControllerTests(unittest.TestCase):
     def initialize(self) -> dict[str, object]:
         return initialize_controller(
             state_dir=self.state_dir,
-            repo_root=PROJECT_ROOT,
+            repo_root=self.repo_root,
             cohort_path=self.cohort_path,
             manifest_path=self.manifest_path,
             architecture="m2",
@@ -102,7 +126,7 @@ class UnifiedValidationControllerTests(unittest.TestCase):
         token_path = self.root / "capability.json"
         token = authorize_next(
             state_dir=self.state_dir,
-            repo_root=PROJECT_ROOT,
+            repo_root=self.repo_root,
             output_path=token_path,
         )
         return token_path, token
@@ -119,7 +143,7 @@ class UnifiedValidationControllerTests(unittest.TestCase):
         attempt_dir.mkdir(parents=True, exist_ok=True)
         return consume_split_capability(
             state_dir=self.state_dir,
-            repo_root=PROJECT_ROOT,
+            repo_root=self.repo_root,
             token_path=token_path,
             dataset_id="ASSIST09",
             split_id=split_id,
@@ -280,7 +304,7 @@ print(attempt_dir)
             attempt_dir.mkdir(parents=True, exist_ok=True)
             record = consume_split_capability(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 token_path=token_path,
                 dataset_id=dataset_id,
                 split_id=split_id,
@@ -369,7 +393,7 @@ print(attempt_dir)
 
         expected_head = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
+            cwd=self.repo_root,
             check=True,
             capture_output=True,
             text=True,
@@ -448,7 +472,7 @@ print(attempt_dir)
 
         state = initialize_controller(
             state_dir=self.state_dir,
-            repo_root=PROJECT_ROOT,
+            repo_root=self.repo_root,
             cohort_path=self.cohort_path,
             manifest_path=self.manifest_path,
             architecture="m2",
@@ -485,7 +509,7 @@ print(attempt_dir)
         with self.assertRaisesRegex(ValueError, "validation data.*hash"):
             authorize_next(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 output_path=self.root / "must-not-issue.json",
             )
 
@@ -496,7 +520,7 @@ print(attempt_dir)
                 "--controller-state-dir",
                 str(self.state_dir),
                 "--repo-root",
-                str(PROJECT_ROOT),
+                str(self.repo_root),
                 "--cohort",
                 str(self.cohort_path),
                 "--architecture",
@@ -514,6 +538,74 @@ print(attempt_dir)
 
         self.assertEqual(result, 0)
         self.assertTrue((self.state_dir / "state.json").is_file())
+
+    def test_controller_init_rejects_modified_tracked_route_at_same_head(self) -> None:
+        self.route_runner.write_text("# locally modified runner\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "dirty"):
+            self.initialize()
+        self.assertFalse(self.state_dir.exists())
+
+    def test_controller_init_rejects_staged_route_at_same_head(self) -> None:
+        self.route_runner.write_text("# staged runner\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "scripts/run_remote_campaign.py"],
+            cwd=self.repo_root,
+            check=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "dirty"):
+            self.initialize()
+        self.assertFalse(self.state_dir.exists())
+
+    def test_controller_init_rejects_untracked_nonignored_route_file(self) -> None:
+        (self.repo_root / "untracked.py").write_text(
+            "# untracked route code\n", encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(ValueError, "dirty"):
+            self.initialize()
+        self.assertFalse(self.state_dir.exists())
+
+    def test_dirty_route_blocks_authorize_and_run_pair_before_launch(self) -> None:
+        self.initialize()
+        self.route_runner.write_text("# dirty before authorize\n", encoding="utf-8")
+        blocked_output = self.root / "dirty-token.json"
+        with self.assertRaisesRegex(ValueError, "dirty"):
+            authorize_next(
+                state_dir=self.state_dir,
+                repo_root=self.repo_root,
+                output_path=blocked_output,
+            )
+        self.assertFalse(blocked_output.exists())
+
+        subprocess.run(
+            ["git", "restore", "scripts/run_remote_campaign.py"],
+            cwd=self.repo_root,
+            check=True,
+        )
+        self.issue()
+        self.route_runner.write_text("# dirty before run-pair\n", encoding="utf-8")
+        with patch("scripts.unified_validation_controller._outer_command") as command:
+            with self.assertRaisesRegex(ValueError, "dirty"):
+                controller_module.run_registered_pair(
+                    state_dir=self.state_dir,
+                    repo_root=self.repo_root,
+                )
+        command.assert_not_called()
+
+    def test_ignored_files_and_external_controller_artifacts_are_allowed(self) -> None:
+        ignored = self.repo_root / "ignored-runtime" / "status.json"
+        ignored.parent.mkdir()
+        ignored.write_text("{}\n", encoding="utf-8")
+
+        state = self.initialize()
+        token_path, token = self.issue()
+
+        self.assertEqual(state["route_commit"], token["route_commit"])
+        self.assertTrue(token_path.is_file())
+        self.assertFalse(self.state_dir.is_relative_to(self.repo_root))
+        self.assertFalse(self.artifact_root.is_relative_to(self.repo_root))
 
     def test_first_authorization_issues_only_first_dataset_pair(self) -> None:
         self.initialize()
@@ -537,7 +629,7 @@ print(attempt_dir)
         with self.assertRaises(FileExistsError):
             authorize_next(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 output_path=output_path,
             )
 
@@ -582,7 +674,7 @@ print(attempt_dir)
         with self.assertRaises(FileExistsError):
             authorize_next(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 output_path=output_path,
             )
 
@@ -631,7 +723,7 @@ print(attempt_dir)
         with self.assertRaises(FileExistsError):
             authorize_next(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 output_path=output_path,
             )
 
@@ -704,7 +796,7 @@ print(attempt_dir)
         ):
             consumed = consume_split_capability(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 token_path=token_path,
                 dataset_id="ASSIST09",
                 split_id="standard",
@@ -732,7 +824,7 @@ print(attempt_dir)
             with self.assertRaisesRegex(OSError, "injected final token"):
                 authorize_next(
                     state_dir=self.state_dir,
-                    repo_root=PROJECT_ROOT,
+                    repo_root=self.repo_root,
                     output_path=output_path,
                 )
 
@@ -759,7 +851,7 @@ def crash(path, payload):
 controller._atomic_json = crash
 controller.authorize_next(
     state_dir=Path({str(self.state_dir)!r}),
-    repo_root=Path({str(PROJECT_ROOT)!r}),
+    repo_root=Path({str(self.repo_root)!r}),
     output_path=output,
 )
 """
@@ -773,7 +865,7 @@ controller.authorize_next(
 
         recovered = authorize_next(
             state_dir=self.state_dir,
-            repo_root=PROJECT_ROOT,
+            repo_root=self.repo_root,
             output_path=output_path,
         )
 
@@ -800,7 +892,7 @@ def crash(path, data, **kwargs):
 controller._exclusive_bytes = crash
 controller.authorize_next(
     state_dir=Path({str(self.state_dir)!r}),
-    repo_root=Path({str(PROJECT_ROOT)!r}),
+    repo_root=Path({str(self.repo_root)!r}),
     output_path=output,
 )
 """
@@ -819,7 +911,7 @@ controller.authorize_next(
 
         recovered = authorize_next(
             state_dir=self.state_dir,
-            repo_root=PROJECT_ROOT,
+            repo_root=self.repo_root,
             output_path=output_path,
         )
         self.assertEqual(recovered["counter"], 1)
@@ -840,7 +932,7 @@ controller.authorize_next(
         with self.assertRaisesRegex(ValueError, "registry|capability"):
             consume_split_capability(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 token_path=forged_path,
                 dataset_id="ASSIST09",
                 split_id="standard",
@@ -874,7 +966,7 @@ controller.authorize_next(
         with self.assertRaisesRegex(ValueError, "controller launch"):
             consume_split_capability(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 token_path=token_path,
                 dataset_id="ASSIST09",
                 split_id="standard",
@@ -898,7 +990,7 @@ controller.authorize_next(
         ):
             result = controller_module.run_registered_pair(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
             )
 
         self.assertEqual(result["dataset_id"], "ASSIST09")
@@ -928,7 +1020,7 @@ controller.authorize_next(
         with self.assertRaisesRegex(RuntimeError, "requires controller run-pair"):
             authorize_next(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 output_path=self.root / "forbidden-next-token.json",
             )
         self.assertFalse((self.root / "forbidden-next-token.json").exists())
@@ -955,7 +1047,7 @@ controller.authorize_next(
             "os.environ", {"CONTROLLED_OUTER_FAIL_SPLIT": "standard"}, clear=False
         ), self.assertRaisesRegex(RuntimeError, "outer campaign failed"):
             controller_module.run_registered_pair(
-                state_dir=self.state_dir, repo_root=PROJECT_ROOT
+                state_dir=self.state_dir, repo_root=self.repo_root
             )
 
         state = json.loads((self.state_dir / "state.json").read_text())
@@ -963,7 +1055,7 @@ controller.authorize_next(
         self.assertEqual(state["launch"]["phase"], "failed")
         with self.assertRaisesRegex(RuntimeError, "blocked/complete"):
             controller_module.run_registered_pair(
-                state_dir=self.state_dir, repo_root=PROJECT_ROOT
+                state_dir=self.state_dir, repo_root=self.repo_root
             )
 
     def test_multiple_new_attempts_permanently_block_controller(self) -> None:
@@ -975,7 +1067,7 @@ controller.authorize_next(
             "os.environ", {"CONTROLLED_OUTER_EXTRA_ATTEMPT": "standard"}, clear=False
         ), self.assertRaisesRegex(RuntimeError, "created 2 attempts"):
             controller_module.run_registered_pair(
-                state_dir=self.state_dir, repo_root=PROJECT_ROOT
+                state_dir=self.state_dir, repo_root=self.repo_root
             )
 
         state = json.loads((self.state_dir / "state.json").read_text())
@@ -999,14 +1091,14 @@ controller.authorize_next(
 
         with self.assertRaisesRegex(RuntimeError, "prior controller launch was interrupted"):
             controller_module.run_registered_pair(
-                state_dir=self.state_dir, repo_root=PROJECT_ROOT
+                state_dir=self.state_dir, repo_root=self.repo_root
             )
         state = json.loads((self.state_dir / "state.json").read_text())
         self.assertTrue(state["blocked"])
         self.assertEqual(state["launch"]["phase"], "interrupted")
         with self.assertRaisesRegex(RuntimeError, "blocked/complete"):
             controller_module.run_registered_pair(
-                state_dir=self.state_dir, repo_root=PROJECT_ROOT
+                state_dir=self.state_dir, repo_root=self.repo_root
             )
 
     def test_consumed_publish_failure_leaves_issued_capability_retryable(self) -> None:
@@ -1025,7 +1117,7 @@ controller.authorize_next(
 
         kwargs = {
             "state_dir": self.state_dir,
-            "repo_root": PROJECT_ROOT,
+            "repo_root": self.repo_root,
             "token_path": token_path,
             "dataset_id": "ASSIST09",
             "split_id": "standard",
@@ -1065,7 +1157,7 @@ controller.authorize_next(
 
         kwargs = {
             "state_dir": self.state_dir,
-            "repo_root": PROJECT_ROOT,
+            "repo_root": self.repo_root,
             "token_path": token_path,
             "dataset_id": "ASSIST09",
             "split_id": "standard",
@@ -1159,7 +1251,7 @@ controller.authorize_next(
                         "--controller-state-dir",
                         str(self.state_dir),
                         "--repo-root",
-                        str(PROJECT_ROOT),
+                        str(self.repo_root),
                         "--capability",
                         str(token_path),
                         "--device",
@@ -1183,7 +1275,7 @@ controller.authorize_next(
         second_path = self.root / "capability-2.json"
         second = authorize_next(
             state_dir=self.state_dir,
-            repo_root=PROJECT_ROOT,
+            repo_root=self.repo_root,
             output_path=second_path,
         )
 
@@ -1196,7 +1288,7 @@ controller.authorize_next(
         with self.assertRaisesRegex(ValueError, "stale|registry|issued|active controller"):
             consume_split_capability(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 token_path=first_path,
                 dataset_id="ASSIST09",
                 split_id="standard",
@@ -1458,7 +1550,7 @@ controller.authorize_next(
         second_path = self.root / "capability-2.json"
         second = authorize_next(
             state_dir=self.state_dir,
-            repo_root=PROJECT_ROOT,
+            repo_root=self.repo_root,
             output_path=second_path,
         )
         self.assertEqual(second["dataset_id"], "ASSIST17")
@@ -1474,7 +1566,7 @@ controller.authorize_next(
         with self.assertRaisesRegex(RuntimeError, "primary cohort is unreachable"):
             authorize_next(
                 state_dir=self.state_dir,
-                repo_root=PROJECT_ROOT,
+                repo_root=self.repo_root,
                 output_path=third_path,
             )
         self.assertFalse(third_path.exists())
@@ -1522,7 +1614,7 @@ controller.authorize_next(
                 result_path = self.root / f"controller-output-{index}.json"
                 result = authorize_next(
                     state_dir=self.state_dir,
-                    repo_root=PROJECT_ROOT,
+                    repo_root=self.repo_root,
                     output_path=result_path,
                 )
                 token_path = result_path
@@ -1548,7 +1640,7 @@ controller.authorize_next(
                 token_path = self.root / f"positive-token-{index}.json"
                 token = authorize_next(
                     state_dir=self.state_dir,
-                    repo_root=PROJECT_ROOT,
+                    repo_root=self.repo_root,
                     output_path=token_path,
                 )
 
@@ -1571,7 +1663,7 @@ controller.authorize_next(
                     "--controller-state-dir",
                     str(self.state_dir),
                     "--repo-root",
-                    str(PROJECT_ROOT),
+                    str(self.repo_root),
                     "--decision",
                     str(decision_path),
                     "--output",

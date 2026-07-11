@@ -67,17 +67,39 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
 
 
 def _route_head(repo_root: Path) -> str:
+    environment = _sanitized_subprocess_env()
+    environment["LC_ALL"] = "C"
     completed = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=repo_root,
         check=False,
         capture_output=True,
         text=True,
+        env=environment,
     )
     head = completed.stdout.strip()
     if completed.returncode != 0 or not COMMIT_PATTERN.fullmatch(head):
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise ValueError(f"cannot resolve exact route HEAD: {detail}")
+    status = subprocess.run(
+        [
+            "git",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    if status.returncode != 0:
+        detail = status.stderr.strip() or status.stdout.strip()
+        raise ValueError(f"cannot verify clean route: {detail}")
+    if status.stdout:
+        raise ValueError("route is dirty; controller requires exact committed bytes")
     return head
 
 
