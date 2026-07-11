@@ -14,6 +14,13 @@ class TestedKnowledgeState:
     direct_reliability: torch.Tensor
 
 
+@dataclass(frozen=True)
+class InferredKnowledgeState:
+    ukc_states: torch.Tensor
+    inferred_reliability: torch.Tensor
+    reachable_mask: torch.Tensor
+
+
 class TestedKnowledgeEvidenceEncoder(nn.Module):
     def __init__(self, *, dim: int, evidence_cap: float) -> None:
         super().__init__()
@@ -49,6 +56,73 @@ class TestedKnowledgeEvidenceEncoder(nn.Module):
         return TestedKnowledgeState(
             tkc_states=tkc_states,
             direct_reliability=direct_reliability,
+        )
+
+
+class UntestedKnowledgeInferenceNetwork(nn.Module):
+    def __init__(
+        self,
+        *,
+        num_concepts: int,
+        dim: int,
+        layers: int,
+    ) -> None:
+        super().__init__()
+        self.concept_prior = nn.Parameter(torch.zeros(num_concepts, dim))
+        self.layers = nn.ModuleList(
+            nn.Linear(dim, dim, bias=False) for _ in range(layers)
+        )
+
+    def forward(
+        self,
+        tkc_states: torch.Tensor,
+        tkc_mask: torch.Tensor,
+        ukc_mask: torch.Tensor,
+        concept_graph: torch.Tensor,
+        direct_reliability: torch.Tensor,
+    ) -> InferredKnowledgeState:
+        topology = concept_graph.ne(0).to(tkc_states.dtype)
+        topology = topology - torch.diag_embed(torch.diagonal(topology))
+        source = topology * direct_reliability.unsqueeze(1)
+        first_transition = source / source.sum(
+            dim=-1,
+            keepdim=True,
+        ).clamp_min(1e-8)
+        later_transition = topology / topology.sum(
+            dim=-1,
+            keepdim=True,
+        ).clamp_min(1e-8)
+
+        hidden = tkc_states
+        for index, layer in enumerate(self.layers):
+            transition = (
+                first_transition
+                if index == 0
+                else later_transition.unsqueeze(0)
+            )
+            propagated = torch.einsum(
+                "skj,sjd->skd",
+                transition,
+                layer(hidden),
+            )
+            hidden = torch.where(
+                tkc_mask.bool().unsqueeze(-1),
+                tkc_states,
+                torch.tanh(propagated),
+            )
+
+        reachable = hidden.abs().sum(dim=-1).gt(0) & ukc_mask.bool()
+        prior = self.concept_prior.unsqueeze(0).expand_as(hidden)
+        ukc_states = torch.where(
+            reachable.unsqueeze(-1),
+            hidden,
+            prior,
+        ) * ukc_mask.unsqueeze(-1)
+        inferred_reliability = reachable.to(tkc_states.dtype)
+        return InferredKnowledgeState(
+            ukc_states=ukc_states,
+            inferred_reliability=inferred_reliability,
+            reachable_mask=reachable,
         )
 
 

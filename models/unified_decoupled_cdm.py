@@ -7,6 +7,7 @@ from .decoupled_cdm import DecoupledForwardOutput
 from .unified_v2_components import (
     MonotonicDiagnosisDecoder,
     TestedKnowledgeEvidenceEncoder,
+    UntestedKnowledgeInferenceNetwork,
 )
 from .unified_v2_spec import UnifiedArchitectureSpec
 
@@ -23,9 +24,9 @@ class UnifiedDecoupledCDM(nn.Module):
         evidence_cap: float = 20.0,
     ) -> None:
         super().__init__()
-        if architecture.inference != "prior" or architecture.composer != "mask":
+        if architecture.composer != "mask":
             raise NotImplementedError(
-                "Task 2 implements only the prior inference and mask composer B0."
+                "Task 3 implements only the mask composer; coverage requires M3."
             )
         self.num_students = num_students
         self.architecture = architecture
@@ -33,7 +34,20 @@ class UnifiedDecoupledCDM(nn.Module):
             dim=dim,
             evidence_cap=evidence_cap,
         )
-        self.concept_prior = nn.Parameter(torch.zeros(num_concepts, dim))
+        self.concept_prior = (
+            nn.Parameter(torch.zeros(num_concepts, dim))
+            if architecture.inference == "prior"
+            else None
+        )
+        self.inference_network = (
+            UntestedKnowledgeInferenceNetwork(
+                num_concepts=num_concepts,
+                dim=dim,
+                layers=2,
+            )
+            if architecture.inference == "graph"
+            else None
+        )
         self.decoder = MonotonicDiagnosisDecoder(
             num_exercises=num_exercises,
             num_concepts=num_concepts,
@@ -53,7 +67,7 @@ class UnifiedDecoupledCDM(nn.Module):
         target_exercise_ids: torch.Tensor,
         use_student_subset: bool = False,
     ) -> DecoupledForwardOutput:
-        del concept_graph, student_concept_evidence
+        del student_concept_evidence
         state_target_student_ids = target_student_ids
         if use_student_subset:
             student_indices, state_target_student_ids = torch.unique(
@@ -72,10 +86,24 @@ class UnifiedDecoupledCDM(nn.Module):
             response_matrix,
             student_tkc_mask,
         )
-        ukc_states = (
-            self.concept_prior.unsqueeze(0)
-            * student_ukc_mask.unsqueeze(-1)
-        )
+        if self.architecture.inference == "prior":
+            assert self.concept_prior is not None
+            concept_prior = self.concept_prior
+            ukc_states = (
+                concept_prior.unsqueeze(0)
+                * student_ukc_mask.unsqueeze(-1)
+            )
+        else:
+            assert self.inference_network is not None
+            inferred = self.inference_network(
+                tkc_states=tested.tkc_states,
+                tkc_mask=student_tkc_mask,
+                ukc_mask=student_ukc_mask,
+                concept_graph=concept_graph,
+                direct_reliability=tested.direct_reliability,
+            )
+            concept_prior = self.inference_network.concept_prior
+            ukc_states = inferred.ukc_states
         state_map = tested.tkc_states + ukc_states
         cognitive_probs, probs, mastery = self.decoder(
             state_map,
@@ -93,8 +121,8 @@ class UnifiedDecoupledCDM(nn.Module):
             tkc_states=tested.tkc_states,
             ukc_states=ukc_states,
             tkc_weight=tested.direct_reliability,
-            concept_embeddings=self.concept_prior,
-            exercise_embeddings=q_matrix @ self.concept_prior,
+            concept_embeddings=concept_prior,
+            exercise_embeddings=q_matrix @ concept_prior,
             cognitive_probs=cognitive_probs,
             probs=probs,
             guess_probs=zeros,
