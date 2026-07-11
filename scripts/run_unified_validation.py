@@ -1,0 +1,771 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import fcntl
+import json
+import math
+import os
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+import subprocess
+import sys
+from typing import Any, Iterator, Mapping, Sequence
+
+from models.unified_v2_spec import UnifiedArchitectureSpec
+
+
+ELIGIBLE_DATASET_IDS = (
+    "ASSIST09",
+    "ASSIST17",
+    "MOOCRadar",
+    "XES3G5M",
+)
+ASSET_READY_WITHOUT_EXACT_ZERO = ("NIPS34",)
+ARCHITECTURES = {
+    "b0": ("prior", "mask"),
+    "m2": ("graph", "mask"),
+    "m2-m3": ("graph", "coverage"),
+}
+DATASET_DIRECTORIES = {
+    "ASSIST09": ("assist_09", "assist_09_chold_v2"),
+    "ASSIST17": ("assist_17", "assist_17_chold_v2"),
+    "MOOCRadar": ("moocradar", "moocradar_chold_v2"),
+    "XES3G5M": ("xes3g5m", "xes3g5m_chold_v2"),
+}
+
+
+@dataclass(frozen=True)
+class NumericalRecipe:
+    concept_dim: int
+    epochs: int
+    learning_rate: float
+    weight_decay: float
+    patience: int
+    training_mode: str
+    student_batch_size: int | None = None
+    mastery_loss_weight: float = 0.1
+
+
+RECIPES = {
+    "ASSIST09": NumericalRecipe(64, 300, 1e-3, 0.0, 5, "full_batch"),
+    "ASSIST17": NumericalRecipe(64, 300, 1e-3, 0.0, 5, "full_batch"),
+    "MOOCRadar": NumericalRecipe(
+        64,
+        30,
+        1e-3,
+        0.0,
+        5,
+        "student_recompute_minibatch",
+        64,
+    ),
+    # The historical XES full-batch recipe is not viable for an S x K x K M2
+    # tensor. This safe starting recipe is fixed before any attempt and is not
+    # an OOM-triggered batch change.
+    "XES3G5M": NumericalRecipe(
+        64,
+        30,
+        1e-3,
+        0.0,
+        5,
+        "student_recompute_minibatch",
+        64,
+    ),
+}
+
+
+@dataclass(frozen=True)
+class GpuSnapshot:
+    index: int
+    memory_used_mib: int
+    memory_total_mib: int
+    utilization_percent: int
+
+    @property
+    def memory_fraction(self) -> float:
+        return self.memory_used_mib / max(self.memory_total_mib, 1)
+
+    @property
+    def idle(self) -> bool:
+        return self.utilization_percent == 0 and self.memory_fraction <= 0.01
+
+
+def architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
+    try:
+        inference, composer = ARCHITECTURES[architecture]
+    except KeyError as error:
+        raise ValueError(f"unknown unified architecture: {architecture}") from error
+    return UnifiedArchitectureSpec(inference=inference, composer=composer)
+
+
+def architecture_fingerprint(architecture: str) -> str:
+    return architecture_spec(architecture).fingerprint()
+
+
+def parse_gpu_inventory(output: str) -> list[GpuSnapshot]:
+    snapshots: list[GpuSnapshot] = []
+    for line_number, line in enumerate(output.splitlines(), start=1):
+        if not line.strip():
+            continue
+        fields = [field.strip() for field in line.split(",")]
+        if len(fields) != 4:
+            raise ValueError(f"invalid nvidia-smi row {line_number}: {line!r}")
+        try:
+            snapshots.append(GpuSnapshot(*(int(field) for field in fields)))
+        except ValueError as error:
+            raise ValueError(
+                f"invalid nvidia-smi integer at row {line_number}: {line!r}"
+            ) from error
+    if not snapshots:
+        raise RuntimeError("nvidia-smi returned no GPUs")
+    return snapshots
+
+
+def select_gpu_index(snapshots: Sequence[GpuSnapshot]) -> int:
+    eligible = [snapshot for snapshot in snapshots if snapshot.memory_fraction < 0.5]
+    if not eligible:
+        raise RuntimeError("no GPU is idle or under half memory")
+    eligible.sort(
+        key=lambda item: (
+            not item.idle,
+            item.memory_fraction,
+            item.utilization_percent,
+            item.index,
+        )
+    )
+    return eligible[0].index
+
+
+def query_gpu_inventory() -> tuple[str, list[GpuSnapshot]]:
+    command = [
+        "nvidia-smi",
+        "--query-gpu=index,memory.used,memory.total,utilization.gpu",
+        "--format=csv,noheader,nounits",
+    ]
+    completed = subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout, parse_gpu_inventory(completed.stdout)
+
+
+@contextmanager
+def locked_gpu() -> Iterator[tuple[int, list[GpuSnapshot], Path]]:
+    _, snapshots = query_gpu_inventory()
+    gpu_index = select_gpu_index(snapshots)
+    lock_path = Path(f"/tmp/unified-v2-gpu-{gpu_index}.lock")
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle, fcntl.LOCK_EX)
+        _, refreshed = query_gpu_inventory()
+        selected = next(
+            (item for item in refreshed if item.index == gpu_index),
+            None,
+        )
+        if selected is None or selected.memory_fraction >= 0.5:
+            raise RuntimeError(
+                f"selected GPU {gpu_index} became ineligible while acquiring lock"
+            )
+        try:
+            yield gpu_index, refreshed, lock_path
+        finally:
+            fcntl.flock(lock_handle, fcntl.LOCK_UN)
+
+
+def _split_paths(
+    *,
+    dataset_id: str,
+    split_id: str,
+    data_root: Path,
+) -> tuple[Path, Path, Path, Path | None]:
+    if dataset_id not in ELIGIBLE_DATASET_IDS:
+        raise ValueError(f"dataset is not exact-zero eligible: {dataset_id}")
+    if split_id not in {"standard", "holdout"}:
+        raise ValueError(f"unknown validation split: {split_id}")
+    standard_dir, holdout_dir = DATASET_DIRECTORIES[dataset_id]
+    directory = data_root / (standard_dir if split_id == "standard" else holdout_dir)
+    train_path = directory / "train.csv"
+    valid_path = directory / "valid.csv"
+    q_matrix_path = directory / "Q_matrix.csv"
+    assignments = (
+        directory / "student_concept_holdout_assignments.csv"
+        if split_id == "holdout"
+        else None
+    )
+    return train_path, valid_path, q_matrix_path, assignments
+
+
+def build_train_command(
+    *,
+    dataset_id: str,
+    split_id: str,
+    architecture: str,
+    data_root: Path,
+    output: Path,
+    device: str,
+    recipe: NumericalRecipe | None = None,
+) -> list[str]:
+    train_path, valid_path, q_matrix_path, _ = _split_paths(
+        dataset_id=dataset_id,
+        split_id=split_id,
+        data_root=data_root,
+    )
+    selected_recipe = recipe or RECIPES[dataset_id]
+    spec = architecture_spec(architecture)
+    command = [
+        sys.executable,
+        "scripts/train.py",
+        "--model",
+        "unified_v2",
+        "--unified-inference",
+        spec.inference,
+        "--unified-composer",
+        spec.composer,
+        "--unified-mastery-loss-weight",
+        str(selected_recipe.mastery_loss_weight),
+        "--train-interactions",
+        str(train_path),
+        "--valid-interactions",
+        str(valid_path),
+        "--test-interactions",
+        str(valid_path),
+        "--q-matrix",
+        str(q_matrix_path),
+        "--concept-dim",
+        str(selected_recipe.concept_dim),
+        "--epochs",
+        str(selected_recipe.epochs),
+        "--learning-rate",
+        str(selected_recipe.learning_rate),
+        "--weight-decay",
+        str(selected_recipe.weight_decay),
+        "--early-stop-patience",
+        str(selected_recipe.patience),
+        "--training-mode",
+        selected_recipe.training_mode,
+        "--seed",
+        "42",
+        "--device",
+        device,
+        "--log-dir",
+        str(output.parent / "logs"),
+        "--output",
+        str(output),
+    ]
+    if selected_recipe.student_batch_size is not None:
+        command.extend(
+            ["--student-batch-size", str(selected_recipe.student_batch_size)]
+        )
+    return command
+
+
+def _finite_float(value: object, *, field: str) -> float:
+    if type(value) not in {float, int} or not math.isfinite(float(value)):
+        raise ValueError(f"{field} must be finite")
+    return float(value)
+
+
+def validate_smoke_summary(
+    summary: Mapping[str, object],
+    *,
+    expected_fingerprint: str,
+    require_gpu_peak: bool,
+) -> None:
+    if summary.get("architecture_fingerprint") != expected_fingerprint:
+        raise ValueError("smoke architecture fingerprint mismatch")
+    shape = summary.get("mastery_shape")
+    if (
+        not isinstance(shape, list)
+        or len(shape) != 2
+        or any(type(value) is not int or value <= 0 for value in shape)
+    ):
+        raise ValueError("smoke mastery must be nonempty")
+    _finite_float(summary.get("final_loss"), field="final_loss")
+    peak = summary.get("peak_gpu_memory_gb")
+    if require_gpu_peak and _finite_float(peak, field="peak_gpu_memory_gb") <= 0.0:
+        raise ValueError("GPU smoke must record positive peak memory")
+
+
+def _validate_split_summary(
+    summary: Mapping[str, object],
+    *,
+    dataset_id: str,
+    split_id: str,
+    fingerprint: str,
+) -> None:
+    if summary.get("dataset_id") != dataset_id:
+        raise ValueError("validation dataset identity mismatch")
+    if summary.get("split_id") != split_id:
+        raise ValueError("validation split identity mismatch")
+    if summary.get("architecture_fingerprint") != fingerprint:
+        raise ValueError("validation architecture fingerprint mismatch")
+    if summary.get("seed") != 42:
+        raise ValueError("unified validation requires seed 42")
+    validate_smoke_summary(
+        summary,
+        expected_fingerprint=fingerprint,
+        require_gpu_peak=False,
+    )
+    for field in ("overall_auc", "zero_auc", "ordinary_doa", "weighted_doa"):
+        value = _finite_float(summary.get(field), field=field)
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{field} must be in [0, 1]")
+
+
+def assemble_candidate_rows(
+    split_summaries: Sequence[Mapping[str, object]],
+    *,
+    cohort_dataset_ids: Sequence[str],
+    cohort_sha256: str,
+) -> list[dict[str, object]]:
+    indexed: dict[tuple[str, str], Mapping[str, object]] = {}
+    for summary in split_summaries:
+        key = (str(summary.get("dataset_id")), str(summary.get("split_id")))
+        if key in indexed:
+            raise ValueError(f"duplicate validation split summary: {key}")
+        indexed[key] = summary
+
+    rows: list[dict[str, object]] = []
+    fingerprints: set[str] = set()
+    for dataset_id in cohort_dataset_ids:
+        try:
+            standard = indexed[(dataset_id, "standard")]
+            holdout = indexed[(dataset_id, "holdout")]
+        except KeyError as error:
+            raise ValueError(
+                f"missing validation split for frozen dataset: {dataset_id}"
+            ) from error
+        fingerprint = str(standard.get("architecture_fingerprint"))
+        _validate_split_summary(
+            standard,
+            dataset_id=dataset_id,
+            split_id="standard",
+            fingerprint=fingerprint,
+        )
+        _validate_split_summary(
+            holdout,
+            dataset_id=dataset_id,
+            split_id="holdout",
+            fingerprint=fingerprint,
+        )
+        fingerprints.add(fingerprint)
+        rows.append(
+            {
+                "dataset_id": dataset_id,
+                "cohort_sha256": cohort_sha256,
+                "architecture_fingerprint": fingerprint,
+                "standard_overall_auc": float(standard["overall_auc"]),
+                "holdout_overall_auc": float(holdout["overall_auc"]),
+                "zero_auc": float(holdout["zero_auc"]),
+                "ordinary_doa": float(standard["ordinary_doa"]),
+                "weighted_doa": float(standard["weighted_doa"]),
+            }
+        )
+    unexpected = set(indexed) - {
+        (dataset_id, split_id)
+        for dataset_id in cohort_dataset_ids
+        for split_id in ("standard", "holdout")
+    }
+    if unexpected:
+        raise ValueError(f"validation summaries include non-cohort rows: {unexpected}")
+    if len(fingerprints) != 1:
+        raise ValueError("candidate has mixed architecture fingerprints")
+    return rows
+
+
+def can_reach_primary_cohort(*, successes: int, remaining: int) -> bool:
+    return successes + remaining >= 3
+
+
+def _run_checked(command: Sequence[str], *, env: Mapping[str, str]) -> None:
+    print(json.dumps({"command": list(command)}, ensure_ascii=False), flush=True)
+    subprocess.run(list(command), check=True, env=dict(env))
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected JSON object: {path}")
+    return payload
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as handle:
+        json.dump(
+            payload,
+            handle,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        handle.write("\n")
+
+
+def _output_path(raw_path: Path) -> Path:
+    if raw_path.is_absolute():
+        return raw_path
+    attempt_dir = os.environ.get("CAMPAIGN_ATTEMPT_DIR")
+    return (Path(attempt_dir) if attempt_dir else Path.cwd()) / raw_path
+
+
+def _gpu_payload(snapshots: Sequence[GpuSnapshot]) -> list[dict[str, int]]:
+    return [
+        {
+            "index": item.index,
+            "memory_used_mib": item.memory_used_mib,
+            "memory_total_mib": item.memory_total_mib,
+            "utilization_percent": item.utilization_percent,
+        }
+        for item in snapshots
+    ]
+
+
+def _extract_split_metrics(
+    *,
+    coverage_path: Path,
+    doa_path: Path,
+) -> tuple[float, float, float, float]:
+    coverage = _load_json(coverage_path)
+    slices = coverage.get("slices")
+    if not isinstance(slices, list):
+        raise ValueError("coverage output has no slices")
+    by_scope = {
+        row.get("scope"): row
+        for row in slices
+        if isinstance(row, dict)
+    }
+    try:
+        overall_auc = _finite_float(by_scope["overall"]["auc"], field="overall_auc")
+        zero_auc = _finite_float(by_scope["bucket:zero"]["auc"], field="zero_auc")
+    except KeyError as error:
+        raise ValueError("coverage output lacks overall or exact-zero AUC") from error
+
+    doa = _load_json(doa_path)
+    rows = doa.get("rows")
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+        raise ValueError("DOA output must contain exactly one model row")
+    ordinary_doa = _finite_float(rows[0].get("doa"), field="ordinary_doa")
+    weighted_doa = _finite_float(rows[0].get("doa_weighted"), field="weighted_doa")
+    return overall_auc, zero_auc, ordinary_doa, weighted_doa
+
+
+def _run_split(args: argparse.Namespace) -> None:
+    output_path = _output_path(args.output).resolve()
+    work_dir = output_path.parent / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    train_summary_path = work_dir / "train-summary.json"
+    coverage_path = work_dir / "coverage-valid.json"
+    doa_path = work_dir / "doa-valid.json"
+    train_path, valid_path, q_matrix_path, assignments = _split_paths(
+        dataset_id=args.dataset_id,
+        split_id=args.split_id,
+        data_root=args.data_root,
+    )
+    required_paths = [train_path, valid_path, q_matrix_path]
+    if assignments is not None:
+        required_paths.append(assignments)
+    for path in required_paths:
+        if not path.is_file():
+            raise FileNotFoundError(path)
+
+    base_env = dict(os.environ)
+    if args.device == "cpu":
+        allocation: Iterator[tuple[int | None, list[GpuSnapshot], Path | None]]
+
+        @contextmanager
+        def cpu_allocation() -> Iterator[
+            tuple[int | None, list[GpuSnapshot], Path | None]
+        ]:
+            yield None, [], None
+
+        allocation = cpu_allocation()
+    else:
+        allocation = locked_gpu()
+
+    with allocation as (gpu_index, gpu_snapshots, lock_path):
+        device = "cpu" if gpu_index is None else "cuda:0"
+        child_env = dict(base_env)
+        if gpu_index is not None:
+            child_env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+        command = build_train_command(
+            dataset_id=args.dataset_id,
+            split_id=args.split_id,
+            architecture=args.architecture,
+            data_root=args.data_root,
+            output=train_summary_path,
+            device=device,
+        )
+        _run_checked(command, env=child_env)
+
+        common_evaluation = [
+            "--dataset-name",
+            args.dataset_id,
+            "--summary",
+            str(train_summary_path),
+            "--model-name",
+            args.architecture,
+            "--split",
+            "valid",
+            "--train-interactions",
+            str(train_path),
+            "--valid-interactions",
+            str(valid_path),
+            "--test-interactions",
+            str(valid_path),
+            "--q-matrix",
+            str(q_matrix_path),
+            "--device",
+            device,
+        ]
+        coverage_command = [
+            sys.executable,
+            "scripts/evaluate_coverage_slice.py",
+            *common_evaluation,
+            "--output",
+            str(coverage_path),
+        ]
+        _run_checked(coverage_command, env=child_env)
+        doa_command = [
+            sys.executable,
+            "scripts/evaluate_doa.py",
+            *common_evaluation,
+            "--min-responses",
+            "3",
+            "--doa-seed",
+            "42",
+            "--output",
+            str(doa_path),
+        ]
+        if assignments is not None:
+            doa_command.extend(["--holdout-assignments", str(assignments)])
+        _run_checked(doa_command, env=child_env)
+
+        train_summary = _load_json(train_summary_path)
+        fingerprint = architecture_fingerprint(args.architecture)
+        if train_summary.get("architecture_fingerprint") != fingerprint:
+            raise ValueError("training summary architecture fingerprint mismatch")
+        final_loss = _finite_float(train_summary.get("final_loss"), field="final_loss")
+        peak = train_summary.get("max_cuda_memory_allocated_gb")
+        if gpu_index is not None:
+            peak = _finite_float(peak, field="max_cuda_memory_allocated_gb")
+            if peak <= 0.0:
+                raise ValueError("GPU validation must record positive peak memory")
+
+        overall_auc, zero_auc, ordinary_doa, weighted_doa = _extract_split_metrics(
+            coverage_path=coverage_path,
+            doa_path=doa_path,
+        )
+        summary = {
+            "schema_version": 1,
+            "dataset_id": args.dataset_id,
+            "split_id": args.split_id,
+            "architecture": args.architecture,
+            "architecture_manifest": architecture_spec(args.architecture).manifest(),
+            "architecture_fingerprint": fingerprint,
+            "seed": 42,
+            "evaluation_input_role": "valid",
+            "overall_auc": overall_auc,
+            "zero_auc": zero_auc,
+            "ordinary_doa": ordinary_doa,
+            "weighted_doa": weighted_doa,
+            "mastery_shape": [
+                int(train_summary["num_students"]),
+                int(train_summary["num_concepts"]),
+            ],
+            "final_loss": final_loss,
+            "peak_gpu_memory_gb": peak,
+            "gpu_selection": {
+                "physical_index": gpu_index,
+                "lock_path": None if lock_path is None else str(lock_path),
+                "inventory_after_lock": _gpu_payload(gpu_snapshots),
+            },
+            "numerical_recipe": RECIPES[args.dataset_id].__dict__,
+        }
+        _validate_split_summary(
+            summary,
+            dataset_id=args.dataset_id,
+            split_id=args.split_id,
+            fingerprint=fingerprint,
+        )
+        _write_json(output_path, summary)
+
+
+def _write_synthetic_fixture(root: Path) -> tuple[Path, Path, Path]:
+    root.mkdir(parents=True, exist_ok=True)
+    train_path = root / "train.csv"
+    valid_path = root / "valid.csv"
+    q_path = root / "Q_matrix.csv"
+    rows = [
+        (0, 0, "0", 1),
+        (0, 1, "1", 0),
+        (1, 0, "0", 0),
+        (1, 2, "2", 1),
+        (2, 1, "1", 1),
+        (2, 2, "2", 0),
+    ]
+    for path, selected in ((train_path, rows), (valid_path, rows[::-1])):
+        with path.open("x", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(("stu_id", "exer_id", "cpt_seq", "label"))
+            writer.writerows(selected)
+    with q_path.open("x", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(("exer_id", "cpt_seq"))
+        writer.writerows(((0, "0"), (1, "1"), (2, "2")))
+    return train_path, valid_path, q_path
+
+
+def _run_smoke(args: argparse.Namespace) -> None:
+    output_path = _output_path(args.output).resolve()
+    root = output_path.parent / "smoke-work"
+    train_path, valid_path, q_path = _write_synthetic_fixture(root / "data")
+    devices = ("cpu", "gpu") if args.devices == "both" else (args.devices,)
+    records: list[dict[str, object]] = []
+    for device_kind in devices:
+        for architecture in ARCHITECTURES:
+            summary_path = root / f"{device_kind}-{architecture}.json"
+            recipe = NumericalRecipe(4, 1, 1e-3, 0.0, 1, "full_batch")
+            if device_kind == "cpu":
+                gpu_index = None
+                snapshots: list[GpuSnapshot] = []
+
+                @contextmanager
+                def allocation() -> Iterator[tuple[None, list[GpuSnapshot], None]]:
+                    yield None, [], None
+
+                slot = allocation()
+            else:
+                slot = locked_gpu()
+            with slot as (gpu_index, snapshots, lock_path):
+                device = "cpu" if gpu_index is None else "cuda:0"
+                env = dict(os.environ)
+                if gpu_index is not None:
+                    env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+                spec = architecture_spec(architecture)
+                command = [
+                    sys.executable,
+                    "scripts/train.py",
+                    "--model",
+                    "unified_v2",
+                    "--unified-inference",
+                    spec.inference,
+                    "--unified-composer",
+                    spec.composer,
+                    "--unified-mastery-loss-weight",
+                    "0.1",
+                    "--train-interactions",
+                    str(train_path),
+                    "--valid-interactions",
+                    str(valid_path),
+                    "--test-interactions",
+                    str(valid_path),
+                    "--q-matrix",
+                    str(q_path),
+                    "--concept-dim",
+                    "4",
+                    "--epochs",
+                    "1",
+                    "--early-stop-patience",
+                    "1",
+                    "--seed",
+                    "42",
+                    "--device",
+                    device,
+                    "--log-dir",
+                    str(root / "logs"),
+                    "--output",
+                    str(summary_path),
+                ]
+                _run_checked(command, env=env)
+                raw = _load_json(summary_path)
+                record = {
+                    "architecture": architecture,
+                    "device_kind": device_kind,
+                    "architecture_fingerprint": raw["architecture_fingerprint"],
+                    "mastery_shape": [raw["num_students"], raw["num_concepts"]],
+                    "final_loss": raw["final_loss"],
+                    "peak_gpu_memory_gb": raw["max_cuda_memory_allocated_gb"],
+                    "physical_gpu_index": gpu_index,
+                    "gpu_lock_path": None if lock_path is None else str(lock_path),
+                    "gpu_inventory_after_lock": _gpu_payload(snapshots),
+                }
+                validate_smoke_summary(
+                    record,
+                    expected_fingerprint=architecture_fingerprint(architecture),
+                    require_gpu_peak=device_kind == "gpu",
+                )
+                records.append(record)
+    _write_json(
+        output_path,
+        {
+            "schema_version": 1,
+            "seed": 42,
+            "synthetic": True,
+            "records": records,
+        },
+    )
+
+
+def _assemble(args: argparse.Namespace) -> None:
+    cohort = _load_json(args.cohort)
+    dataset_ids = cohort.get("dataset_ids")
+    cohort_hash = cohort.get("cohort_sha256")
+    if not isinstance(dataset_ids, list) or not isinstance(cohort_hash, str):
+        raise ValueError("invalid frozen cohort")
+    summaries = [_load_json(path) for path in args.split_summary]
+    rows = assemble_candidate_rows(
+        summaries,
+        cohort_dataset_ids=dataset_ids,
+        cohort_sha256=cohort_hash,
+    )
+    _write_json(_output_path(args.output), {"rows": rows})
+
+
+def _manifest(args: argparse.Namespace) -> None:
+    _write_json(_output_path(args.output), architecture_spec(args.architecture).manifest())
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run validation-only Unified V2 jobs.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    manifest = subparsers.add_parser("manifest")
+    manifest.add_argument("--architecture", choices=ARCHITECTURES, required=True)
+    manifest.add_argument("--output", type=Path, required=True)
+    manifest.set_defaults(handler=_manifest)
+
+    smoke = subparsers.add_parser("smoke")
+    smoke.add_argument("--devices", choices=("cpu", "gpu", "both"), default="both")
+    smoke.add_argument("--output", type=Path, required=True)
+    smoke.set_defaults(handler=_run_smoke)
+
+    run_split = subparsers.add_parser("run-split")
+    run_split.add_argument("--dataset-id", choices=ELIGIBLE_DATASET_IDS, required=True)
+    run_split.add_argument("--split-id", choices=("standard", "holdout"), required=True)
+    run_split.add_argument("--architecture", choices=ARCHITECTURES, required=True)
+    run_split.add_argument("--data-root", type=Path, required=True)
+    run_split.add_argument("--device", choices=("auto", "cpu"), default="auto")
+    run_split.add_argument("--output", type=Path, required=True)
+    run_split.set_defaults(handler=_run_split)
+
+    assemble = subparsers.add_parser("assemble")
+    assemble.add_argument("--cohort", type=Path, required=True)
+    assemble.add_argument("--split-summary", type=Path, action="append", required=True)
+    assemble.add_argument("--output", type=Path, required=True)
+    assemble.set_defaults(handler=_assemble)
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    args.handler(args)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
