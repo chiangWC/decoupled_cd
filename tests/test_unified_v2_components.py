@@ -5,6 +5,7 @@ import torch
 
 from models.unified_decoupled_cdm import UnifiedDecoupledCDM
 from models.unified_v2_components import (
+    CoverageAwareStateComposer,
     MonotonicDiagnosisDecoder,
     TestedKnowledgeEvidenceEncoder,
     UntestedKnowledgeInferenceNetwork,
@@ -13,6 +14,48 @@ from models.unified_v2_spec import UnifiedArchitectureSpec
 
 
 class UnifiedComponentTests(unittest.TestCase):
+    def test_m3_prefers_direct_state_at_full_reliability(self):
+        composer = CoverageAwareStateComposer(dim=4)
+        tkc = torch.tensor(
+            [[[1.0, 1.0, 1.0, 1.0], [0.0, 0.0, 0.0, 0.0]]]
+        )
+        ukc = torch.tensor(
+            [[[0.0, 0.0, 0.0, 0.0], [2.0, 2.0, 2.0, 2.0]]]
+        )
+        prior = torch.zeros(2, 4)
+        tkc_mask = torch.tensor([[1.0, 0.0]])
+        state, weight = composer(
+            tkc_states=tkc,
+            ukc_states=ukc,
+            concept_prior=prior,
+            tkc_mask=tkc_mask,
+            direct_reliability=torch.tensor([[1.0, 0.0]]),
+            inferred_reliability=torch.tensor([[0.0, 1.0]]),
+        )
+        self.assertTrue(torch.allclose(state[:, 0], tkc[:, 0], atol=1e-5))
+
+    def test_m3_uses_inference_for_zero_coverage_reachable_concept(self):
+        composer = CoverageAwareStateComposer(dim=4)
+        tkc = torch.zeros(1, 2, 4)
+        ukc = torch.tensor(
+            [[[0.0, 0.0, 0.0, 0.0], [2.0, 2.0, 2.0, 2.0]]]
+        )
+        state, weight = composer(
+            tkc_states=tkc,
+            ukc_states=ukc,
+            concept_prior=torch.zeros(2, 4),
+            tkc_mask=torch.tensor([[1.0, 0.0]]),
+            direct_reliability=torch.zeros(1, 2),
+            inferred_reliability=torch.tensor([[0.0, 1.0]]),
+        )
+        self.assertTrue(torch.allclose(state[:, 1], ukc[:, 1], atol=1e-5))
+
+    def test_m3_does_not_depend_on_dataset_name(self):
+        self.assertNotIn(
+            "dataset",
+            inspect.signature(CoverageAwareStateComposer.forward).parameters,
+        )
+
     def test_b0_always_emits_student_concept_mastery(self):
         model = UnifiedDecoupledCDM(
             num_students=3,
@@ -75,6 +118,57 @@ class UnifiedComponentTests(unittest.TestCase):
         self.assertFalse(
             torch.equal(output.ukc_states[0, 1], output.ukc_states[1, 1])
         )
+        self.assertTrue(
+            torch.equal(
+                output.student_state,
+                (output.tkc_states + output.ukc_states).mean(dim=1),
+            )
+        )
+        self.assertIsNone(output.source_weights)
+
+    def test_coverage_composer_wires_m3_and_exposes_source_weights(self):
+        model = UnifiedDecoupledCDM(
+            num_students=1,
+            num_exercises=1,
+            num_concepts=2,
+            dim=4,
+            architecture=UnifiedArchitectureSpec(
+                inference="graph",
+                composer="coverage",
+            ),
+        )
+        output = model(
+            q_matrix=torch.tensor([[1.0, 0.0]]),
+            concept_graph=torch.tensor([[0.0, 1.0], [0.0, 0.0]]),
+            student_exercise_mask=torch.ones(1, 1),
+            response_matrix=torch.ones(1, 1),
+            student_tkc_mask=torch.tensor([[1.0, 0.0]]),
+            student_ukc_mask=torch.tensor([[0.0, 1.0]]),
+            student_concept_evidence=None,
+            target_student_ids=torch.tensor([0]),
+            target_exercise_ids=torch.tensor([0]),
+        )
+
+        self.assertIsNotNone(output.source_weights)
+        self.assertEqual(tuple(output.source_weights.shape), (1, 2, 3))
+        candidates = torch.stack(
+            [
+                output.tkc_states,
+                output.ukc_states,
+                model.inference_network.concept_prior.unsqueeze(0),
+            ],
+            dim=-2,
+        )
+        expected_state_map = (
+            output.source_weights.unsqueeze(-1) * candidates
+        ).sum(dim=-2)
+        self.assertTrue(
+            torch.allclose(
+                output.student_state,
+                expected_state_map.mean(dim=1),
+            )
+        )
+        self.assertIsNotNone(output.mastery)
 
     def test_decoder_is_monotone_in_target_mastery(self):
         decoder = MonotonicDiagnosisDecoder(num_exercises=1, num_concepts=1, dim=4)

@@ -137,6 +137,53 @@ class UntestedKnowledgeInferenceNetwork(nn.Module):
         )
 
 
+class CoverageAwareStateComposer(nn.Module):
+    def __init__(self, *, dim: int) -> None:
+        super().__init__()
+        self.quality_network = nn.Linear(3, 3)
+        with torch.no_grad():
+            self.quality_network.weight.copy_(28.0 * torch.eye(3))
+            self.quality_network.bias.fill_(-14.0)
+
+    def forward(
+        self,
+        tkc_states: torch.Tensor,
+        ukc_states: torch.Tensor,
+        concept_prior: torch.Tensor,
+        tkc_mask: torch.Tensor,
+        direct_reliability: torch.Tensor,
+        inferred_reliability: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        quality = torch.stack(
+            [
+                direct_reliability,
+                inferred_reliability,
+                1.0
+                - torch.maximum(direct_reliability, inferred_reliability),
+            ],
+            dim=-1,
+        )
+        logits = self.quality_network(quality).view(*quality.shape[:-1], 3)
+        valid = torch.stack(
+            [tkc_mask, 1.0 - tkc_mask, torch.ones_like(tkc_mask)],
+            dim=-1,
+        ).bool()
+        weights = torch.softmax(
+            logits.masked_fill(~valid, -1e9),
+            dim=-1,
+        )
+        candidates = torch.stack(
+            [
+                tkc_states,
+                ukc_states,
+                concept_prior.unsqueeze(0).expand_as(tkc_states),
+            ],
+            dim=-2,
+        )
+        state_map = (weights.unsqueeze(-1) * candidates).sum(dim=-2)
+        return state_map, weights
+
+
 class MonotonicDiagnosisDecoder(nn.Module):
     def __init__(
         self,

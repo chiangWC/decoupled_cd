@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from .decoupled_cdm import DecoupledForwardOutput
 from .unified_v2_components import (
+    CoverageAwareStateComposer,
     MonotonicDiagnosisDecoder,
     TestedKnowledgeEvidenceEncoder,
     UntestedKnowledgeInferenceNetwork,
@@ -24,10 +25,6 @@ class UnifiedDecoupledCDM(nn.Module):
         evidence_cap: float = 20.0,
     ) -> None:
         super().__init__()
-        if architecture.composer != "mask":
-            raise NotImplementedError(
-                "Task 3 implements only the mask composer; coverage requires M3."
-            )
         self.num_students = num_students
         self.architecture = architecture
         self.evidence_encoder = TestedKnowledgeEvidenceEncoder(
@@ -46,6 +43,11 @@ class UnifiedDecoupledCDM(nn.Module):
                 layers=2,
             )
             if architecture.inference == "graph"
+            else None
+        )
+        self.state_composer = (
+            CoverageAwareStateComposer(dim=dim)
+            if architecture.composer == "coverage"
             else None
         )
         self.decoder = MonotonicDiagnosisDecoder(
@@ -93,6 +95,9 @@ class UnifiedDecoupledCDM(nn.Module):
                 concept_prior.unsqueeze(0)
                 * student_ukc_mask.unsqueeze(-1)
             )
+            inferred_reliability = torch.zeros_like(
+                tested.direct_reliability
+            )
         else:
             assert self.inference_network is not None
             inferred = self.inference_network(
@@ -104,7 +109,21 @@ class UnifiedDecoupledCDM(nn.Module):
             )
             concept_prior = self.inference_network.concept_prior
             ukc_states = inferred.ukc_states
-        state_map = tested.tkc_states + ukc_states
+            inferred_reliability = inferred.inferred_reliability
+
+        source_weights = None
+        if self.architecture.composer == "coverage":
+            assert self.state_composer is not None
+            state_map, source_weights = self.state_composer(
+                tkc_states=tested.tkc_states,
+                ukc_states=ukc_states,
+                concept_prior=concept_prior,
+                tkc_mask=student_tkc_mask,
+                direct_reliability=tested.direct_reliability,
+                inferred_reliability=inferred_reliability,
+            )
+        else:
+            state_map = tested.tkc_states + ukc_states
         cognitive_probs, probs, mastery = self.decoder(
             state_map,
             q_matrix,
@@ -129,4 +148,5 @@ class UnifiedDecoupledCDM(nn.Module):
             slip_probs=zeros,
             difficulty=difficulty,
             mastery=mastery,
+            source_weights=source_weights,
         )
