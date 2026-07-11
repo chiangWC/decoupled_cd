@@ -5,6 +5,7 @@ from .kancd_baseline import KaNCDBaseline
 from .ensemble_cdm import DecoupledCDMEnsemble
 from .hetero_propagation import HeterogeneousGraphPropagation, PropagationOutput
 from .propagation_v2 import DecoupledPropagationV2
+from .unified_v2_spec import UnifiedArchitectureSpec
 
 __all__ = [
     "CountPriorBaseline",
@@ -16,4 +17,5 @@ __all__ = [
     "KaNCDBaseline",
     "HeterogeneousGraphPropagation",
     "PropagationOutput",
+    "UnifiedArchitectureSpec",
 ]
