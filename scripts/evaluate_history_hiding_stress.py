@@ -19,7 +19,11 @@ from data import StepDataBundle, prepare_experiment_split_bundles
 from data.pipeline import build_history_tensors
 from models import DecoupledCDM, DecoupledCDMEnsemble
 from scripts.analyze_prediction_slices import derive_q_matrix_from_splits_if_needed, load_model
-from trainers.engine import _bundle_tensors, _validate_history_visibility
+from trainers.engine import (
+    _bundle_tensors,
+    _forward_model,
+    _validate_history_visibility,
+)
 from utils import compute_metrics, resolve_device, write_json
 
 
@@ -229,7 +233,8 @@ def predict_bundle(
     torch_device = torch.device(device)
     tensors = _bundle_tensors(bundle, torch_device)
     with torch.no_grad():
-        output = model(
+        output = _forward_model(
+            model=model,
             q_matrix=tensors["q_matrix"],
             concept_graph=tensors["concept_graph"],
             prerequisite_graph=tensors["prerequisite_graph"],

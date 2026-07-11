@@ -44,6 +44,7 @@ def _max_cuda_memory_allocated_gb(device: str) -> float | None:
 
 
 def parse_args() -> argparse.Namespace:
+    raw_argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description="Train the minimal decoupled CDM pipeline.")
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
     parser.add_argument(
@@ -545,8 +546,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument("--log-dir", default="logs")
     parser.add_argument("--output", default="results/train_summary.json")
-    args = parser.parse_args()
+    args = parser.parse_args(raw_argv)
     args = apply_dataset_defaults(args, parser)
+    args._explicit_cli_options = frozenset(
+        argument.split("=", 1)[0]
+        for argument in raw_argv
+        if argument.startswith("--")
+    )
     args.student_gate_prior_alpha = resolve_student_gate_prior_arg(
         explicit=args.student_gate_prior_alpha,
         legacy=args.legacy_alpha,
@@ -725,6 +731,43 @@ V2_ONLY_FLAG_ATTRS = (
     "v2_dual_graph_support_adaptive",
 )
 
+UNIFIED_FORBIDDEN_OPTION_PREFIXES = (
+    "--v2-",
+    "--dual-cdm-",
+    "--high-concept-logit-",
+    "--pairwise-history-interaction-",
+    "--interpretable-readout-expert-",
+    "--concept-evidence-readout-",
+    "--concept-evidence-prior-",
+    "--history-evidence-",
+)
+
+UNIFIED_FORBIDDEN_OPTIONS = frozenset(
+    {
+        "--student-gate-prior-alpha",
+        "--student-gate-prior-beta",
+        "--student-fusion-mode",
+        "--alpha",
+        "--beta",
+        "--gs-mode",
+        "--gs-difficulty-adapter",
+        "--student-conditioned-ukc-readout-residual",
+        "--prerequisite-graph",
+        "--similarity-graph",
+        "--graph-mode",
+    }
+)
+
+
+def _explicit_unified_forbidden_options(args: argparse.Namespace) -> list[str]:
+    explicit_options = getattr(args, "_explicit_cli_options", frozenset())
+    return sorted(
+        option
+        for option in explicit_options
+        if option in UNIFIED_FORBIDDEN_OPTIONS
+        or option.startswith(UNIFIED_FORBIDDEN_OPTION_PREFIXES)
+    )
+
 
 def validate_model_args(args: argparse.Namespace) -> None:
     if args.model == "unified_v2":
@@ -747,6 +790,12 @@ def validate_model_args(args: argparse.Namespace) -> None:
             raise ValueError(
                 "unified_v2 supports full_batch and "
                 "student_recompute_minibatch training."
+            )
+        forbidden_options = _explicit_unified_forbidden_options(args)
+        if forbidden_options:
+            raise ValueError(
+                "--model unified_v2 does not accept explicitly supplied "
+                "legacy model flags/options: " + ", ".join(forbidden_options)
             )
     if args.model != "v1":
         enabled_v1_flags = [name for name in V1_ONLY_FLAG_ATTRS if getattr(args, name)]

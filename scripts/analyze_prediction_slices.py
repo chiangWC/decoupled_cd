@@ -94,25 +94,14 @@ def load_model(
     model_variant = str(summary.get("model", "v1"))
     if model_variant == "unified_v2":
         manifest = summary.get("architecture_manifest")
-        if not isinstance(manifest, dict):
+        if "architecture_fingerprint" not in summary:
             raise ValueError(
-                "unified_v2 summary requires architecture_manifest."
+                "unified_v2 summary requires architecture_fingerprint."
             )
-        manifest_keys = (
-            "inference",
-            "composer",
-            "decoder",
-            "mastery_output",
-            "version",
+        architecture = UnifiedArchitectureSpec.from_manifest(
+            manifest,
+            architecture_fingerprint=summary["architecture_fingerprint"],
         )
-        try:
-            architecture = UnifiedArchitectureSpec(
-                **{key: manifest[key] for key in manifest_keys}
-            )
-        except KeyError as exc:
-            raise ValueError(
-                "unified_v2 architecture_manifest is incomplete."
-            ) from exc
         model = UnifiedDecoupledCDM(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
