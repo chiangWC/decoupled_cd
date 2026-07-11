@@ -56,19 +56,22 @@
 
 每个组合都是全局架构：同一次候选评估必须在冻结的 primary cohort 及其 standard/holdout validation 上全部运行。M2 或 M3 只有通过全局硬门才可保留；失败则全局删除，不允许变成数据集专用开关。
 
-## 文献升级通道
+## 文献驱动的模块迭代
 
-只有 M2 或 M3 经 validation 证明存在明确失效模式，才允许搜索相邻领域论文并替换整块功能。每次升级必须先写出“失效指标 → 借鉴假设 → 新模块输入输出 → 可证伪硬门”，不能仅因某一数据集 test 数值不佳而新增结构。
+M1–M4 固定的是功能职责与输入输出接口，不固定内部算法、论文来源或当前实现。任一模块经 validation 证明存在明确失效模式后，都可以继续搜索认知诊断及相邻领域论文，整体替换该模块的实现。每次迭代必须先写出“失效指标 → 检索问题 → 借鉴假设 → 新模块输入输出 → 可证伪硬门”，不能仅因某一数据集 test 数值不佳而新增结构。
 
-- **Incomplete Multi-view Learning**：把有作答的 TKC view 与缺失的 UKC view 视为不完整多视图，优先考察 missing-view inference、consensus representation、quality-aware fusion。参考 UEAF 的缺失视图推断与自适应视图权重，以及 incomplete multi-view 的 quality-aware instance-level fusion。
-- **Semi-supervised Node Learning / Missing Node Features**：把 TKC 视为有观测节点、UKC 视为缺失特征节点，优先考察 APPNP 式 predict-then-propagate、基于 Dirichlet energy 的 Feature Propagation。借鉴对象必须成为完整的 M2，而不是在旧图输出上加修正项。
-- **Recommendation Exposure Bias / MNAR**：把“学生是否在某知识点作答”建模为观测过程。ExposureMF 或 doubly robust learning 可为 M3 提供显式 exposure/propensity estimator；只有当该估计器产生逐学生–知识点可靠性并参与完整状态构成时，才算 M3 的结构设计。
-- **Positive-Unlabeled Learning**：nnPU 等方法属于风险估计，默认只作为训练目标候选，不计作推理模块。只有形成独立的 latent observation-state estimator 并输出给 M3 时才可能升级为框架模块。
-- **Noisy-label Learning**：Co-teaching 等方法属于训练范式，默认不进入推理框架。只有确认作答标签噪声而非知识覆盖缺失是主要失效原因时才进行单独训练消融，且不能用双网络训练包装成本文核心模块。
+- **Incomplete Multi-view Learning**：可把有作答的 TKC view 与缺失的 UKC view 视为不完整多视图，检索 missing-view inference、consensus representation、quality-aware fusion 等方向。
+- **Semi-supervised Node Learning / Missing Node Features**：可把 TKC 视为有观测节点、UKC 视为缺失特征节点，检索 propagation、diffusion、graph imputation、uncertainty-aware message passing 等方向。
+- **Recommendation Exposure Bias / MNAR**：可把“学生是否在某知识点作答”建模为观测过程，检索 exposure、propensity、causal recommendation、doubly robust learning 等方向。
+- **Positive-Unlabeled / Weakly-supervised Learning**：可用于重新审视未观测知识状态的风险估计、伪标签和置信度学习；仅有 loss 变化时仍归为训练策略。
+- **Noisy-label / Robust Learning**：只有确认作答标签噪声是主要失效原因时才引入；双网络、样本选择等训练范式不能自动包装成本文核心模块。
+- **开放检索**：上述领域不是白名单。若失效模式更接近冷启动推荐、矩阵补全、图信号恢复、因果表示、领域泛化或其他问题，可继续扩展关键词和论文池。
 
-文献借鉴不是复制论文名称：必须说明认知诊断中的变量对应关系，并保留原论文引用。一次只替换 M2 或 M3 中的一块；新旧模块不能以 residual、adapter 或 mixture-of-experts 方式同时堆叠。连续两个文献替代模块均未通过全局硬门后，停止结构搜索。
+文献借鉴不是复制论文名称：必须说明认知诊断中的变量对应关系，并保留原论文引用。一次只整体替换一个框架模块；新旧实现不能以 residual、adapter 或 mixture-of-experts 方式同时堆叠。文献和实现尝试不设固定次数上限，但每次继续搜索必须由新的 validation 证据或新的失效诊断驱动，并完整保留负面结果。成功条件满足后立即停止新增结构。
 
-### 文献入口
+### 初始文献入口
+
+以下仅是第一批检索种子，不构成必选列表、白名单或实现承诺。后续可根据失效诊断增加、替换或放弃：
 
 - Wen et al., *Unified Embedding Alignment with Missing Views Inferring for Incomplete Multi-View Clustering*, AAAI 2019: <https://doi.org/10.1609/aaai.v33i01.33015393>
 - Liu et al., *Quality-aware and Soft Consistency Driven Representation Fusion for Incomplete Multi-view Multi-label Classification*, AAAI 2026: <https://doi.org/10.1609/aaai.v40i28.39564>
