@@ -20,27 +20,27 @@ IDENTITY_FIELDS = (
     "cohort_sha256",
     "architecture_fingerprint",
 )
-TEST_REFERENCE_PATTERN = re.compile(
-    r"(?:^|[/_.=\\-])test(?:$|[/_.=\\-])",
-    flags=re.IGNORECASE,
-)
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _has_test_token(value: str) -> bool:
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", value)
+    expanded = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", expanded)
+    tokens = re.findall(r"[A-Za-z0-9]+", expanded)
+    return any(token.lower() == "test" for token in tokens)
 
 
 def _reject_test_references(value: object, *, location: str) -> None:
     if isinstance(value, Mapping):
         for key, item in value.items():
-            if "test" in str(key).lower():
+            if _has_test_token(str(key)):
                 raise ValueError(f"test metric/path is forbidden at {location}.{key}")
             _reject_test_references(item, location=f"{location}.{key}")
     elif isinstance(value, (list, tuple)):
         for index, item in enumerate(value):
             _reject_test_references(item, location=f"{location}[{index}]")
-    elif isinstance(value, str):
-        looks_like_path = "/" in value or "\\" in value
-        if TEST_REFERENCE_PATTERN.search(value) or (
-            looks_like_path and "test" in value.lower()
-        ):
-            raise ValueError(f"test metric/path is forbidden at {location}")
+    elif isinstance(value, str) and _has_test_token(value):
+        raise ValueError(f"test metric/path is forbidden at {location}")
 
 
 def _validated_rows(
@@ -71,11 +71,18 @@ def _validated_rows(
             raise ValueError(f"{label} row {index} has invalid dataset_id")
         if dataset_id in indexed:
             raise ValueError(f"{label} rows contain duplicate dataset_id: {dataset_id}")
-        if not isinstance(cohort_sha256, str) or not cohort_sha256:
-            raise ValueError(f"{label} row {index} has invalid cohort_sha256")
-        if not isinstance(architecture_fingerprint, str) or not architecture_fingerprint:
+        if not isinstance(cohort_sha256, str) or not SHA256_PATTERN.fullmatch(
+            cohort_sha256
+        ):
             raise ValueError(
-                f"{label} row {index} has invalid architecture_fingerprint"
+                f"{label} row {index} cohort_sha256 must be lowercase 64-hex SHA-256"
+            )
+        if not isinstance(
+            architecture_fingerprint, str
+        ) or not SHA256_PATTERN.fullmatch(architecture_fingerprint):
+            raise ValueError(
+                f"{label} row {index} architecture_fingerprint must be "
+                "lowercase 64-hex SHA-256"
             )
 
         current_metric_fields = tuple(
@@ -92,10 +99,15 @@ def _validated_rows(
             raise ValueError(f"{label} rows have mismatched validation metric sets")
         for field in current_metric_fields:
             value = row[field]
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError(f"{label} row {dataset_id} metric {field} is not numeric")
-            if not math.isfinite(float(value)):
-                raise ValueError(f"{label} row {dataset_id} metric {field} is not finite")
+            if (
+                type(value) is not float
+                or not math.isfinite(value)
+                or not 0.0 <= value <= 1.0
+            ):
+                raise ValueError(
+                    f"{label} row {dataset_id} metric {field} must be a "
+                    "finite float in [0, 1]"
+                )
 
         indexed[dataset_id] = row
         fingerprints.add(architecture_fingerprint)
@@ -135,14 +147,21 @@ def evaluate_candidate(
         raise ValueError("baseline and candidate validation metric sets differ")
 
     dataset_ids = sorted(baseline)
-    deltas = {
-        dataset_id: {
-            metric: float(candidate[dataset_id][metric])
-            - float(baseline[dataset_id][metric])
-            for metric in baseline_metrics
-        }
-        for dataset_id in dataset_ids
-    }
+    deltas: dict[str, dict[str, float]] = {}
+    for dataset_id in dataset_ids:
+        dataset_deltas: dict[str, float] = {}
+        for metric in baseline_metrics:
+            baseline_value = baseline[dataset_id][metric]
+            candidate_value = candidate[dataset_id][metric]
+            assert type(baseline_value) is float
+            assert type(candidate_value) is float
+            delta = candidate_value - baseline_value
+            if not math.isfinite(delta):
+                raise ValueError(
+                    f"computed delta is not finite for {dataset_id}.{metric}"
+                )
+            dataset_deltas[metric] = delta
+        deltas[dataset_id] = dataset_deltas
     required_improvements = math.ceil(2 * len(dataset_ids) / 3)
 
     def non_regression(metric: str) -> tuple[bool, list[str]]:
@@ -204,6 +223,15 @@ def evaluate_candidate(
     ordinary_deltas = [
         deltas[dataset_id]["ordinary_doa"] for dataset_id in dataset_ids
     ]
+    ranking = {
+        "mean_zero_auc_delta": math.fsum(zero_deltas) / len(zero_deltas),
+        "worst_zero_auc_delta": min(zero_deltas),
+        "mean_ordinary_doa_delta": math.fsum(ordinary_deltas)
+        / len(ordinary_deltas),
+    }
+    for name, value in ranking.items():
+        if type(value) is not float or not math.isfinite(value):
+            raise ValueError(f"computed ranking value is not finite: {name}")
     return {
         "schema_version": 1,
         "cohort_sha256": baseline_cohort,
@@ -213,11 +241,7 @@ def evaluate_candidate(
         "dataset_count": len(dataset_ids),
         "required_improvements": required_improvements,
         "deltas": deltas,
-        "ranking": {
-            "mean_zero_auc_delta": sum(zero_deltas) / len(zero_deltas),
-            "worst_zero_auc_delta": min(zero_deltas),
-            "mean_ordinary_doa_delta": sum(ordinary_deltas) / len(ordinary_deltas),
-        },
+        "ranking": ranking,
         "gates": gates,
         "failed_gates": failed_gates,
         "pass": not failed_gates,
@@ -251,7 +275,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x", encoding="utf-8") as handle:
-        json.dump(decision, handle, indent=2, sort_keys=True, ensure_ascii=False)
+        json.dump(
+            decision,
+            handle,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
         handle.write("\n")
     return 0
 

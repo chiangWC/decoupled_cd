@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import unittest
 
 from scripts.unified_campaign import evaluate_candidate
@@ -97,6 +98,21 @@ class UnifiedCampaignTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mixed.*fingerprint"):
             evaluate_candidate(baseline, candidate)
 
+    def test_identity_hashes_require_lowercase_canonical_sha256(self) -> None:
+        invalid_values = ("A" * 64, "a" * 63, "g" * 64)
+        for field in ("architecture_fingerprint", "cohort_sha256"):
+            for value in invalid_values:
+                with self.subTest(field=field, value=value):
+                    baseline = self.rows(self.baseline_fingerprint, count=3)
+                    candidate = self.rows(self.candidate_fingerprint, count=3)
+                    for row in candidate:
+                        row[field] = value
+                    if field == "cohort_sha256":
+                        for row in baseline:
+                            row[field] = value
+                    with self.assertRaisesRegex(ValueError, "lowercase.*64-hex"):
+                        evaluate_candidate(baseline, candidate)
+
     def test_mismatched_dataset_sets_and_cohort_hashes_are_rejected(self) -> None:
         baseline = self.rows(self.baseline_fingerprint, count=3)
         candidate = self.rows(self.candidate_fingerprint, count=3)
@@ -125,6 +141,68 @@ class UnifiedCampaignTests(unittest.TestCase):
         candidate[0]["latestTestMetricPath"] = "/private/latestTestMetrics.json"
         with self.assertRaisesRegex(ValueError, "test"):
             evaluate_candidate(baseline, candidate)
+
+        candidate = self.rows(self.candidate_fingerprint, count=3)
+        candidate[0]["validation_metrics_path"] = "/private/test.csv"
+        with self.assertRaisesRegex(ValueError, "test"):
+            evaluate_candidate(baseline, candidate)
+
+    def test_test_token_detection_accepts_latest_and_contest(self) -> None:
+        baseline = self.rows(self.baseline_fingerprint, count=3)
+        candidate = self.rows(
+            self.candidate_fingerprint,
+            count=3,
+            zero_deltas=(0.001, 0.001, 0.001),
+            ordinary_deltas=(0.01, 0.01, 0.01),
+        )
+        for row in baseline + candidate:
+            row["latest_validation_path"] = "/private/contest/validation.json"
+
+        decision = evaluate_candidate(baseline, candidate)
+
+        self.assertTrue(decision["pass"])
+
+    def test_metrics_must_be_actual_floats_in_unit_interval(self) -> None:
+        invalid_values = (True, 1, -0.0000000000000001, 1.0000000000000002)
+        for value in invalid_values:
+            with self.subTest(value=value):
+                baseline = self.rows(self.baseline_fingerprint, count=3)
+                candidate = self.rows(self.candidate_fingerprint, count=3)
+                candidate[0]["zero_auc"] = value
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"float.*\[0, 1\]|not numeric",
+                ):
+                    evaluate_candidate(baseline, candidate)
+
+    def test_nonfinite_computed_delta_is_rejected_before_json_output(self) -> None:
+        baseline = self.rows(self.baseline_fingerprint, count=3)
+        candidate = self.rows(self.candidate_fingerprint, count=3)
+        baseline[0]["zero_auc"] = -float.fromhex("0x1.fffffffffffffp+1023")
+        candidate[0]["zero_auc"] = float.fromhex("0x1.fffffffffffffp+1023")
+
+        with self.assertRaisesRegex(ValueError, r"finite|\[0, 1\]"):
+            evaluate_candidate(baseline, candidate)
+
+    def test_all_decision_deltas_and_rankings_are_finite(self) -> None:
+        baseline = self.rows(self.baseline_fingerprint, count=3)
+        candidate = self.rows(
+            self.candidate_fingerprint,
+            count=3,
+            zero_deltas=(0.001, 0.001, 0.001),
+            ordinary_deltas=(0.01, 0.01, 0.01),
+        )
+
+        decision = evaluate_candidate(baseline, candidate)
+
+        computed = [
+            value
+            for metrics in decision["deltas"].values()
+            for value in metrics.values()
+        ]
+        computed.extend(decision["ranking"].values())
+        self.assertTrue(all(type(value) is float for value in computed))
+        self.assertTrue(all(math.isfinite(value) for value in computed))
 
 
 if __name__ == "__main__":

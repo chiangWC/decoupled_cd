@@ -95,6 +95,7 @@ class RemoteCampaignTests(unittest.TestCase):
         vendor_commits: tuple[str, ...] = (),
         architecture_manifest: Path | None = None,
         cohort: Path | None = None,
+        summary_output: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         argv = [
             sys.executable,
@@ -118,6 +119,8 @@ class RemoteCampaignTests(unittest.TestCase):
             argv.extend(["--architecture-manifest", str(architecture_manifest)])
         if cohort is not None:
             argv.extend(["--cohort", str(cohort)])
+        if summary_output is not None:
+            argv.extend(["--summary-output", summary_output])
         if dry_run:
             argv.append("--dry-run")
         argv.extend(["--", *command])
@@ -226,16 +229,17 @@ class RemoteCampaignTests(unittest.TestCase):
             "-c",
             (
                 "import json, os; from pathlib import Path; "
-                "Path(os.environ['CAMPAIGN_ATTEMPT_DIR'], 'train-summary.json').write_text("
+                "Path(os.environ['CAMPAIGN_ATTEMPT_DIR'], 'canonical.json').write_text("
                 f"json.dumps({{'architecture_fingerprint': {self.architecture_fingerprint!r}}}))"
             ),
         ]
 
         completed = self.run_runner(
             command,
-            output_files=("train-summary.json",),
+            output_files=("canonical.json",),
             architecture_manifest=self.architecture_manifest,
             cohort=self.cohort,
+            summary_output="canonical.json",
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -274,21 +278,86 @@ class RemoteCampaignTests(unittest.TestCase):
         self.assertIn("together", completed.stderr.lower())
         self.assertFalse(self.artifact_root.exists())
 
+    def test_bound_campaign_requires_canonical_summary_before_attempt(self) -> None:
+        completed = self.run_runner(
+            [sys.executable, "-c", "pass"],
+            dry_run=True,
+            architecture_manifest=self.architecture_manifest,
+            cohort=self.cohort,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("summary-output", completed.stderr.lower())
+        self.assertFalse(self.artifact_root.exists())
+
+    def test_canonical_summary_must_be_a_declared_output_before_attempt(self) -> None:
+        completed = self.run_runner(
+            [sys.executable, "-c", "pass"],
+            dry_run=True,
+            output_files=("different.json",),
+            architecture_manifest=self.architecture_manifest,
+            cohort=self.cohort,
+            summary_output="canonical.json",
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("declared", completed.stderr.lower())
+        self.assertFalse(self.artifact_root.exists())
+
+    def test_missing_canonical_summary_is_a_terminal_failed_attempt(self) -> None:
+        completed = self.run_runner(
+            [sys.executable, "-c", "pass"],
+            output_files=("canonical.json",),
+            architecture_manifest=self.architecture_manifest,
+            cohort=self.cohort,
+            summary_output="canonical.json",
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        status = self.load_status("attempt-001")
+        self.assertEqual(status["status"], "failed")
+        self.assertIn("canonical.json", status["error"])
+        self.assertIn("does not exist", status["error"])
+
+    def test_non_json_canonical_summary_is_a_terminal_failed_attempt(self) -> None:
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "import os; from pathlib import Path; "
+                "Path(os.environ['CAMPAIGN_ATTEMPT_DIR'], "
+                "'canonical.artifact').write_text('not-json')"
+            ),
+        ]
+        completed = self.run_runner(
+            command,
+            output_files=("canonical.artifact",),
+            architecture_manifest=self.architecture_manifest,
+            cohort=self.cohort,
+            summary_output="canonical.artifact",
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        status = self.load_status("attempt-001")
+        self.assertEqual(status["status"], "failed")
+        self.assertIn("json", status["error"].lower())
+
     def test_summary_fingerprint_mismatch_is_terminal_and_attempt_is_immutable(self) -> None:
         command = [
             sys.executable,
             "-c",
             (
                 "import json, os; from pathlib import Path; "
-                "Path(os.environ['CAMPAIGN_ATTEMPT_DIR'], 'train-summary.json').write_text("
+                "Path(os.environ['CAMPAIGN_ATTEMPT_DIR'], 'result.json').write_text("
                 f"json.dumps({{'architecture_fingerprint': {'f' * 64!r}}}))"
             ),
         ]
         first = self.run_runner(
             command,
-            output_files=("train-summary.json",),
+            output_files=("result.json",),
             architecture_manifest=self.architecture_manifest,
             cohort=self.cohort,
+            summary_output="result.json",
         )
 
         self.assertNotEqual(first.returncode, 0)
@@ -302,8 +371,10 @@ class RemoteCampaignTests(unittest.TestCase):
         second = self.run_runner(
             [sys.executable, "-c", "pass"],
             dry_run=True,
+            output_files=("result.json",),
             architecture_manifest=self.architecture_manifest,
             cohort=self.cohort,
+            summary_output="result.json",
         )
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertTrue((self.artifact_root / "attempt-002" / "status.json").is_file())

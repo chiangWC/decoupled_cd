@@ -15,7 +15,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 
 ATTEMPT_PATTERN = re.compile(r"^attempt-(\d+)$")
@@ -53,6 +53,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         help="Output to hash after the command; relative paths are resolved in the attempt directory.",
+    )
+    parser.add_argument(
+        "--summary-output",
+        help=(
+            "Canonical JSON summary output for a bound unified campaign; "
+            "must also be declared with --output-file."
+        ),
     )
     parser.add_argument(
         "--capture-env",
@@ -96,8 +103,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if (args.architecture_manifest is None) != (args.cohort is None):
         parser.error("--architecture-manifest and --cohort must be provided together")
     if args.architecture_manifest is not None:
+        if args.summary_output is None:
+            parser.error(
+                "bound campaigns require --summary-output before attempt allocation"
+            )
+        if args.summary_output not in args.output_file:
+            parser.error(
+                "--summary-output must be one of the declared --output-file values"
+            )
         args.architecture_manifest = resolve_from(args.architecture_manifest, args.cwd)
         args.cohort = resolve_from(args.cohort, args.cwd)
+    elif args.summary_output is not None:
+        parser.error(
+            "--summary-output requires --architecture-manifest and --cohort"
+        )
     try:
         args.vendor_commits = parse_vendor_commits(args.vendor_commit)
     except CampaignError as exc:
@@ -598,26 +617,22 @@ def output_paths(attempt_dir: Path, declared: Sequence[str]) -> dict[str, Path]:
     return paths
 
 
-def verify_bound_summary_fingerprints(
-    outputs: Mapping[str, Path],
+def verify_bound_summary_fingerprint(
+    summary_name: str,
+    summary_path: Path,
     *,
     expected_fingerprint: str,
 ) -> None:
-    summary_outputs = [
-        (name, path)
-        for name, path in outputs.items()
-        if name != "command.log"
-        and "summary" in Path(name).name.lower()
-        and Path(name).suffix.lower() == ".json"
-    ]
-    for name, path in summary_outputs:
-        summary = load_json_object(path, label=f"summary output {name}")
-        actual_fingerprint = summary.get("architecture_fingerprint")
-        if actual_fingerprint != expected_fingerprint:
-            raise CampaignError(
-                f"Summary output architecture fingerprint mismatch for {name}: "
-                f"{actual_fingerprint!r} != {expected_fingerprint}"
-            )
+    summary = load_json_object(
+        summary_path,
+        label=f"canonical summary output {summary_name}",
+    )
+    actual_fingerprint = summary.get("architecture_fingerprint")
+    if actual_fingerprint != expected_fingerprint:
+        raise CampaignError(
+            "Canonical summary output architecture fingerprint mismatch for "
+            f"{summary_name}: {actual_fingerprint!r} != {expected_fingerprint}"
+        )
 
 
 def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
@@ -674,6 +689,7 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
             "command": list(args.command),
             "cwd": str(args.cwd),
             "environment": captured_environment,
+            "summary_output": args.summary_output,
         },
         "parameters": parameters,
         "code": {
@@ -716,8 +732,9 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
                     stdout=log_handle,
                 )
                 if exit_code == 0 and immutable_inputs:
-                    verify_bound_summary_fingerprints(
-                        outputs,
+                    verify_bound_summary_fingerprint(
+                        args.summary_output,
+                        outputs[args.summary_output],
                         expected_fingerprint=immutable_inputs[
                             "architecture_manifest"
                         ]["architecture_fingerprint"],
