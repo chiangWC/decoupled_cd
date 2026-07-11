@@ -13,7 +13,7 @@
 - 所有真实实验固定 `seed=42`、`doa_seed=42`、`min_responses=3`、`split_seed=2024`。
 - 主表至少三个数据集；所有主表 checkpoint 的 architecture fingerprint 必须相同。
 - 数据集间只允许改变 concept dimension、batch size、learning rate、weight decay、epochs、patience 和非零数值型 loss weight。
-- M1–M4 不能被数据集配置关闭；旧 V2 只用于历史 checkpoint，不迁移旧 residual、adapter、hybrid 或 router 路径。
+- M1/M4 在所有候选中必选；M2/M3 只能在全局候选中整体加入或删除，同一候选内所有数据集的模块开关必须一致。旧 V2 只用于历史 checkpoint，不迁移旧 residual、adapter、hybrid 或 router 路径。
 - 模块选择只读 validation；冻结后才运行确认性 test。已见历史 test 不宣称全局盲测。
 - 不修改 `/home/xph/jwc/research/decoupled_cd_v2`，不 push；远端提交身份固定为 `chiangWC <215551297+chiangWC@users.noreply.github.com>`。
 - 数据、日志、checkpoint、预测、mastery 与 ledger 写入 `/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/`，不进入 Git。
