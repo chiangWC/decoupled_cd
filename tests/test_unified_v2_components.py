@@ -272,6 +272,16 @@ class UnifiedComponentTests(unittest.TestCase):
 
     def test_m1_changes_with_student_responses(self):
         encoder = TestedKnowledgeEvidenceEncoder(dim=4, evidence_cap=20.0)
+        with torch.no_grad():
+            first = encoder.encoder[0]
+            second = encoder.encoder[2]
+            first.weight.zero_()
+            first.weight[:, 0].fill_(1.0)
+            first.weight[:, 1].fill_(-1.0)
+            first.weight[:, 2].fill_(1.0)
+            first.bias.fill_(1.0)
+            second.weight.copy_(torch.eye(4))
+            second.bias.zero_()
         q = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
         history = torch.ones(1, 2)
         common = {

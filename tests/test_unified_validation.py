@@ -27,27 +27,9 @@ from scripts.run_unified_validation import (
     _write_synthetic_fixture,
     main as validation_main,
 )
-from scripts.unified_dataset_audit import canonical_sha256
 
 
 class UnifiedValidationRunnerTests(unittest.TestCase):
-    def _write_cohort(self, path: Path) -> dict[str, object]:
-        cohort: dict[str, object] = {
-            "schema_version": 1,
-            "dataset_ids": list(ELIGIBLE_DATASET_IDS),
-        }
-        cohort["cohort_sha256"] = canonical_sha256(cohort)
-        path.write_text(json.dumps(cohort), encoding="utf-8")
-        return cohort
-
-    def _write_manifest(self, path: Path, architecture: str) -> None:
-        from scripts.run_unified_validation import architecture_spec
-
-        path.write_text(
-            json.dumps(architecture_spec(architecture).manifest()),
-            encoding="utf-8",
-        )
-
     def test_assemble_rejects_tampered_cohort_before_loading_rows(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -228,149 +210,11 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         self.assertTrue(can_reach_primary_cohort(successes=1, remaining=2))
         self.assertFalse(can_reach_primary_cohort(successes=1, remaining=1))
 
-    def test_begin_iteration_authorization_starts_from_zero_of_four(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            cohort_path = root / "cohort.json"
-            cohort = self._write_cohort(cohort_path)
-            manifest_path = root / "manifest.json"
-            self._write_manifest(manifest_path, "m2")
-            output_path = root / "authorization.json"
-
-            validation_main(
-                [
-                    "authorize",
-                    "--cohort",
-                    str(cohort_path),
-                    "--architecture",
-                    "m2",
-                    "--architecture-manifest",
-                    str(manifest_path),
-                    "--remaining",
-                    "4",
-                    "--allow",
-                    "ASSIST09:standard",
-                    "--allow",
-                    "ASSIST09:holdout",
-                    "--output",
-                    str(output_path),
-                ]
-            )
-
-            token = json.loads(output_path.read_text(encoding="utf-8"))
-            self.assertTrue(token["authorized"])
-            self.assertEqual(token["cohort_sha256"], cohort["cohort_sha256"])
-            self.assertEqual(token["progress_snapshot"]["successes"], 0)
-            self.assertEqual(token["progress_snapshot"]["remaining"], 4)
-            self.assertEqual(
-                token["allowed_runs"],
-                ["ASSIST09:holdout", "ASSIST09:standard"],
-            )
-
-    def test_authorization_fails_closed_when_primary_cohort_is_unreachable(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            cohort_path = root / "cohort.json"
-            cohort = self._write_cohort(cohort_path)
-            manifest_path = root / "manifest.json"
-            self._write_manifest(manifest_path, "m2-m3")
-            decision_path = root / "decision.json"
-            decision_path.write_text(
-                json.dumps(
-                    {
-                        "cohort_sha256": cohort["cohort_sha256"],
-                        "deltas": {
-                            "ASSIST09": {"zero_auc": 0.01, "ordinary_doa": 0.01},
-                            "ASSIST17": {"zero_auc": -0.01, "ordinary_doa": 0.01},
-                            "MOOCRadar": {"zero_auc": 0.01, "ordinary_doa": -0.01},
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            output_path = root / "authorization.json"
-
-            with self.assertRaisesRegex(RuntimeError, "primary cohort is unreachable"):
-                validation_main(
-                    [
-                        "authorize",
-                        "--cohort",
-                        str(cohort_path),
-                        "--architecture",
-                        "m2-m3",
-                        "--architecture-manifest",
-                        str(manifest_path),
-                        "--decision",
-                        str(decision_path),
-                        "--remaining",
-                        "1",
-                        "--allow",
-                        "ASSIST17:standard",
-                        "--output",
-                        str(output_path),
-                    ]
-                )
-            self.assertFalse(output_path.exists())
-
-    def test_run_split_consumes_matching_authorization_before_data_access(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            cohort_path = root / "cohort.json"
-            self._write_cohort(cohort_path)
-            manifest_path = root / "manifest.json"
-            self._write_manifest(manifest_path, "m2")
-            authorization_path = root / "authorization.json"
-            validation_main(
-                [
-                    "authorize",
-                    "--cohort",
-                    str(cohort_path),
-                    "--architecture",
-                    "m2",
-                    "--architecture-manifest",
-                    str(manifest_path),
-                    "--remaining",
-                    "4",
-                    "--allow",
-                    "ASSIST09:standard",
-                    "--output",
-                    str(authorization_path),
-                ]
-            )
-            output_path = root / "attempt" / "validation-summary.json"
-
-            with self.assertRaises(FileNotFoundError):
-                validation_main(
-                    [
-                        "run-split",
-                        "--dataset-id",
-                        "ASSIST09",
-                        "--split-id",
-                        "standard",
-                        "--architecture",
-                        "m2",
-                        "--data-root",
-                        str(root / "missing-data"),
-                        "--cohort",
-                        str(cohort_path),
-                        "--architecture-manifest",
-                        str(manifest_path),
-                        "--authorization",
-                        str(authorization_path),
-                        "--device",
-                        "cpu",
-                        "--output",
-                        str(output_path),
-                    ]
-                )
-            self.assertTrue(output_path.parent.is_dir())
-            self.assertFalse(output_path.exists())
-
-    def test_run_split_requires_authorization_before_side_effects(self):
+    def test_run_split_requires_capability_before_side_effects(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output_path = root / "attempt" / "validation-summary.json"
-            with self.assertRaisesRegex(ValueError, "authorization is required"):
+            with self.assertRaises(SystemExit):
                 validation_main(
                     [
                         "run-split",

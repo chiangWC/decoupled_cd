@@ -99,23 +99,32 @@ module set passed its hard gate.
 ### Executable stop controller for Task 9
 
 Task 9 begins a new registered iteration, independent of the exploratory Task
-8 failures. Its initial `authorize` call has zero completed successes and four
-remaining frozen datasets. This `0 + 4 >= 3` state may issue a begin-iteration
-token for the new architecture without an override. After each immutable
-progress decision, the controller derives successes from positive zero-AUC
-and ordinary-DOA deltas and derives remaining from the frozen datasets not yet
-present in progress. If `successes + remaining < 3`, authorization fails
-closed and writes no token. There is no controller-override option by default.
+8 failures. `controller-init` must first create an exclusive controller state
+directory bound to the exact route HEAD, canonical cohort and candidate
+manifest/fingerprint, fixed dataset order, and a controller-owned copy/hash of
+the complete baseline rows. The first `authorize` call starts from zero
+successes and four remaining datasets but issues one-time capabilities only
+for the first dataset's standard/holdout pair. There is no override option.
 
-Every Task 9 `run-split` invocation must supply the verified cohort, the exact
-architecture manifest, and an affirmative authorization token. The token
-canonically binds the cohort SHA-256, manifest SHA-256, architecture
-fingerprint, progress-decision hashes, and allowed dataset/split pairs.
-`run-split` validates all bindings before creating an attempt/work directory,
-inspecting GPU state, or reading dataset assets. A missing, tampered,
-mismatched, or out-of-scope token rejects the launch. Each resulting split
-summary records the cohort and authorization hashes, so attempts cannot be
-detached from the registered iteration after the fact.
+Capabilities are random bearer references backed by exact records in the
+controller's `issued/` registry; they have no caller-computable
+self-authentication hash. At the first line of `run-split`, the controller
+holds its flock, verifies the exact route/counter/dataset/split/nonce registry
+record, and atomically moves that split capability to `consumed/` before child
+output, GPU, or data work. Fabricated, stale, mismatched, and reused
+capabilities fail. An unauthorized outer attempt may leave a failed shell, but
+cannot train/read child data or become progress proof.
+
+The next `authorize` derives progress only from the prior pair's consumed
+records and their fixed outer attempt directories. Both `status.json` files
+must close over the exact route commit, seed, cohort/manifest immutable inputs,
+dataset path/size/hashes, and validation-summary output path/size/hash. Each
+summary must bind the registered controller/capability and remain valid-only.
+A dataset counts as a success only if standard and holdout overall AUC and
+weighted DOA do not regress while zero AUC and ordinary DOA both strictly
+improve. If `successes + remaining < 3`, issuance fails closed. Final global
+success also requires at least one zero-AUC delta of `0.001` or greater.
+Task 9 has not been initialized or run by this ledger update.
 
 ### Cumulative diagnosis against B0
 
