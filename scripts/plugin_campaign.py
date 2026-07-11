@@ -36,6 +36,12 @@ _APPROVED_PROTOCOL = {
     "min_responses": 3,
     "split_seed": 2024,
 }
+_INITIALIZATION_CONFIG_FIELDS = {
+    "init_mode",
+    "baseline_checkpoint_sha256",
+    "base_lr",
+    "lr_multiplier",
+}
 
 
 class DuplicateTestEvaluationError(RuntimeError):
@@ -73,6 +79,115 @@ def snapshot_evaluation_artifacts(
         id_maps_bytes=checkpoint_path.with_name("id_maps.json").read_bytes(),
         q_matrix_bytes=Path(q_matrix_path).read_bytes(),
     )
+
+
+def validate_training_initialization(
+    *,
+    checkpoint_path: Path,
+    snapshot: EvaluationArtifactSnapshot,
+    q_matrix_bytes: bytes,
+    processor_id_maps: Mapping[str, Any],
+    data_protocol: str | None,
+    dataset_name: str | None,
+    seed: int,
+) -> None:
+    """Reject a baseline checkpoint that does not match training resources."""
+    checkpoint_path = Path(checkpoint_path)
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(
+            f"training initialization checkpoint does not exist: {checkpoint_path}"
+        )
+    if checkpoint_path.read_bytes() != snapshot.checkpoint_bytes:
+        raise ValueError("training initialization checkpoint bytes changed")
+
+    id_maps_path = checkpoint_path.with_name("id_maps.json")
+    if not id_maps_path.is_file():
+        raise FileNotFoundError(
+            f"training initialization sibling id_maps.json does not exist: {id_maps_path}"
+        )
+    if id_maps_path.read_bytes() != snapshot.id_maps_bytes:
+        raise ValueError("training initialization ID maps bytes changed")
+    if bytes(q_matrix_bytes) != snapshot.q_matrix_bytes:
+        raise ValueError("training initialization Q-matrix does not match checkpoint")
+
+    manifest_path = checkpoint_path.parent.parent / "manifest.jsonl"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"training initialization manifest does not exist: {manifest_path}"
+        )
+    try:
+        records = [
+            json.loads(line)
+            for line in manifest_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"cannot read training initialization manifest: {manifest_path}"
+        ) from exc
+    artifact_root = manifest_path.parent.parent
+    matches = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            raise ValueError("training initialization manifest record must be an object")
+        raw_path = record.get("checkpoint_path")
+        if isinstance(raw_path, str) and (
+            artifact_root / raw_path
+        ).resolve() == checkpoint_path.resolve():
+            matches.append(record)
+    if len(matches) != 1:
+        raise ValueError(
+            "training initialization manifest must contain exactly one checkpoint record"
+        )
+    record = matches[0]
+    if record.get("checkpoint_sha256") != sha256_bytes(snapshot.checkpoint_bytes):
+        raise ValueError("training initialization manifest checkpoint SHA mismatch")
+    if record.get("id_maps_sha256") != sha256_bytes(snapshot.id_maps_bytes):
+        raise ValueError("training initialization manifest ID maps SHA mismatch")
+    plugin = record.get("plugin_config")
+    if not isinstance(plugin, Mapping) or plugin.get("aux_weight") != 0.0:
+        raise ValueError("training initialization manifest aux_weight must be 0")
+    protocol = record.get("protocol")
+    if not isinstance(protocol, Mapping):
+        raise ValueError("training initialization manifest protocol must be an object")
+    if seed != 42 or protocol.get("seed") != 42:
+        raise ValueError("training initialization seed must be 42")
+    if bool(data_protocol) != bool(dataset_name):
+        raise ValueError("training initialization data protocol and dataset must pair")
+    if protocol.get("data_protocol") != data_protocol:
+        raise ValueError("training initialization manifest data protocol mismatch")
+    if protocol.get("dataset_name") != dataset_name:
+        raise ValueError("training initialization manifest dataset mismatch")
+    if protocol.get("q_matrix_sha256") != sha256_bytes(q_matrix_bytes):
+        raise ValueError("training initialization manifest Q-matrix SHA mismatch")
+
+    try:
+        frozen_id_maps = json.loads(snapshot.id_maps_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("training initialization ID schema is invalid JSON") from exc
+    required_fields = {"stu_ids", "exer_ids", "cpt_ids"}
+    for label, id_maps in (
+        ("frozen", frozen_id_maps),
+        ("processor", processor_id_maps),
+    ):
+        if not isinstance(id_maps, Mapping) or set(id_maps) != required_fields:
+            raise ValueError(
+                f"training initialization {label} ID schema must contain exactly "
+                "stu_ids, exer_ids, and cpt_ids"
+            )
+        for field in sorted(required_fields):
+            values = id_maps[field]
+            if (
+                not isinstance(values, list)
+                or any(not isinstance(value, str) for value in values)
+                or len(values) != len(set(values))
+            ):
+                raise ValueError(
+                    f"training initialization {label} ID schema field {field} "
+                    "must be a unique string list"
+                )
+    if frozen_id_maps != dict(processor_id_maps):
+        raise ValueError("training initialization ID maps do not match processor")
 
 
 def sha256_file(path: Path) -> str:
@@ -335,6 +450,71 @@ def _route_head(route_root: Path) -> str:
     return completed.stdout.strip()
 
 
+def _evaluation_plugin_config(
+    selection_config: Any,
+    cli_config: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(selection_config, Mapping):
+        raise FrozenConfigMismatchError("selection plugin_config must be an object")
+    normalized_selection = _json_copy(dict(selection_config))
+    normalized_cli = _json_copy(dict(cli_config))
+    if _INITIALIZATION_CONFIG_FIELDS.intersection(normalized_cli):
+        raise FrozenConfigMismatchError(
+            "evaluation CLI plugin_config must not contain training initialization metadata"
+        )
+    present = _INITIALIZATION_CONFIG_FIELDS.intersection(normalized_selection)
+    if present and present != _INITIALIZATION_CONFIG_FIELDS:
+        raise FrozenConfigMismatchError(
+            "selection plugin_config has incomplete training initialization metadata"
+        )
+    prediction_config = {
+        key: value
+        for key, value in normalized_selection.items()
+        if key not in _INITIALIZATION_CONFIG_FIELDS
+    }
+    if prediction_config != normalized_cli:
+        raise FrozenConfigMismatchError(
+            "selection plugin_config does not match evaluation CLI"
+        )
+    if not present:
+        return normalized_selection
+
+    init_mode = normalized_selection["init_mode"]
+    if init_mode not in {"random", "baseline-finetune"}:
+        raise FrozenConfigMismatchError(
+            "selection plugin_config init_mode is invalid"
+        )
+    checkpoint_sha256 = normalized_selection["baseline_checkpoint_sha256"]
+    if init_mode == "baseline-finetune":
+        try:
+            _validated_sha256(
+                checkpoint_sha256,
+                "selection plugin_config baseline_checkpoint_sha256",
+            )
+        except ValueError as exc:
+            raise FrozenConfigMismatchError(str(exc)) from exc
+    elif checkpoint_sha256 is not None:
+        raise FrozenConfigMismatchError(
+            "random initialization cannot bind a baseline checkpoint"
+        )
+    try:
+        base_lr = float(normalized_selection["base_lr"])
+        multiplier = float(normalized_selection["lr_multiplier"])
+    except (TypeError, ValueError) as exc:
+        raise FrozenConfigMismatchError(
+            "selection plugin_config learning-rate provenance is invalid"
+        ) from exc
+    if not math.isfinite(base_lr) or base_lr <= 0.0:
+        raise FrozenConfigMismatchError(
+            "selection plugin_config base_lr must be positive and finite"
+        )
+    if multiplier not in {0.25, 1.0}:
+        raise FrozenConfigMismatchError(
+            "selection plugin_config lr_multiplier must be 0.25 or 1.0"
+        )
+    return normalized_selection
+
+
 def _validated_selection(
     *,
     selection_path: Path,
@@ -378,7 +558,10 @@ def _validated_selection(
     else:
         checkpoint_sha256 = sha256_bytes(artifact_snapshot.checkpoint_bytes)
         id_maps_sha256 = sha256_bytes(artifact_snapshot.id_maps_bytes)
-    normalized_config = _json_copy(dict(plugin_config))
+    normalized_config = _evaluation_plugin_config(
+        selection.get("plugin_config"),
+        plugin_config,
+    )
     normalized_backbone = _json_copy(dict(backbone_config))
     try:
         normalized_protocol = _validated_protocol(protocol)
@@ -399,10 +582,6 @@ def _validated_selection(
     if selection.get("id_maps_sha256") != id_maps_sha256:
         raise FrozenConfigMismatchError(
             "selection id_maps SHA-256 does not match checkpoint sibling id_maps.json"
-        )
-    if selection.get("plugin_config") != normalized_config:
-        raise FrozenConfigMismatchError(
-            "selection plugin_config does not match evaluation CLI"
         )
     if selection.get("backbone_config") != normalized_backbone:
         raise FrozenConfigMismatchError(
@@ -555,10 +734,12 @@ def prepare_evaluation_resources(
     route_head: str | None = None,
     artifact_snapshot: EvaluationArtifactSnapshot | None = None,
     return_test_claim_bytes: bool = False,
+    return_plugin_config: bool = False,
 ) -> Any:
     if split not in {"valid", "test"}:
         raise ValueError("evaluation split must be 'valid' or 'test'")
     test_claim_bytes = None
+    evaluation_plugin_config = _json_copy(dict(plugin_config))
     if split == "test":
         if ledger_dir is None or selection_path is None or route_root is None:
             raise ValueError(
@@ -581,9 +762,26 @@ def prepare_evaluation_resources(
         if not isinstance(claim_snapshot, TestClaimSnapshot):
             raise RuntimeError("claim writer did not return an immutable snapshot")
         test_claim_bytes = claim_snapshot.payload
+        if return_plugin_config:
+            evaluation_plugin_config = json.loads(test_claim_bytes)["plugin_config"]
+    elif selection_path is not None:
+        validated = _validated_selection(
+            selection_path=selection_path,
+            checkpoint_path=checkpoint_path,
+            plugin_config=plugin_config,
+            backbone_config=backbone_config,
+            protocol=protocol,
+            supplied_frozen_config_id=supplied_frozen_config_id,
+            artifact_snapshot=artifact_snapshot,
+        )
+        evaluation_plugin_config = validated[3]
     resources = load_resources()
+    if return_test_claim_bytes and return_plugin_config:
+        return resources, test_claim_bytes, evaluation_plugin_config
     if return_test_claim_bytes:
         return resources, test_claim_bytes
+    if return_plugin_config:
+        return resources, evaluation_plugin_config
     return resources
 
 

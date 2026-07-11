@@ -22,6 +22,7 @@ from scripts.plugin_campaign import (
     prepare_evaluation_resources,
     run_candidate_training,
     select_evaluation_loader,
+    validate_training_initialization,
     write_evaluation_artifacts,
 )
 
@@ -169,6 +170,239 @@ class PluginCampaignTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def test_training_initialization_requires_frozen_checkpoint_id_map_and_q_bytes(
+        self,
+    ) -> None:
+        candidate = self.root / "candidates" / "epoch-001"
+        candidate.mkdir(parents=True)
+        checkpoint = candidate / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        id_maps = {
+            "stu_ids": ["student-1"],
+            "exer_ids": ["exercise-1"],
+            "cpt_ids": ["concept-1"],
+        }
+        id_maps_bytes = (
+            json.dumps(id_maps, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode()
+        (candidate / "id_maps.json").write_bytes(id_maps_bytes)
+        manifest_record = {
+            "checkpoint_path": "candidates/epoch-001/checkpoint.pth",
+            "checkpoint_sha256": hashlib.sha256(b"checkpoint").hexdigest(),
+            "id_maps_sha256": hashlib.sha256(id_maps_bytes).hexdigest(),
+            "plugin_config": {"aux_weight": 0.0},
+            "protocol": {
+                **PROTOCOL,
+                "data_protocol": "standard",
+                "dataset_name": "fixture",
+            },
+        }
+        manifest = candidate.parent / "manifest.jsonl"
+        manifest.write_text(json.dumps(manifest_record) + "\n", encoding="utf-8")
+        snapshot = EvaluationArtifactSnapshot(
+            checkpoint_bytes=b"checkpoint",
+            id_maps_bytes=id_maps_bytes,
+            q_matrix_bytes=b"q-matrix",
+        )
+
+        validate_training_initialization(
+            checkpoint_path=checkpoint,
+            snapshot=snapshot,
+            q_matrix_bytes=b"q-matrix",
+            processor_id_maps=id_maps,
+            data_protocol="standard",
+            dataset_name="fixture",
+            seed=42,
+        )
+
+        invalid_cases = (
+            (
+                "checkpoint",
+                {
+                    "snapshot": EvaluationArtifactSnapshot(
+                        b"changed", id_maps_bytes, b"q-matrix"
+                    )
+                },
+            ),
+            ("Q-matrix", {"q_matrix_bytes": b"changed"}),
+            (
+                "ID maps",
+                {"processor_id_maps": {**id_maps, "stu_ids": ["other"]}},
+            ),
+            (
+                "schema",
+                {
+                    "processor_id_maps": {
+                        **id_maps,
+                        "unexpected_ids": ["other"],
+                    }
+                },
+            ),
+        )
+        defaults = {
+            "checkpoint_path": checkpoint,
+            "snapshot": snapshot,
+            "q_matrix_bytes": b"q-matrix",
+            "processor_id_maps": id_maps,
+            "data_protocol": "standard",
+            "dataset_name": "fixture",
+            "seed": 42,
+        }
+        for expected, overrides in invalid_cases:
+            with self.subTest(expected=expected):
+                with self.assertRaisesRegex(ValueError, expected):
+                    validate_training_initialization(**(defaults | overrides))
+
+    def test_training_initialization_requires_checkpoint_and_sibling_id_maps(
+        self,
+    ) -> None:
+        snapshot = EvaluationArtifactSnapshot(b"checkpoint", b"{}\n", b"q")
+        with self.assertRaisesRegex(FileNotFoundError, "checkpoint"):
+            validate_training_initialization(
+                checkpoint_path=self.root / "missing.pth",
+                snapshot=snapshot,
+                q_matrix_bytes=b"q",
+                processor_id_maps={},
+                data_protocol="standard",
+                dataset_name="fixture",
+                seed=42,
+            )
+
+    def test_training_initialization_manifest_is_fail_closed(self) -> None:
+        candidates = self.root / "candidates"
+        candidate = candidates / "epoch-001"
+        candidate.mkdir(parents=True)
+        checkpoint = candidate / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        id_maps = {"stu_ids": ["s1"], "exer_ids": ["e1"], "cpt_ids": ["c1"]}
+        id_maps_bytes = (json.dumps(id_maps, sort_keys=True) + "\n").encode()
+        (candidate / "id_maps.json").write_bytes(id_maps_bytes)
+        snapshot = EvaluationArtifactSnapshot(b"checkpoint", id_maps_bytes, b"q")
+        record = {
+            "checkpoint_path": "candidates/epoch-001/checkpoint.pth",
+            "checkpoint_sha256": hashlib.sha256(b"checkpoint").hexdigest(),
+            "id_maps_sha256": hashlib.sha256(id_maps_bytes).hexdigest(),
+            "plugin_config": {"aux_weight": 0.0},
+            "protocol": {
+                **PROTOCOL,
+                "q_matrix_sha256": hashlib.sha256(b"q").hexdigest(),
+                "data_protocol": "holdout",
+                "dataset_name": "fixture",
+            },
+        }
+        manifest = candidates / "manifest.jsonl"
+        defaults = dict(
+            checkpoint_path=checkpoint,
+            snapshot=snapshot,
+            q_matrix_bytes=b"q",
+            processor_id_maps=id_maps,
+            data_protocol="holdout",
+            dataset_name="fixture",
+            seed=42,
+        )
+        cases = (
+            ("manifest", None),
+            ("Q-matrix", [{**record, "protocol": {**record["protocol"], "q_matrix_sha256": "0" * 64}}]),
+            ("aux_weight", [{**record, "plugin_config": {"aux_weight": 0.1}}]),
+            ("data protocol", [{**record, "protocol": {**record["protocol"], "data_protocol": "standard"}}]),
+            ("exactly one", [record, record]),
+        )
+        for expected, records in cases:
+            with self.subTest(expected=expected):
+                if records is None:
+                    manifest.unlink(missing_ok=True)
+                else:
+                    manifest.write_text(
+                        "".join(json.dumps(item) + "\n" for item in records),
+                        encoding="utf-8",
+                    )
+                with self.assertRaisesRegex((ValueError, FileNotFoundError), expected):
+                    validate_training_initialization(**defaults)
+
+    def test_evaluation_uses_frozen_finetune_provenance_not_cli_metadata(
+        self,
+    ) -> None:
+        checkpoint = self.root / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        (self.root / "id_maps.json").write_bytes(ID_MAPS_BYTES)
+        artifact_snapshot = EvaluationArtifactSnapshot(
+            checkpoint_bytes=b"checkpoint",
+            id_maps_bytes=ID_MAPS_BYTES,
+            q_matrix_bytes=b"q-matrix",
+        )
+        full_config = {
+            **PLUGIN_CONFIG,
+            "init_mode": "baseline-finetune",
+            "baseline_checkpoint_sha256": "7" * 64,
+            "base_lr": 0.004,
+            "lr_multiplier": 0.25,
+        }
+        selection = {
+            "checkpoint_sha256": hashlib.sha256(b"checkpoint").hexdigest(),
+            "id_maps_sha256": hashlib.sha256(ID_MAPS_BYTES).hexdigest(),
+            "plugin_config": full_config,
+            "backbone_config": BACKBONE_CONFIG,
+            "protocol": PROTOCOL,
+            "dataset": "fixture",
+            "holdout_assignments_sha256": HOLDOUT_ASSIGNMENTS_SHA256,
+        }
+        selection["frozen_config_id"] = compute_frozen_config_id(
+            checkpoint_sha256=selection["checkpoint_sha256"],
+            id_maps_sha256=selection["id_maps_sha256"],
+            plugin_config=full_config,
+            backbone_config=BACKBONE_CONFIG,
+            protocol=PROTOCOL,
+        )
+        selection_path = self.root / "selection.json"
+        selection_path.write_text(json.dumps(selection), encoding="utf-8")
+        events = []
+
+        resources, evaluation_config = prepare_evaluation_resources(
+            split="valid",
+            load_resources=lambda: events.append("resources") or "loaded",
+            checkpoint_path=checkpoint,
+            plugin_config=PLUGIN_CONFIG,
+            backbone_config=BACKBONE_CONFIG,
+            protocol=PROTOCOL,
+            selection_path=selection_path,
+            artifact_snapshot=artifact_snapshot,
+            return_plugin_config=True,
+        )
+
+        self.assertEqual(resources, "loaded")
+        self.assertEqual(evaluation_config, full_config)
+        self.assertEqual(events, ["resources"])
+
+        tampered_cases = (
+            ("frozen_config_id", {"baseline_checkpoint_sha256": "8" * 64}),
+            ("frozen_config_id", None),
+        )
+        for expected, provenance_override in tampered_cases:
+            with self.subTest(provenance_override=provenance_override):
+                tampered = dict(selection)
+                if provenance_override is None:
+                    tampered["frozen_config_id"] = "0" * 64
+                else:
+                    tampered["plugin_config"] = {
+                        **full_config,
+                        **provenance_override,
+                    }
+                selection_path.write_text(json.dumps(tampered), encoding="utf-8")
+                with self.assertRaisesRegex(FrozenConfigMismatchError, expected):
+                    prepare_evaluation_resources(
+                        split="valid",
+                        load_resources=lambda: self.fail(
+                            "resources loaded before frozen selection validation"
+                        ),
+                        checkpoint_path=checkpoint,
+                        plugin_config=PLUGIN_CONFIG,
+                        backbone_config=BACKBONE_CONFIG,
+                        protocol=PROTOCOL,
+                        selection_path=selection_path,
+                        artifact_snapshot=artifact_snapshot,
+                        return_plugin_config=True,
+                    )
 
     def test_new_protocol_binds_dataset_split_and_stable_recipe_id(self) -> None:
         self.assertTrue(

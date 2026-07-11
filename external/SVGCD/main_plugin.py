@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +23,9 @@ from scripts.plugin_campaign import (
     run_candidate_training,
     select_evaluation_loader,
     sha256_bytes,
+    sha256_file,
     snapshot_evaluation_artifacts,
+    validate_training_initialization,
     write_evaluation_artifacts,
 )
 
@@ -88,6 +91,15 @@ def parse_all():
     pre.add_argument("--plugin-aux-weight", type=float, default=0.0)
     pre.add_argument("--plugin-aux-detach-item-difficulty", action="store_true")
     pre.add_argument("--plugin-aux-warmup-fraction", type=float, default=0.0)
+    pre.add_argument("--plugin-init-checkpoint", type=Path)
+    pre.add_argument(
+        "--plugin-init-mode",
+        choices=("random", "baseline-finetune"),
+        default="random",
+    )
+    pre.add_argument(
+        "--plugin-lr-multiplier", type=float, choices=(0.25, 1.0), default=1.0
+    )
     pre.add_argument("--plugin-checkpoint", type=Path)
     pre.add_argument("--plugin-eval-split", choices=("valid", "test"))
     pre.add_argument("--plugin-test-ledger-dir", type=Path)
@@ -103,7 +115,25 @@ def parse_all():
     pre.add_argument(
         "--plugin-q-matrix-file", type=Path, default=Path("Q_matrix.csv")
     )
+    initialization_options = (
+        "--plugin-init-checkpoint",
+        "--plugin-init-mode",
+        "--plugin-lr-multiplier",
+    )
+    initialization_explicit = any(
+        argument == option or argument.startswith(f"{option}=")
+        for argument in sys.argv[1:]
+        for option in initialization_options
+    )
     pa, remaining = pre.parse_known_args()
+    if pa.plugin_mode == "evaluate" and initialization_explicit:
+        pre.error("plugin initialization arguments are train-only")
+    if (
+        pa.plugin_mode == "train"
+        and pa.plugin_init_mode == "baseline-finetune"
+        and pa.plugin_init_checkpoint is None
+    ):
+        pre.error("baseline-finetune requires --plugin-init-checkpoint")
     if pa.plugin_mode == "evaluate":
         if pa.plugin_checkpoint is None or pa.plugin_eval_split is None:
             pre.error("evaluate mode requires --plugin-checkpoint and --plugin-eval-split")
@@ -122,23 +152,50 @@ def parse_all():
         sys.argv = saved
     for name, value in vars(pa).items():
         setattr(args, name, value)
+    args.plugin_initialization_explicit = initialization_explicit
     return args
 
 
 def plugin_config(args):
-    return {
+    config = {
         "aux_weight": args.plugin_aux_weight,
         "aux_detach_item_difficulty": args.plugin_aux_detach_item_difficulty,
         "aux_warmup_fraction": args.plugin_aux_warmup_fraction,
     }
+    if args.plugin_mode == "train":
+        checkpoint_sha256 = getattr(args, "plugin_init_checkpoint_sha256", None)
+        if checkpoint_sha256 is None and args.plugin_init_checkpoint is not None:
+            checkpoint_sha256 = sha256_file(Path(args.plugin_init_checkpoint))
+        config.update(
+            {
+                "init_mode": args.plugin_init_mode,
+                "baseline_checkpoint_sha256": checkpoint_sha256,
+                "base_lr": getattr(args, "plugin_base_lr", args.lr),
+                "lr_multiplier": args.plugin_lr_multiplier,
+            }
+        )
+    return config
 
 
 def recipe_config(args):
-    return {
+    recipe = {
         "aux_weight": args.plugin_aux_weight,
         "aux_detach_item_difficulty": args.plugin_aux_detach_item_difficulty,
         "aux_warmup_fraction": args.plugin_aux_warmup_fraction,
     }
+    if (
+        args.plugin_initialization_explicit
+        or args.plugin_init_mode != "random"
+        or args.plugin_lr_multiplier != 1.0
+    ):
+        recipe.update(
+            {
+                "init_mode": args.plugin_init_mode,
+                "base_lr": getattr(args, "plugin_base_lr", args.lr),
+                "lr_multiplier": args.plugin_lr_multiplier,
+            }
+        )
+    return recipe
 
 
 def backbone_config(args):
@@ -203,11 +260,88 @@ def load_evaluation_checkpoint(model, checkpoint_bytes, device):
     )
 
 
+def load_training_initialization_checkpoint(model, checkpoint_bytes, device):
+    state_dict = torch.load(io.BytesIO(checkpoint_bytes), map_location=device)
+    if not isinstance(state_dict, Mapping):
+        raise RuntimeError("training initialization checkpoint must be a state dict")
+    target_state = model.state_dict()
+    source_keys = set(state_dict)
+    target_keys = set(target_state)
+    allowed_missing = {
+        key
+        for key in ("mastery_auxiliary.scale",)
+        if key in target_keys
+    }
+    missing = target_keys - source_keys
+    unexpected = source_keys - target_keys
+    if missing - allowed_missing or unexpected:
+        raise RuntimeError(
+            "training initialization checkpoint schema mismatch: "
+            f"missing={sorted(missing)} unexpected={sorted(unexpected)}"
+        )
+    for key in sorted(source_keys):
+        source_value = state_dict[key]
+        target_value = target_state[key]
+        if (
+            not torch.is_tensor(source_value)
+            or source_value.shape != target_value.shape
+            or source_value.dtype != target_value.dtype
+        ):
+            raise RuntimeError(
+                f"training initialization checkpoint tensor schema mismatch: {key}"
+            )
+    merged_state = dict(state_dict)
+    for key in missing:
+        merged_state[key] = target_state[key]
+    model.load_state_dict(merged_state, strict=True)
+
+
+def prepare_training_initialization(
+    *,
+    args,
+    model,
+    proc,
+    device,
+    q_matrix_path,
+    q_matrix_bytes,
+):
+    args.plugin_base_lr = args.lr
+    args.plugin_init_checkpoint_sha256 = None
+    if args.plugin_init_mode == "baseline-finetune":
+        if args.plugin_init_checkpoint is None:
+            raise ValueError("baseline-finetune requires --plugin-init-checkpoint")
+        init_snapshot = snapshot_evaluation_artifacts(
+            args.plugin_init_checkpoint,
+            q_matrix_path,
+        )
+        validate_training_initialization(
+            checkpoint_path=args.plugin_init_checkpoint,
+            snapshot=init_snapshot,
+            q_matrix_bytes=q_matrix_bytes,
+            processor_id_maps=processor_id_maps(proc),
+            data_protocol=args.plugin_data_protocol,
+            dataset_name=args.plugin_dataset_name,
+            seed=args.seed,
+        )
+        load_training_initialization_checkpoint(
+            model,
+            init_snapshot.checkpoint_bytes,
+            device,
+        )
+        args.plugin_init_checkpoint_sha256 = sha256_bytes(
+            init_snapshot.checkpoint_bytes
+        )
+    trainer_args = argparse.Namespace(**vars(args))
+    trainer_args.lr = args.plugin_base_lr * args.plugin_lr_multiplier
+    return trainer_args
+
+
 def main():
     args = parse_all()
     q_matrix_path = resolve_plugin_q_matrix(args)
     artifact_snapshot = None
     id_maps_payload = None
+    evaluation_plugin_config = None
     if args.plugin_mode == "evaluate":
         artifact_snapshot = snapshot_evaluation_artifacts(
             args.plugin_checkpoint,
@@ -234,7 +368,11 @@ def main():
         return processor, processor.get_loaders()
 
     if args.plugin_mode == "evaluate":
-        (proc, loaders), test_claim_bytes = prepare_evaluation_resources(
+        (
+            (proc, loaders),
+            test_claim_bytes,
+            evaluation_plugin_config,
+        ) = prepare_evaluation_resources(
             split=args.plugin_eval_split,
             load_resources=load_resources,
             checkpoint_path=args.plugin_checkpoint,
@@ -248,6 +386,7 @@ def main():
             argv=sys.argv,
             artifact_snapshot=artifact_snapshot,
             return_test_claim_bytes=True,
+            return_plugin_config=True,
         )
     else:
         proc, loaders = load_resources()
@@ -259,7 +398,17 @@ def main():
         aux_detach_item_difficulty=args.plugin_aux_detach_item_difficulty,
         aux_warmup_fraction=args.plugin_aux_warmup_fraction,
     ).to(device)
-    trainer = Trainer(model, loaders, proc, args, logger)
+    trainer_args = args
+    if args.plugin_mode == "train":
+        trainer_args = prepare_training_initialization(
+            args=args,
+            model=model,
+            proc=proc,
+            device=device,
+            q_matrix_path=q_matrix_path,
+            q_matrix_bytes=q_matrix_bytes,
+        )
+    trainer = Trainer(model, loaders, proc, trainer_args, logger)
 
     def train_epoch(epoch):
         model.train()
@@ -356,7 +505,7 @@ def main():
             "selection_json": (
                 str(args.plugin_selection_json) if args.plugin_selection_json else None
             ),
-            "plugin_config": plugin_config(args),
+            "plugin_config": evaluation_plugin_config,
             "backbone_config": backbone_config(args),
             "protocol": protocol,
         },

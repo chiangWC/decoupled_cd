@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import io
 import sys
 import tempfile
 import unittest
@@ -9,6 +11,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 import torch
+
+from scripts.plugin_campaign import EvaluationArtifactSnapshot
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +55,60 @@ def load_main_plugin():
 
 
 class ORCDFPluginTests(unittest.TestCase):
+    def test_training_initialization_loader_only_allows_exact_plugin_owned_missing_keys(
+        self,
+    ) -> None:
+        main_plugin = load_main_plugin()
+
+        class Objective(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.register_buffer("scale", torch.tensor(2.0))
+
+        class Target(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.backbone = torch.nn.Linear(2, 2, bias=False)
+                self.mastery_auxiliary = Objective()
+                self.ukc_gate = torch.nn.Parameter(torch.tensor(0.5))
+                self.flip_calls = 0
+
+            def get_flip_graph(self):
+                self.flip_calls += 1
+
+        def checkpoint_bytes(state):
+            buffer = io.BytesIO()
+            torch.save(state, buffer)
+            return buffer.getvalue()
+
+        target = Target()
+        expected_backbone = torch.full_like(target.backbone.weight, 3.0)
+        main_plugin.load_training_initialization_checkpoint(
+            target,
+            checkpoint_bytes({"backbone.weight": expected_backbone}),
+            "cpu",
+        )
+        self.assertTrue(torch.equal(target.backbone.weight, expected_backbone))
+        self.assertEqual(float(target.mastery_auxiliary.scale), 2.0)
+        self.assertEqual(float(target.ukc_gate), 0.5)
+        self.assertEqual(target.flip_calls, 1)
+
+        invalid_states = (
+            {},
+            {
+                "backbone.weight": expected_backbone,
+                "unexpected": torch.tensor(1.0),
+            },
+            {"backbone.weight": torch.ones(3, 2)},
+            {"backbone.weight": expected_backbone.to(torch.float64)},
+        )
+        for state in invalid_states:
+            with self.subTest(keys=sorted(state)):
+                with self.assertRaises(RuntimeError):
+                    main_plugin.load_training_initialization_checkpoint(
+                        Target(), checkpoint_bytes(state), "cpu"
+                    )
+
     def test_zero_weight_has_exact_base_state_and_parameter_values(self) -> None:
         torch.manual_seed(7)
         base = ORCDFNet(**model_kwargs())
@@ -162,6 +220,124 @@ class ORCDFPluginTests(unittest.TestCase):
         self.assertTrue(args.plugin_aux_detach_item_difficulty)
         self.assertEqual(args.plugin_aux_warmup_fraction, 0.25)
         self.assertEqual(args.plugin_q_matrix_file, Path("Q_matrix.csv"))
+
+    def test_cli_and_configs_bind_baseline_initialization_without_split_checkpoint_in_recipe(
+        self,
+    ) -> None:
+        main_plugin = load_main_plugin()
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoints = []
+            configs = []
+            recipes = []
+            for split, payload in (("standard", b"standard"), ("holdout", b"holdout")):
+                checkpoint = Path(directory) / split / "checkpoint.pth"
+                checkpoint.parent.mkdir()
+                checkpoint.write_bytes(payload)
+                checkpoints.append(checkpoint)
+                argv = [
+                    "main_plugin.py",
+                    "--plugin-mode",
+                    "train",
+                    "--plugin-init-mode",
+                    "baseline-finetune",
+                    "--plugin-init-checkpoint",
+                    str(checkpoint),
+                    "--plugin-lr-multiplier",
+                    "0.25",
+                ]
+                with mock.patch.object(sys, "argv", argv):
+                    args = main_plugin.parse_all()
+                configs.append(main_plugin.plugin_config(args))
+                recipes.append(main_plugin.recipe_config(args))
+
+        self.assertEqual(configs[0]["init_mode"], "baseline-finetune")
+        self.assertEqual(configs[0]["base_lr"], recipes[0]["base_lr"])
+        self.assertEqual(configs[0]["lr_multiplier"], 0.25)
+        self.assertEqual(
+            configs[0]["baseline_checkpoint_sha256"],
+            hashlib.sha256(b"standard").hexdigest(),
+        )
+        self.assertNotEqual(
+            configs[0]["baseline_checkpoint_sha256"],
+            configs[1]["baseline_checkpoint_sha256"],
+        )
+        self.assertEqual(recipes[0], recipes[1])
+        self.assertNotIn("checkpoint", " ".join(recipes[0]))
+
+        missing = [
+            "main_plugin.py",
+            "--plugin-mode",
+            "train",
+            "--plugin-init-mode",
+            "baseline-finetune",
+        ]
+        with mock.patch.object(sys, "argv", missing):
+            with self.assertRaises(SystemExit):
+                main_plugin.parse_all()
+        evaluate = [
+            "main_plugin.py",
+            "--plugin-mode",
+            "evaluate",
+            "--plugin-checkpoint",
+            str(checkpoints[0]),
+            "--plugin-eval-split",
+            "valid",
+            "--plugin-init-mode",
+            "baseline-finetune",
+            "--plugin-init-checkpoint",
+            str(checkpoints[0]),
+        ]
+        with mock.patch.object(sys, "argv", evaluate):
+            with self.assertRaises(SystemExit):
+                main_plugin.parse_all()
+
+    def test_baseline_initialization_loads_before_trainer_and_applies_effective_lr(
+        self,
+    ) -> None:
+        main_plugin = load_main_plugin()
+        events = []
+        snapshot = EvaluationArtifactSnapshot(b"checkpoint", b"{}\n", b"q")
+        args = SimpleNamespace(
+            plugin_init_mode="baseline-finetune",
+            plugin_init_checkpoint=Path("/baseline/checkpoint.pth"),
+            plugin_lr_multiplier=0.25,
+            plugin_data_protocol="standard",
+            plugin_dataset_name="fixture",
+            seed=42,
+            lr=0.004,
+        )
+        proc = SimpleNamespace(stu_ids=[], exer_ids=[], cpt_ids=[])
+
+        with (
+            mock.patch.object(
+                main_plugin,
+                "snapshot_evaluation_artifacts",
+                side_effect=lambda *_: events.append("snapshot") or snapshot,
+            ),
+            mock.patch.object(
+                main_plugin,
+                "validate_training_initialization",
+                side_effect=lambda **_: events.append("validate"),
+            ),
+            mock.patch.object(
+                main_plugin,
+                "load_training_initialization_checkpoint",
+                side_effect=lambda *_: events.append("load"),
+            ),
+        ):
+            trainer_args = main_plugin.prepare_training_initialization(
+                args=args,
+                model=object(),
+                proc=proc,
+                device="cpu",
+                q_matrix_path=Path("/data/Q_matrix.csv"),
+                q_matrix_bytes=b"q",
+            )
+
+        events.append("trainer")
+        self.assertEqual(events, ["snapshot", "validate", "load", "trainer"])
+        self.assertEqual(args.lr, 0.004)
+        self.assertEqual(trainer_args.lr, 0.001)
 
     def test_campaign_protocol_and_recipe_bind_joint_split(self) -> None:
         main_plugin = load_main_plugin()
