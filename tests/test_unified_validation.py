@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -36,11 +37,14 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
             )
 
     def test_script_entrypoint_imports_from_project_root(self):
+        child_environment = os.environ.copy()
+        child_environment.pop("MKL_THREADING_LAYER", None)
         completed = subprocess.run(
             [sys.executable, "scripts/run_unified_validation.py", "--help"],
             capture_output=True,
             text=True,
             check=False,
+            env=child_environment,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
