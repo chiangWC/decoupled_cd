@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import tempfile
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -17,6 +18,15 @@ from scripts.run_unified_validation import (
 
 
 class UnifiedValidationRunnerTests(unittest.TestCase):
+    def test_script_entrypoint_imports_from_project_root(self):
+        completed = subprocess.run(
+            [sys.executable, "scripts/run_unified_validation.py", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_eligible_pool_excludes_nips_without_exact_zero_rows(self):
         self.assertEqual(
             ELIGIBLE_DATASET_IDS,

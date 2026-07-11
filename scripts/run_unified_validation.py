@@ -13,6 +13,10 @@ import subprocess
 import sys
 from typing import Any, Iterator, Mapping, Sequence
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from models.unified_v2_spec import UnifiedArchitectureSpec
 
 
