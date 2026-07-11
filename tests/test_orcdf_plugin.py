@@ -163,6 +163,47 @@ class ORCDFPluginTests(unittest.TestCase):
         self.assertEqual(args.plugin_aux_warmup_fraction, 0.25)
         self.assertEqual(args.plugin_q_matrix_file, Path("Q_matrix.csv"))
 
+    def test_campaign_protocol_and_recipe_bind_joint_split(self) -> None:
+        main_plugin = load_main_plugin()
+        self.assertTrue(
+            hasattr(main_plugin, "recipe_config"),
+            "ORCDF runner must expose recipe_config",
+        )
+        argv = [
+            "main_plugin.py",
+            "--plugin-mode",
+            "train",
+            "--plugin-decouple",
+            "--plugin-aux-weight",
+            "0.1",
+            "--plugin-aux-detach-item-difficulty",
+            "--plugin-aux-warmup-fraction",
+            "0.25",
+            "--plugin-data-protocol",
+            "standard",
+            "--plugin-dataset-name",
+            "assist17",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            args = main_plugin.parse_all()
+
+        protocol = main_plugin.campaign_protocol(args, b"q-matrix")
+        self.assertEqual(protocol["data_protocol"], "standard")
+        self.assertEqual(protocol["dataset_name"], "assist17")
+        self.assertEqual(
+            main_plugin.recipe_config(args),
+            {
+                "decouple": True,
+                "aux_weight": 0.1,
+                "aux_detach_item_difficulty": True,
+                "aux_warmup_fraction": 0.25,
+            },
+        )
+
+        args.plugin_dataset_name = None
+        with self.assertRaisesRegex(ValueError, "provided together"):
+            main_plugin.campaign_protocol(args, b"q-matrix")
+
     def test_backbone_config_binds_every_orcdf_model_argument_exactly(self) -> None:
         main_plugin = load_main_plugin()
         values = {

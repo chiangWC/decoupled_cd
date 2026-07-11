@@ -152,11 +152,85 @@ class PluginCampaignTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
+    def test_new_protocol_binds_dataset_split_and_stable_recipe_id(self) -> None:
+        self.assertTrue(
+            hasattr(plugin_campaign, "compute_recipe_id"),
+            "plugin campaign must expose compute_recipe_id",
+        )
+        compute_recipe_id = plugin_campaign.compute_recipe_id
+        protocol_data_kind = plugin_campaign.protocol_data_kind
+        plugin = {
+            "aux_weight": 0.1,
+            "aux_detach_item_difficulty": False,
+            "aux_warmup_fraction": 0.0,
+        }
+        backbone = {"latent_dim": 32, "gcn_layers": 3}
+        self.assertEqual(
+            compute_recipe_id(plugin, backbone),
+            compute_recipe_id(
+                dict(reversed(list(plugin.items()))),
+                dict(reversed(list(backbone.items()))),
+            ),
+        )
+        standard = {
+            **PROTOCOL,
+            "data_protocol": "standard",
+            "dataset_name": "assist17",
+        }
+        holdout = {
+            **PROTOCOL,
+            "data_protocol": "holdout",
+            "dataset_name": "assist17",
+        }
+        common = {
+            "checkpoint_sha256": "a" * 64,
+            "id_maps_sha256": "b" * 64,
+            "plugin_config": plugin,
+            "backbone_config": backbone,
+        }
+        self.assertNotEqual(
+            compute_frozen_config_id(protocol=standard, **common),
+            compute_frozen_config_id(protocol=holdout, **common),
+        )
+        self.assertEqual(protocol_data_kind(standard), "standard")
+        self.assertEqual(protocol_data_kind(holdout), "holdout")
+        self.assertEqual(protocol_data_kind(PROTOCOL), "holdout")
+        self.assertEqual(
+            frozen_id(b"checkpoint"),
+            "48fe750cd028719f87026d0696666f10b2dbf897c15166da4081c33ee79c6776",
+        )
+
+        invalid_protocols = (
+            ("provided together", {**PROTOCOL, "data_protocol": "standard"}),
+            ("provided together", {**PROTOCOL, "dataset_name": "assist17"}),
+            ("non-empty string", {
+                **PROTOCOL,
+                "data_protocol": "standard",
+                "dataset_name": "   ",
+            }),
+            ("standard.*holdout", {
+                **PROTOCOL,
+                "data_protocol": "cross-validation",
+                "dataset_name": "assist17",
+            }),
+        )
+        for expected, protocol in invalid_protocols:
+            with self.subTest(expected=expected):
+                with self.assertRaisesRegex(ValueError, expected):
+                    compute_frozen_config_id(protocol=protocol, **common)
+
     def test_candidate_snapshot_is_per_epoch_append_only_and_manifested(self) -> None:
+        recipe = {
+            "aux_weight": 0.0,
+            "aux_detach_item_difficulty": False,
+            "aux_warmup_fraction": 0.0,
+            "decouple": False,
+        }
         store = CandidateStore(
             output_dir=self.root,
             model_name="orcdf-baseline",
             plugin_config={"aux_weight": 0.0, "decouple": False},
+            recipe_config=recipe,
             backbone_config=BACKBONE_CONFIG,
             protocol={
                 "split": "valid",
@@ -190,6 +264,11 @@ class PluginCampaignTests(unittest.TestCase):
         self.assertEqual(record["validation"]["auc"], 0.81)
         self.assertEqual(record["plugin_config"]["aux_weight"], 0.0)
         self.assertEqual(record["backbone_config"], BACKBONE_CONFIG)
+        self.assertEqual(record["recipe_config"], recipe)
+        self.assertEqual(
+            record["recipe_id"],
+            plugin_campaign.compute_recipe_id(recipe, BACKBONE_CONFIG),
+        )
         self.assertEqual(record["protocol"]["split"], "valid")
         for artifact in ("checkpoint", "mastery", "id_maps"):
             path = candidate_dir / (
@@ -716,6 +795,7 @@ class PluginCampaignTests(unittest.TestCase):
                         output_dir=self.root / field,
                         model_name="invalid",
                         plugin_config={"aux_weight": 0.0},
+                        recipe_config={"aux_weight": 0.0},
                         backbone_config=BACKBONE_CONFIG,
                         protocol={**approved, field: value},
                     )

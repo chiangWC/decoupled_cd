@@ -54,6 +54,8 @@ def parse_all():
     pre.add_argument("--plugin-min-responses", type=int, default=3)
     pre.add_argument("--plugin-max-pairs-per-concept", type=int, default=100_000)
     pre.add_argument("--plugin-split-seed", type=int, default=2024)
+    pre.add_argument("--plugin-data-protocol", choices=("standard", "holdout"))
+    pre.add_argument("--plugin-dataset-name")
     pre.add_argument(
         "--plugin-q-matrix-file", type=Path, default=Path("Q_matrix.csv")
     )
@@ -81,6 +83,15 @@ def parse_all():
 
 
 def plugin_config(args):
+    return {
+        "decouple": args.plugin_decouple,
+        "aux_weight": args.plugin_aux_weight,
+        "aux_detach_item_difficulty": args.plugin_aux_detach_item_difficulty,
+        "aux_warmup_fraction": args.plugin_aux_warmup_fraction,
+    }
+
+
+def recipe_config(args):
     return {
         "decouple": args.plugin_decouple,
         "aux_weight": args.plugin_aux_weight,
@@ -118,7 +129,7 @@ def resolve_plugin_q_matrix(args):
 
 
 def campaign_protocol(args, q_matrix_bytes):
-    return {
+    protocol = {
         "split": "valid",
         "seed": args.seed,
         "doa_seed": args.plugin_doa_seed,
@@ -127,6 +138,18 @@ def campaign_protocol(args, q_matrix_bytes):
         "split_seed": args.plugin_split_seed,
         "q_matrix_sha256": sha256_bytes(q_matrix_bytes),
     }
+    if bool(args.plugin_data_protocol) != bool(args.plugin_dataset_name):
+        raise ValueError(
+            "plugin data protocol and dataset name must be provided together"
+        )
+    if args.plugin_data_protocol:
+        protocol.update(
+            {
+                "data_protocol": args.plugin_data_protocol,
+                "dataset_name": args.plugin_dataset_name,
+            }
+        )
+    return protocol
 
 
 def processor_id_maps(proc):
@@ -248,6 +271,7 @@ def main():
             output_dir=Path(args.log_dir),
             model_name=args.plugin_model_name,
             plugin_config=plugin_config(args),
+            recipe_config=recipe_config(args),
             backbone_config=backbone_config(args),
             protocol=protocol,
         )

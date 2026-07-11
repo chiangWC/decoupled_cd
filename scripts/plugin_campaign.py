@@ -19,6 +19,7 @@ import torch
 
 
 _CONFIG_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_DATA_PROTOCOLS = {"standard", "holdout"}
 _PROTOCOL_FIELDS = (
     "split",
     "seed",
@@ -114,6 +115,20 @@ def _validated_protocol(protocol: Mapping[str, Any]) -> dict[str, Any]:
     if missing:
         raise ValueError(f"campaign protocol is missing: {', '.join(missing)}")
     normalized = _json_copy(dict(protocol))
+    has_kind = "data_protocol" in normalized
+    has_dataset = "dataset_name" in normalized
+    if has_kind != has_dataset:
+        raise ValueError(
+            "data_protocol and dataset_name must be provided together"
+        )
+    if has_kind:
+        if normalized["data_protocol"] not in _DATA_PROTOCOLS:
+            raise ValueError("data_protocol must be 'standard' or 'holdout'")
+        if (
+            not isinstance(normalized["dataset_name"], str)
+            or not normalized["dataset_name"].strip()
+        ):
+            raise ValueError("dataset_name must be a non-empty string")
     for field, expected in _APPROVED_PROTOCOL.items():
         if normalized[field] != expected:
             raise ValueError(
@@ -128,6 +143,20 @@ def _validated_sha256(value: Any, field: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
         raise ValueError(f"{field} must be a lowercase SHA-256")
     return value
+
+
+def compute_recipe_id(
+    recipe_config: Mapping[str, Any],
+    backbone_config: Mapping[str, Any],
+) -> str:
+    payload = {
+        "recipe_config": _json_copy(dict(recipe_config)),
+        "backbone_config": _json_copy(dict(backbone_config)),
+    }
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def compute_frozen_config_id(
@@ -156,6 +185,11 @@ def compute_frozen_config_id(
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def protocol_data_kind(protocol: Mapping[str, Any]) -> str:
+    # Historical selections predate data_protocol and are all holdout runs.
+    return str(protocol.get("data_protocol", "holdout"))
+
+
 class CandidateStore:
     """Append-only per-epoch checkpoint and validation artifact store."""
 
@@ -165,12 +199,14 @@ class CandidateStore:
         output_dir: Path,
         model_name: str,
         plugin_config: Mapping[str, Any],
+        recipe_config: Mapping[str, Any],
         backbone_config: Mapping[str, Any],
         protocol: Mapping[str, Any],
     ) -> None:
         self.output_dir = Path(output_dir)
         self.model_name = str(model_name)
         self.plugin_config = _json_copy(dict(plugin_config))
+        self.recipe_config = _json_copy(dict(recipe_config))
         self.backbone_config = _json_copy(dict(backbone_config))
         self.protocol = _validated_protocol(protocol)
         if not self.model_name:
@@ -223,6 +259,10 @@ class CandidateStore:
             "id_maps_sha256": sha256_file(id_maps_path),
             "plugin_config": self.plugin_config,
             "backbone_config": self.backbone_config,
+            "recipe_config": self.recipe_config,
+            "recipe_id": compute_recipe_id(
+                self.recipe_config, self.backbone_config
+            ),
             "protocol": self.protocol,
         }
         payload = (json.dumps(record, sort_keys=True, allow_nan=False) + "\n").encode()
