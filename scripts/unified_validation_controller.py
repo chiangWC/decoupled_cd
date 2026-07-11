@@ -39,6 +39,7 @@ DATASET_DIRECTORIES = {
     "XES3G5M": ("xes3g5m", "xes3g5m_chold_v2"),
 }
 OUTER_RUNNER_OVERRIDE: Path | None = None
+TRUSTED_GIT = Path("/usr/bin/git")
 
 
 def _sanitized_subprocess_env() -> dict[str, str]:
@@ -46,6 +47,25 @@ def _sanitized_subprocess_env() -> dict[str, str]:
     environment.pop("MKL_THREADING_LAYER", None)
     environment.pop("MKL_SERVICE_FORCE_INTEL", None)
     return environment
+
+
+def _strict_git_env() -> dict[str, str]:
+    return {
+        "PATH": "/usr/bin:/bin",
+        "LC_ALL": "C",
+        "LANG": "C",
+        "HOME": "/nonexistent",
+        "XDG_CONFIG_HOME": "/nonexistent",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+
+def _trusted_git_command(*arguments: str) -> list[str]:
+    if not TRUSTED_GIT.is_file() or not os.access(TRUSTED_GIT, os.X_OK):
+        raise ValueError(f"trusted Git executable is unavailable: {TRUSTED_GIT}")
+    return [str(TRUSTED_GIT), "--no-optional-locks", *arguments]
 
 
 def _architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
@@ -67,10 +87,9 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
 
 
 def _route_head(repo_root: Path) -> str:
-    environment = _sanitized_subprocess_env()
-    environment["LC_ALL"] = "C"
+    environment = _strict_git_env()
     completed = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
+        _trusted_git_command("rev-parse", "HEAD"),
         cwd=repo_root,
         check=False,
         capture_output=True,
@@ -82,13 +101,12 @@ def _route_head(repo_root: Path) -> str:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise ValueError(f"cannot resolve exact route HEAD: {detail}")
     status = subprocess.run(
-        [
-            "git",
+        _trusted_git_command(
             "status",
             "--porcelain=v1",
             "--untracked-files=all",
             "--ignore-submodules=none",
-        ],
+        ),
         cwd=repo_root,
         check=False,
         capture_output=True,

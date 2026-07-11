@@ -607,6 +607,65 @@ print(attempt_dir)
         self.assertFalse(self.state_dir.is_relative_to(self.repo_root))
         self.assertFalse(self.artifact_root.is_relative_to(self.repo_root))
 
+    def test_route_verification_never_executes_git_from_inherited_path(self) -> None:
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        marker = self.root / "fake-git-executed"
+        fake_git = fake_bin / "git"
+        fake_git.write_text(
+            "#!/bin/sh\n"
+            f"touch {marker}\n"
+            'exec /usr/bin/git "$@"\n',
+            encoding="utf-8",
+        )
+        fake_git.chmod(0o755)
+
+        with patch.dict(
+            "os.environ",
+            {"PATH": f"{fake_bin}:/usr/bin:/bin"},
+            clear=False,
+        ):
+            self.initialize()
+
+        self.assertFalse(marker.exists())
+
+    def test_git_repository_environment_cannot_redirect_route_verification(self) -> None:
+        self.initialize()
+        alternate = self.root / "alternate-clean-route"
+        subprocess.run(
+            ["/usr/bin/git", "clone", "-q", str(self.repo_root), str(alternate)],
+            check=True,
+        )
+        empty_config = self.root / "empty-git-config"
+        empty_config.write_text("", encoding="utf-8")
+        self.route_runner.write_text("# dirty registered route\n", encoding="utf-8")
+        poisoned = {
+            "GIT_DIR": str(alternate / ".git"),
+            "GIT_COMMON_DIR": str(alternate / ".git"),
+            "GIT_WORK_TREE": str(alternate),
+            "GIT_INDEX_FILE": str(alternate / ".git" / "index"),
+            "GIT_OBJECT_DIRECTORY": str(alternate / ".git" / "objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(
+                alternate / ".git" / "objects"
+            ),
+            "GIT_CONFIG_GLOBAL": str(empty_config),
+            "GIT_CONFIG_SYSTEM": str(empty_config),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.worktree",
+            "GIT_CONFIG_VALUE_0": str(alternate),
+        }
+        blocked_output = self.root / "redirected-token.json"
+
+        with patch.dict("os.environ", poisoned, clear=False):
+            with self.assertRaisesRegex(ValueError, "dirty"):
+                authorize_next(
+                    state_dir=self.state_dir,
+                    repo_root=self.repo_root,
+                    output_path=blocked_output,
+                )
+
+        self.assertFalse(blocked_output.exists())
+
     def test_first_authorization_issues_only_first_dataset_pair(self) -> None:
         self.initialize()
 
