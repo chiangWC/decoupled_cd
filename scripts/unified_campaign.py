@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from pathlib import Path
+import re
+from typing import Any, Mapping, Sequence
+
+
+REQUIRED_METRICS = (
+    "standard_overall_auc",
+    "holdout_overall_auc",
+    "zero_auc",
+    "ordinary_doa",
+    "weighted_doa",
+)
+IDENTITY_FIELDS = (
+    "dataset_id",
+    "cohort_sha256",
+    "architecture_fingerprint",
+)
+TEST_REFERENCE_PATTERN = re.compile(
+    r"(?:^|[/_.=\\-])test(?:$|[/_.=\\-])",
+    flags=re.IGNORECASE,
+)
+
+
+def _reject_test_references(value: object, *, location: str) -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if "test" in str(key).lower():
+                raise ValueError(f"test metric/path is forbidden at {location}.{key}")
+            _reject_test_references(item, location=f"{location}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _reject_test_references(item, location=f"{location}[{index}]")
+    elif isinstance(value, str):
+        looks_like_path = "/" in value or "\\" in value
+        if TEST_REFERENCE_PATTERN.search(value) or (
+            looks_like_path and "test" in value.lower()
+        ):
+            raise ValueError(f"test metric/path is forbidden at {location}")
+
+
+def _validated_rows(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    label: str,
+) -> tuple[dict[str, dict[str, object]], str, str, tuple[str, ...]]:
+    if not isinstance(rows, (list, tuple)) or not rows:
+        raise ValueError(f"{label} rows must be a nonempty sequence")
+    _reject_test_references(rows, location=label)
+
+    indexed: dict[str, dict[str, object]] = {}
+    fingerprints: set[str] = set()
+    cohort_hashes: set[str] = set()
+    metric_fields: tuple[str, ...] | None = None
+    for index, source_row in enumerate(rows):
+        if not isinstance(source_row, Mapping):
+            raise ValueError(f"{label} row {index} must be a JSON object")
+        row = dict(source_row)
+        missing = [field for field in (*IDENTITY_FIELDS, *REQUIRED_METRICS) if field not in row]
+        if missing:
+            raise ValueError(f"{label} row {index} is missing fields: {missing}")
+
+        dataset_id = row["dataset_id"]
+        cohort_sha256 = row["cohort_sha256"]
+        architecture_fingerprint = row["architecture_fingerprint"]
+        if not isinstance(dataset_id, str) or not dataset_id:
+            raise ValueError(f"{label} row {index} has invalid dataset_id")
+        if dataset_id in indexed:
+            raise ValueError(f"{label} rows contain duplicate dataset_id: {dataset_id}")
+        if not isinstance(cohort_sha256, str) or not cohort_sha256:
+            raise ValueError(f"{label} row {index} has invalid cohort_sha256")
+        if not isinstance(architecture_fingerprint, str) or not architecture_fingerprint:
+            raise ValueError(
+                f"{label} row {index} has invalid architecture_fingerprint"
+            )
+
+        current_metric_fields = tuple(
+            sorted(
+                key
+                for key in row
+                if key not in IDENTITY_FIELDS
+                and (key.endswith("_auc") or key.endswith("_doa"))
+            )
+        )
+        if metric_fields is None:
+            metric_fields = current_metric_fields
+        elif current_metric_fields != metric_fields:
+            raise ValueError(f"{label} rows have mismatched validation metric sets")
+        for field in current_metric_fields:
+            value = row[field]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{label} row {dataset_id} metric {field} is not numeric")
+            if not math.isfinite(float(value)):
+                raise ValueError(f"{label} row {dataset_id} metric {field} is not finite")
+
+        indexed[dataset_id] = row
+        fingerprints.add(architecture_fingerprint)
+        cohort_hashes.add(cohort_sha256)
+
+    if len(fingerprints) != 1:
+        raise ValueError(f"{label} rows contain mixed architecture fingerprints")
+    if len(cohort_hashes) != 1:
+        raise ValueError(f"{label} rows contain mixed cohort hashes")
+    assert metric_fields is not None
+    return indexed, fingerprints.pop(), cohort_hashes.pop(), metric_fields
+
+
+def evaluate_candidate(
+    baseline_rows: Sequence[Mapping[str, object]],
+    candidate_rows: Sequence[Mapping[str, object]],
+) -> dict[str, Any]:
+    baseline, baseline_fingerprint, baseline_cohort, baseline_metrics = _validated_rows(
+        baseline_rows,
+        label="baseline",
+    )
+    candidate, candidate_fingerprint, candidate_cohort, candidate_metrics = _validated_rows(
+        candidate_rows,
+        label="candidate",
+    )
+    if set(baseline) != set(candidate):
+        raise ValueError(
+            "baseline and candidate dataset sets differ: "
+            f"baseline={sorted(baseline)}, candidate={sorted(candidate)}"
+        )
+    if baseline_cohort != candidate_cohort:
+        raise ValueError(
+            "baseline and candidate cohort hashes differ: "
+            f"{baseline_cohort} != {candidate_cohort}"
+        )
+    if baseline_metrics != candidate_metrics:
+        raise ValueError("baseline and candidate validation metric sets differ")
+
+    dataset_ids = sorted(baseline)
+    deltas = {
+        dataset_id: {
+            metric: float(candidate[dataset_id][metric])
+            - float(baseline[dataset_id][metric])
+            for metric in baseline_metrics
+        }
+        for dataset_id in dataset_ids
+    }
+    required_improvements = math.ceil(2 * len(dataset_ids) / 3)
+
+    def non_regression(metric: str) -> tuple[bool, list[str]]:
+        failures = [
+            dataset_id
+            for dataset_id in dataset_ids
+            if deltas[dataset_id][metric] < 0.0
+        ]
+        return not failures, failures
+
+    standard_pass, standard_failures = non_regression("standard_overall_auc")
+    holdout_pass, holdout_failures = non_regression("holdout_overall_auc")
+    weighted_pass, weighted_failures = non_regression("weighted_doa")
+    zero_improved = [
+        dataset_id for dataset_id in dataset_ids if deltas[dataset_id]["zero_auc"] > 0.0
+    ]
+    zero_threshold = [
+        dataset_id
+        for dataset_id in dataset_ids
+        if deltas[dataset_id]["zero_auc"] >= 0.001
+    ]
+    ordinary_improved = [
+        dataset_id
+        for dataset_id in dataset_ids
+        if deltas[dataset_id]["ordinary_doa"] > 0.0
+    ]
+
+    gates: dict[str, dict[str, Any]] = {
+        "standard_overall_auc_non_regression": {
+            "pass": standard_pass,
+            "failed_datasets": standard_failures,
+        },
+        "holdout_overall_auc_non_regression": {
+            "pass": holdout_pass,
+            "failed_datasets": holdout_failures,
+        },
+        "weighted_doa_non_regression": {
+            "pass": weighted_pass,
+            "failed_datasets": weighted_failures,
+        },
+        "zero_auc_improved_two_thirds": {
+            "pass": len(zero_improved) >= required_improvements,
+            "improved_datasets": zero_improved,
+            "required": required_improvements,
+        },
+        "zero_auc_delta_at_least_0.001": {
+            "pass": bool(zero_threshold),
+            "qualifying_datasets": zero_threshold,
+            "required_delta": 0.001,
+        },
+        "ordinary_doa_improved_two_thirds": {
+            "pass": len(ordinary_improved) >= required_improvements,
+            "improved_datasets": ordinary_improved,
+            "required": required_improvements,
+        },
+    }
+    failed_gates = [name for name, result in gates.items() if not result["pass"]]
+    zero_deltas = [deltas[dataset_id]["zero_auc"] for dataset_id in dataset_ids]
+    ordinary_deltas = [
+        deltas[dataset_id]["ordinary_doa"] for dataset_id in dataset_ids
+    ]
+    return {
+        "schema_version": 1,
+        "cohort_sha256": baseline_cohort,
+        "baseline_architecture_fingerprint": baseline_fingerprint,
+        "candidate_architecture_fingerprint": candidate_fingerprint,
+        "dataset_ids": dataset_ids,
+        "dataset_count": len(dataset_ids),
+        "required_improvements": required_improvements,
+        "deltas": deltas,
+        "ranking": {
+            "mean_zero_auc_delta": sum(zero_deltas) / len(zero_deltas),
+            "worst_zero_auc_delta": min(zero_deltas),
+            "mean_ordinary_doa_delta": sum(ordinary_deltas) / len(ordinary_deltas),
+        },
+        "gates": gates,
+        "failed_gates": failed_gates,
+        "pass": not failed_gates,
+    }
+
+
+def _load_rows(path: Path) -> Sequence[Mapping[str, object]]:
+    _reject_test_references(str(path), location="metrics path")
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if isinstance(payload, dict) and "rows" in payload:
+        payload = payload["rows"]
+    if not isinstance(payload, list):
+        raise ValueError(f"validation metrics must be a JSON list: {path}")
+    return payload
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Evaluate a unified validation candidate.")
+    parser.add_argument("--baseline-metrics", type=Path, required=True)
+    parser.add_argument("--candidate-metrics", type=Path, required=True)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("candidate-decision.json"),
+    )
+    args = parser.parse_args(argv)
+    decision = evaluate_candidate(
+        _load_rows(args.baseline_metrics),
+        _load_rows(args.candidate_metrics),
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with args.output.open("x", encoding="utf-8") as handle:
+        json.dump(decision, handle, indent=2, sort_keys=True, ensure_ascii=False)
+        handle.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

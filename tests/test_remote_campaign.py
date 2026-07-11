@@ -31,6 +31,44 @@ class RemoteCampaignTests(unittest.TestCase):
         self.repo.mkdir()
         self.dataset = self.repo / "dataset.csv"
         self.dataset.write_text("stu_id,label\n1,1\n", encoding="utf-8")
+        self.architecture_manifest = self.root / "architecture-manifest.json"
+        self.architecture_payload = {
+            "inference": "prior",
+            "composer": "mask",
+            "decoder": "monotonic",
+            "mastery_output": "student-concept",
+            "version": 1,
+            "modules": "m1-m4",
+        }
+        self.architecture_manifest.write_text(
+            json.dumps(self.architecture_payload, sort_keys=True),
+            encoding="utf-8",
+        )
+        canonical_manifest = json.dumps(
+            self.architecture_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        self.architecture_fingerprint = hashlib.sha256(
+            canonical_manifest.encode("utf-8")
+        ).hexdigest()
+        self.cohort = self.root / "cohort.json"
+        cohort_payload = {"dataset_ids": ["ASSIST09", "ASSIST17", "MOOCRadar"]}
+        canonical_cohort = json.dumps(
+            cohort_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        self.cohort_sha256 = hashlib.sha256(
+            canonical_cohort.encode("utf-8")
+        ).hexdigest()
+        cohort_payload["cohort_sha256"] = self.cohort_sha256
+        self.cohort.write_text(
+            json.dumps(cohort_payload, sort_keys=True),
+            encoding="utf-8",
+        )
         self.run_git("init", "-q")
         self.run_git("config", "user.name", "Campaign Test")
         self.run_git("config", "user.email", "campaign@example.invalid")
@@ -55,6 +93,8 @@ class RemoteCampaignTests(unittest.TestCase):
         dry_run: bool = False,
         output_files: tuple[str, ...] = (),
         vendor_commits: tuple[str, ...] = (),
+        architecture_manifest: Path | None = None,
+        cohort: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         argv = [
             sys.executable,
@@ -74,6 +114,10 @@ class RemoteCampaignTests(unittest.TestCase):
             argv.extend(["--output-file", path])
         for vendor_commit in vendor_commits:
             argv.extend(["--vendor-commit", vendor_commit])
+        if architecture_manifest is not None:
+            argv.extend(["--architecture-manifest", str(architecture_manifest)])
+        if cohort is not None:
+            argv.extend(["--cohort", str(cohort)])
         if dry_run:
             argv.append("--dry-run")
         argv.extend(["--", *command])
@@ -175,6 +219,98 @@ class RemoteCampaignTests(unittest.TestCase):
         self.assertEqual(status["code"]["vendor_commits"], {})
         self.assertIsNone(status["exit_code"])
         self.assertIsNotNone(status["ended_at_utc"])
+
+    def test_architecture_manifest_and_cohort_are_bound_to_attempt(self) -> None:
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "import json, os; from pathlib import Path; "
+                "Path(os.environ['CAMPAIGN_ATTEMPT_DIR'], 'train-summary.json').write_text("
+                f"json.dumps({{'architecture_fingerprint': {self.architecture_fingerprint!r}}}))"
+            ),
+        ]
+
+        completed = self.run_runner(
+            command,
+            output_files=("train-summary.json",),
+            architecture_manifest=self.architecture_manifest,
+            cohort=self.cohort,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        status = self.load_status("attempt-001")
+        immutable = status["immutable_inputs"]
+        self.assertEqual(
+            immutable["architecture_manifest"]["sha256"],
+            hashlib.sha256(self.architecture_manifest.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            immutable["architecture_manifest"]["architecture_fingerprint"],
+            self.architecture_fingerprint,
+        )
+        self.assertEqual(
+            immutable["cohort"]["sha256"],
+            hashlib.sha256(self.cohort.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(immutable["cohort"]["cohort_sha256"], self.cohort_sha256)
+        self.assertEqual(
+            status["invocation"]["environment"]["CAMPAIGN_ARCHITECTURE_FINGERPRINT"],
+            self.architecture_fingerprint,
+        )
+        self.assertEqual(
+            status["invocation"]["environment"]["CAMPAIGN_COHORT_SHA256"],
+            self.cohort_sha256,
+        )
+
+    def test_bound_inputs_must_be_provided_together_before_attempt(self) -> None:
+        completed = self.run_runner(
+            [sys.executable, "-c", "pass"],
+            dry_run=True,
+            architecture_manifest=self.architecture_manifest,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("together", completed.stderr.lower())
+        self.assertFalse(self.artifact_root.exists())
+
+    def test_summary_fingerprint_mismatch_is_terminal_and_attempt_is_immutable(self) -> None:
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "import json, os; from pathlib import Path; "
+                "Path(os.environ['CAMPAIGN_ATTEMPT_DIR'], 'train-summary.json').write_text("
+                f"json.dumps({{'architecture_fingerprint': {'f' * 64!r}}}))"
+            ),
+        ]
+        first = self.run_runner(
+            command,
+            output_files=("train-summary.json",),
+            architecture_manifest=self.architecture_manifest,
+            cohort=self.cohort,
+        )
+
+        self.assertNotEqual(first.returncode, 0)
+        first_status = self.load_status("attempt-001")
+        self.assertEqual(first_status["status"], "failed")
+        self.assertIn("fingerprint", first_status["error"].lower())
+        original_bytes = (
+            self.artifact_root / "attempt-001" / "status.json"
+        ).read_bytes()
+
+        second = self.run_runner(
+            [sys.executable, "-c", "pass"],
+            dry_run=True,
+            architecture_manifest=self.architecture_manifest,
+            cohort=self.cohort,
+        )
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertTrue((self.artifact_root / "attempt-002" / "status.json").is_file())
+        self.assertEqual(
+            (self.artifact_root / "attempt-001" / "status.json").read_bytes(),
+            original_bytes,
+        )
 
     def test_duplicate_vendor_names_are_rejected_before_attempt_creation(self) -> None:
         vendor_head = self.run_git("rev-parse", "HEAD").stdout.strip()
