@@ -45,7 +45,10 @@ def _max_cuda_memory_allocated_gb(device: str) -> float | None:
 
 def parse_args() -> argparse.Namespace:
     raw_argv = sys.argv[1:]
-    parser = argparse.ArgumentParser(description="Train the minimal decoupled CDM pipeline.")
+    parser = argparse.ArgumentParser(
+        description="Train the minimal decoupled CDM pipeline.",
+        allow_abbrev=False,
+    )
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
     parser.add_argument(
         "--model",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
@@ -281,6 +282,21 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         self.assertEqual(args.concept_graph, "concept.csv")
         self.assertEqual(args.concept_dim, 16)
         self.assertEqual(args.training_mode, "student_recompute_minibatch")
+
+    def test_unified_rejects_abbreviated_legacy_model_options(self) -> None:
+        for option, value in (
+            ("--student-fusion", "adaptive"),
+            ("--student-gate-prior-a", "1.0"),
+            ("--graph-m", "single"),
+        ):
+            with self.subTest(option=option):
+                with mock.patch.object(
+                    sys,
+                    "argv",
+                    ["train.py", "--model", "unified_v2", option, value],
+                ), mock.patch.object(sys, "stderr", io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        train_script.parse_args()
 
     def test_unified_mastery_weight_must_be_finite(self) -> None:
         with self.assertRaisesRegex(ValueError, "finite and positive"):
