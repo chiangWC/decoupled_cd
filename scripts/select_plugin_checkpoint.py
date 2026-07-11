@@ -252,6 +252,30 @@ def load_selection(path: Path | None) -> dict[str, Any]:
     return baseline
 
 
+def validate_baseline_selection(
+    selection: dict[str, Any],
+    *,
+    expected_protocol: dict[str, Any],
+    expected_dataset: str,
+    label: str = "baseline",
+) -> None:
+    if selection.get("selection_mode") != "baseline":
+        raise SelectionError(f"{label} selection_mode must be 'baseline'")
+    plugin_config = selection.get("plugin_config")
+    if not isinstance(plugin_config, dict):
+        raise SelectionError(f"{label} plugin_config must be an object")
+    aux_weight = _finite_float(
+        plugin_config.get("aux_weight"),
+        f"{label} plugin_config.aux_weight",
+    )
+    if aux_weight != 0.0:
+        raise SelectionError(f"{label} plugin_config.aux_weight must be 0.0")
+    if selection.get("protocol") != expected_protocol:
+        raise SelectionError(f"{label} uses a different protocol")
+    if selection.get("dataset") != expected_dataset:
+        raise SelectionError(f"{label} uses a different dataset")
+
+
 def _checkpoint_path(manifest_path: Path, relative_path: str) -> Path:
     root = manifest_path.parent.parent
     path = root / relative_path

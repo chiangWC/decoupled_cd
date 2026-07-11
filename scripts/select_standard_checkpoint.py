@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ from scripts.select_plugin_checkpoint import (
     load_candidate_manifest,
     load_selection,
     validate_candidate_artifacts,
+    validate_baseline_selection,
     validate_manifest_protocol,
 )
 
@@ -84,12 +87,29 @@ def standard_selection_payload(
 
 def _write_exclusive_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
     try:
-        with path.open("x", encoding="utf-8") as handle:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
             json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary_path, path)
     except FileExistsError as exc:
         raise SelectionError(f"selection output already exists: {path}") from exc
+    except OSError as exc:
+        raise SelectionError(f"cannot publish selection output: {path}") from exc
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def select_standard_checkpoint(
@@ -136,10 +156,11 @@ def select_standard_checkpoint(
         baseline = load_selection(
             Path(baseline_selection_path) if baseline_selection_path else None
         )
-        if baseline.get("protocol") != protocol:
-            raise SelectionError("plugin and baseline selections use different protocols")
-        if baseline.get("dataset") != protocol["dataset_name"]:
-            raise SelectionError("plugin and baseline selections use different datasets")
+        validate_baseline_selection(
+            baseline,
+            expected_protocol=protocol,
+            expected_dataset=protocol["dataset_name"],
+        )
         try:
             baseline_auc = _finite_float(
                 baseline["validation"]["auc"],

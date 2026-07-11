@@ -3,14 +3,17 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts.plugin_campaign import compute_recipe_id, sha256_file
 from scripts.select_joint_plugin_recipe import select_joint_recipe
+from scripts.select_plugin_checkpoint import SelectionError
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -53,11 +56,14 @@ class SelectJointPluginRecipeTests(unittest.TestCase):
             "data_protocol": "holdout",
         }
         self.standard_baseline.write_text(json.dumps({
+            "selection_mode": "baseline",
             "validation": {"auc": 0.80},
             "protocol": self.standard_protocol,
             "dataset": "fixture",
+            "plugin_config": {"aux_weight": 0.0},
         }), encoding="utf-8")
         self.holdout_baseline.write_text(json.dumps({
+            "selection_mode": "baseline",
             "validation": {"auc": 0.80},
             "validation_doa": {
                 "holdout_doa": 0.50,
@@ -66,6 +72,7 @@ class SelectJointPluginRecipeTests(unittest.TestCase):
             "protocol": self.holdout_protocol,
             "dataset": "fixture",
             "holdout_assignments_sha256": self.holdout_assignments_sha256,
+            "plugin_config": {"aux_weight": 0.0},
         }), encoding="utf-8")
 
     def tearDown(self) -> None:
@@ -153,7 +160,17 @@ class SelectJointPluginRecipeTests(unittest.TestCase):
                 "recipe": holdout_recipe,
             }],
         )
-        artifact_hashes = hashes["holdout-plugin"]
+        self.write_holdout_doa(hashes, [{
+            "model": "holdout-plugin",
+            "holdout_doa": holdout_doa,
+            "holdout_doa_weighted": holdout_weighted_doa,
+        }])
+
+    def write_holdout_doa(
+        self,
+        artifact_hashes: dict[str, dict[str, str]],
+        rows: list[dict[str, object]],
+    ) -> None:
         with self.holdout_doa.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=[
                 "model",
@@ -172,31 +189,39 @@ class SelectJointPluginRecipeTests(unittest.TestCase):
                 "holdout_assignments_sha256",
             ])
             writer.writeheader()
-            writer.writerow({
-                "model": "holdout-plugin",
-                "holdout_doa": holdout_doa,
-                "holdout_doa_weighted": holdout_weighted_doa,
-                "holdout_num_concepts_evaluated": 2,
-                "holdout_num_pairs": 10,
-                "split": "valid",
-                "doa_seed": 42,
-                "min_responses": 3,
-                "max_pairs_per_concept": 100_000,
-                "split_seed": 2024,
-                "mastery_sha256": artifact_hashes["mastery_sha256"],
-                "id_maps_sha256": artifact_hashes["id_maps_sha256"],
-                "dataset": "fixture",
-                "holdout_assignments_sha256": self.holdout_assignments_sha256,
-            })
+            for row in rows:
+                model_name = str(row["model"])
+                hashes = artifact_hashes[model_name]
+                writer.writerow({
+                    **row,
+                    "holdout_num_concepts_evaluated": 2,
+                    "holdout_num_pairs": 10,
+                    "split": "valid",
+                    "doa_seed": 42,
+                    "min_responses": 3,
+                    "max_pairs_per_concept": 100_000,
+                    "split_seed": 2024,
+                    "mastery_sha256": hashes["mastery_sha256"],
+                    "id_maps_sha256": hashes["id_maps_sha256"],
+                    "dataset": "fixture",
+                    "holdout_assignments_sha256": self.holdout_assignments_sha256,
+                })
 
-    def select(self, *, margin: float = 0.001) -> dict[str, object]:
+    def select(
+        self,
+        *,
+        margin: float = 0.001,
+        output_dir: Path | None = None,
+        standard_baseline: Path | None = None,
+        holdout_baseline: Path | None = None,
+    ) -> dict[str, object]:
         return select_joint_recipe(
             standard_manifest_path=self.standard_manifest,
             holdout_manifest_path=self.holdout_manifest,
             holdout_doa_csv_path=self.holdout_doa,
-            standard_baseline_path=self.standard_baseline,
-            holdout_baseline_path=self.holdout_baseline,
-            output_dir=self.output_dir,
+            standard_baseline_path=standard_baseline or self.standard_baseline,
+            holdout_baseline_path=holdout_baseline or self.holdout_baseline,
+            output_dir=output_dir or self.output_dir,
             auc_safety_margin=margin,
         )
 
@@ -243,6 +268,197 @@ class SelectJointPluginRecipeTests(unittest.TestCase):
             result["input_sha256"]["holdout_doa_csv"],
             sha256_file(self.holdout_doa),
         )
+        standard_child = json.loads(
+            (self.output_dir / "standard_selection.json").read_text()
+        )
+        holdout_child = json.loads(
+            (self.output_dir / "holdout_selection.json").read_text()
+        )
+        self.assertEqual(
+            set(standard_child["input_sha256"]),
+            {"standard_manifest", "standard_baseline_selection"},
+        )
+        self.assertFalse(
+            any(key.startswith("holdout_") for key in standard_child["input_sha256"])
+        )
+        self.assertEqual(
+            set(holdout_child["input_sha256"]),
+            {
+                "holdout_manifest",
+                "holdout_doa_csv",
+                "holdout_baseline_selection",
+            },
+        )
+
+    def test_joint_selector_rejects_non_baseline_or_nonzero_aux_reference(self) -> None:
+        self.write_fixture()
+        cases = (
+            ("selection_mode", self.standard_baseline, "plugin", 0.0),
+            ("aux_weight", self.holdout_baseline, "baseline", 0.1),
+            ("finite", self.standard_baseline, "baseline", float("nan")),
+        )
+        for case_number, (expected, baseline, selection_mode, aux_weight) in enumerate(
+            cases,
+            start=1,
+        ):
+            with self.subTest(expected=expected):
+                payload = json.loads(baseline.read_text())
+                payload["selection_mode"] = selection_mode
+                payload["plugin_config"]["aux_weight"] = aux_weight
+                invalid_baseline = self.root / f"invalid-baseline-{case_number}.json"
+                invalid_baseline.write_text(json.dumps(payload), encoding="utf-8")
+                output_dir = self.root / f"invalid-selection-{case_number}"
+
+                with self.assertRaisesRegex(SelectionError, expected):
+                    self.select(
+                        output_dir=output_dir,
+                        standard_baseline=(
+                            invalid_baseline
+                            if baseline == self.standard_baseline
+                            else self.standard_baseline
+                        ),
+                        holdout_baseline=(
+                            invalid_baseline
+                            if baseline == self.holdout_baseline
+                            else self.holdout_baseline
+                        ),
+                    )
+                self.assertFalse(output_dir.exists())
+
+    def test_decision_directory_publish_failure_leaves_no_formal_output(self) -> None:
+        self.write_fixture()
+
+        with mock.patch(
+            "scripts.select_joint_plugin_recipe._rename_directory_exclusive",
+            create=True,
+            side_effect=OSError("injected publish failure"),
+        ):
+            with self.assertRaisesRegex(SelectionError, "publish"):
+                self.select()
+
+        self.assertFalse(self.output_dir.exists())
+        self.assertEqual(list(self.root.glob(".selection.*.tmp")), [])
+
+    def test_decision_publish_does_not_replace_raced_empty_directory(self) -> None:
+        self.write_fixture()
+        real_lexists = os.path.lexists
+        output_checks = 0
+
+        def race_after_final_check(path: object) -> bool:
+            nonlocal output_checks
+            if Path(path) == self.output_dir:
+                output_checks += 1
+                if output_checks == 3:
+                    self.output_dir.mkdir()
+                    return False
+            return real_lexists(path)
+
+        with mock.patch(
+            "scripts.select_joint_plugin_recipe.os.path.lexists",
+            side_effect=race_after_final_check,
+        ):
+            with self.assertRaisesRegex(SelectionError, "already exists"):
+                self.select()
+
+        self.assertTrue(self.output_dir.is_dir())
+        self.assertEqual(list(self.output_dir.iterdir()), [])
+        self.assertEqual(list(self.root.glob(".selection.*.tmp")), [])
+
+    def test_decision_directory_cannot_be_reused_across_decisions(self) -> None:
+        self.write_fixture()
+        shared_first = self.root / "shared-first"
+        needs_adapter_first = self.root / "needs-adapter-first"
+
+        self.select(output_dir=shared_first)
+        with self.assertRaisesRegex(SelectionError, "already exists"):
+            self.select(margin=0.01, output_dir=shared_first)
+        self.assertFalse((shared_first / "joint_diagnostics.json").exists())
+
+        self.select(margin=0.01, output_dir=needs_adapter_first)
+        with self.assertRaisesRegex(SelectionError, "already exists"):
+            self.select(output_dir=needs_adapter_first)
+        for name in (
+            "joint_selection.json",
+            "standard_selection.json",
+            "holdout_selection.json",
+        ):
+            self.assertFalse((needs_adapter_first / name).exists())
+
+    def test_joint_sorting_uses_all_fixed_tiebreakers(self) -> None:
+        low_min = {"aux_weight": 0.1, "variant": "low-min"}
+        low_doa = {"aux_weight": 0.1, "variant": "low-doa"}
+        winner = {"aux_weight": 0.1, "variant": "winner"}
+        self.write_manifest(
+            root=self.standard_root,
+            manifest=self.standard_manifest,
+            protocol=self.standard_protocol,
+            rows=[
+                {"model_name": "standard-low-min", "auc": 0.802, "recipe": low_min},
+                {"model_name": "standard-low-doa", "auc": 0.803, "recipe": low_doa},
+                {
+                    "model_name": "standard-winner-late",
+                    "epoch": 4,
+                    "auc": 0.803,
+                    "recipe": winner,
+                },
+                {
+                    "model_name": "standard-winner-early",
+                    "epoch": 1,
+                    "auc": 0.803,
+                    "recipe": winner,
+                },
+            ],
+        )
+        hashes = self.write_manifest(
+            root=self.holdout_root,
+            manifest=self.holdout_manifest,
+            protocol=self.holdout_protocol,
+            rows=[
+                {"model_name": "holdout-low-min", "auc": 0.804, "recipe": low_min},
+                {"model_name": "holdout-low-doa", "auc": 0.804, "recipe": low_doa},
+                {
+                    "model_name": "holdout-winner-late",
+                    "epoch": 3,
+                    "auc": 0.804,
+                    "recipe": winner,
+                },
+                {
+                    "model_name": "holdout-winner-early",
+                    "epoch": 2,
+                    "auc": 0.804,
+                    "recipe": winner,
+                },
+            ],
+        )
+        self.write_holdout_doa(hashes, [
+            {
+                "model": "holdout-low-min",
+                "holdout_doa": 0.59,
+                "holdout_doa_weighted": 0.60,
+            },
+            {
+                "model": "holdout-low-doa",
+                "holdout_doa": 0.51,
+                "holdout_doa_weighted": 0.60,
+            },
+            {
+                "model": "holdout-winner-late",
+                "holdout_doa": 0.52,
+                "holdout_doa_weighted": 0.60,
+            },
+            {
+                "model": "holdout-winner-early",
+                "holdout_doa": 0.52,
+                "holdout_doa_weighted": 0.60,
+            },
+        ])
+
+        result = self.select()
+
+        self.assertEqual(result["standard_model_name"], "standard-winner-early")
+        self.assertEqual(result["holdout_model_name"], "holdout-winner-early")
+        self.assertEqual(result["standard_epoch"], 1)
+        self.assertEqual(result["holdout_epoch"], 2)
 
     def test_negative_standard_auc_fails_hard_gate(self) -> None:
         self.write_fixture(standard_auc=0.799)

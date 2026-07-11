@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import json
 import os
+import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -23,6 +26,7 @@ from scripts.select_plugin_checkpoint import (
     load_selection,
     load_validation_doa_rows,
     validate_candidate_artifacts,
+    validate_baseline_selection,
     validate_doa_binding,
     validate_manifest_protocol,
 )
@@ -30,6 +34,10 @@ from scripts.select_standard_checkpoint import (
     _require_recipe,
     standard_selection_payload,
 )
+
+
+_AT_FDCWD = -100
+_RENAME_NOREPLACE = 1
 
 
 @dataclass(frozen=True)
@@ -48,36 +56,81 @@ class JointCandidate:
         return min(self.standard_auc_delta, self.holdout_auc_delta)
 
 
-def _atomic_write_jsons(payloads: dict[Path, dict[str, Any]]) -> None:
+def _rename_directory_exclusive(source: Path, destination: Path) -> None:
+    try:
+        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    except AttributeError as exc:
+        raise SelectionError(
+            "atomic no-replace directory publication is unavailable"
+        ) from exc
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    result = renameat2(
+        _AT_FDCWD,
+        os.fsencode(source),
+        _AT_FDCWD,
+        os.fsencode(destination),
+        _RENAME_NOREPLACE,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise SelectionError(f"selection output already exists: {destination}")
+    raise OSError(
+        error_number,
+        os.strerror(error_number),
+        destination,
+    )
+
+
+def _atomic_publish_decision(
+    output_dir: Path,
+    payloads: dict[str, dict[str, Any]],
+) -> None:
     if not payloads:
         return
-    parents = {path.parent for path in payloads}
-    for parent in parents:
-        parent.mkdir(parents=True, exist_ok=True)
-    existing = [path for path in payloads if path.exists()]
-    if existing:
-        raise SelectionError(f"selection output already exists: {existing[0]}")
-    temporary_paths: dict[Path, Path] = {}
+    if os.path.lexists(output_dir):
+        raise SelectionError(f"selection output already exists: {output_dir}")
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    staged_dir = Path(
+        tempfile.mkdtemp(
+            dir=output_dir.parent,
+            prefix=f".{output_dir.name}.",
+            suffix=".tmp",
+        )
+    )
     try:
-        for destination, payload in payloads.items():
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=destination.parent,
-                prefix=f".{destination.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
+        for name, payload in payloads.items():
+            with (staged_dir / name).open("x", encoding="utf-8") as handle:
                 json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
-                temporary_paths[destination] = Path(handle.name)
-        for destination, temporary_path in temporary_paths.items():
-            os.replace(temporary_path, destination)
+        directory_fd = os.open(staged_dir, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        if os.path.lexists(output_dir):
+            raise SelectionError(f"selection output already exists: {output_dir}")
+        try:
+            _rename_directory_exclusive(staged_dir, output_dir)
+        except SelectionError:
+            raise
+        except OSError as exc:
+            raise SelectionError(
+                f"cannot publish decision directory: {output_dir}"
+            ) from exc
     finally:
-        for temporary_path in temporary_paths.values():
-            temporary_path.unlink(missing_ok=True)
+        if staged_dir.exists():
+            shutil.rmtree(staged_dir)
 
 
 def _input_hashes(
@@ -224,7 +277,10 @@ def _needs_adapter_diagnostics(
             _candidate_diagnostic(candidate) for candidate in joint_candidates
         ],
     }
-    _atomic_write_jsons({output_dir / "joint_diagnostics.json": payload})
+    _atomic_publish_decision(
+        output_dir,
+        {"joint_diagnostics.json": payload},
+    )
     return payload
 
 
@@ -250,6 +306,8 @@ def select_joint_recipe(
     standard_baseline_path = Path(standard_baseline_path)
     holdout_baseline_path = Path(holdout_baseline_path)
     output_dir = Path(output_dir)
+    if os.path.lexists(output_dir):
+        raise SelectionError(f"selection output already exists: {output_dir}")
 
     standard_rows = load_candidate_manifest(standard_manifest_path)
     holdout_rows = load_candidate_manifest(holdout_manifest_path)
@@ -308,14 +366,18 @@ def select_joint_recipe(
 
     standard_baseline = load_selection(standard_baseline_path)
     holdout_baseline = load_selection(holdout_baseline_path)
-    if standard_baseline.get("protocol") != standard_protocol:
-        raise SelectionError("standard baseline uses a different protocol")
-    if holdout_baseline.get("protocol") != holdout_protocol:
-        raise SelectionError("holdout baseline uses a different protocol")
-    if standard_baseline.get("dataset") != holdout_dataset:
-        raise SelectionError("standard baseline uses a different dataset")
-    if holdout_baseline.get("dataset") != holdout_dataset:
-        raise SelectionError("holdout baseline uses a different dataset")
+    validate_baseline_selection(
+        standard_baseline,
+        expected_protocol=standard_protocol,
+        expected_dataset=holdout_dataset,
+        label="standard baseline",
+    )
+    validate_baseline_selection(
+        holdout_baseline,
+        expected_protocol=holdout_protocol,
+        expected_dataset=holdout_dataset,
+        label="holdout baseline",
+    )
     if (
         holdout_baseline.get("holdout_assignments_sha256")
         != holdout_assignments_sha256
@@ -417,8 +479,18 @@ def select_joint_recipe(
         baseline_weighted_doa=holdout_baseline_weighted_doa,
         baseline_doa=holdout_baseline_doa,
     )
-    standard_selection["input_sha256"] = input_sha256
-    holdout_selection["input_sha256"] = input_sha256
+    standard_selection["input_sha256"] = {
+        key: input_sha256[key]
+        for key in ("standard_manifest", "standard_baseline_selection")
+    }
+    holdout_selection["input_sha256"] = {
+        key: input_sha256[key]
+        for key in (
+            "holdout_manifest",
+            "holdout_doa_csv",
+            "holdout_baseline_selection",
+        )
+    }
     joint_selection = {
         "decision": "shared",
         "recipe_id": selected.recipe_id,
@@ -438,11 +510,14 @@ def select_joint_recipe(
         "auc_safety_margin": auc_safety_margin,
         "input_sha256": input_sha256,
     }
-    _atomic_write_jsons({
-        output_dir / "standard_selection.json": standard_selection,
-        output_dir / "holdout_selection.json": holdout_selection,
-        output_dir / "joint_selection.json": joint_selection,
-    })
+    _atomic_publish_decision(
+        output_dir,
+        {
+            "standard_selection.json": standard_selection,
+            "holdout_selection.json": holdout_selection,
+            "joint_selection.json": joint_selection,
+        },
+    )
     return joint_selection
 
 

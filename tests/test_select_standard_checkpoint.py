@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts.plugin_campaign import compute_frozen_config_id, compute_recipe_id
 from scripts.select_plugin_checkpoint import (
@@ -127,9 +128,11 @@ class SelectStandardCheckpointTests(unittest.TestCase):
     def test_standard_plugin_uses_zero_auc_tolerance(self) -> None:
         baseline = self.root / "baseline.json"
         baseline.write_text(json.dumps({
+            "selection_mode": "baseline",
             "validation": {"auc": 0.80},
             "protocol": self.protocol,
             "dataset": "fixture",
+            "plugin_config": {"aux_weight": 0.0},
         }), encoding="utf-8")
         self.write_candidates([{
             "epoch": 1,
@@ -146,6 +149,64 @@ class SelectStandardCheckpointTests(unittest.TestCase):
                 output_path=self.output,
             )
         self.assertFalse(self.output.exists())
+
+    def test_standard_plugin_rejects_non_baseline_or_nonzero_aux_reference(self) -> None:
+        self.write_candidates([{
+            "epoch": 1,
+            "model_name": "plugin",
+            "validation": {"auc": 0.81, "acc": 0.7, "rmse": 0.4},
+            "plugin_config": {"aux_weight": 0.1},
+        }])
+        cases = (
+            ("selection_mode", "plugin", 0.0),
+            ("aux_weight", "baseline", 0.1),
+            ("finite", "baseline", float("nan")),
+        )
+        for case_number, (expected, selection_mode, aux_weight) in enumerate(
+            cases,
+            start=1,
+        ):
+            with self.subTest(expected=expected):
+                baseline = self.root / f"invalid-baseline-{case_number}.json"
+                baseline.write_text(json.dumps({
+                    "selection_mode": selection_mode,
+                    "validation": {"auc": 0.80},
+                    "protocol": self.protocol,
+                    "dataset": "fixture",
+                    "plugin_config": {"aux_weight": aux_weight},
+                }), encoding="utf-8")
+                output = self.root / f"selection-{case_number}.json"
+
+                with self.assertRaisesRegex(SelectionError, expected):
+                    select_standard_checkpoint(
+                        mode="plugin",
+                        manifest_path=self.manifest,
+                        baseline_selection_path=baseline,
+                        output_path=output,
+                    )
+                self.assertFalse(output.exists())
+
+    def test_standard_publish_failure_leaves_no_partial_output(self) -> None:
+        self.write_candidates([{
+            "epoch": 1,
+            "model_name": "baseline",
+            "validation": {"auc": 0.80, "acc": 0.7, "rmse": 0.4},
+            "plugin_config": {"aux_weight": 0.0},
+        }])
+
+        with mock.patch(
+            "scripts.select_standard_checkpoint.json.dump",
+            side_effect=ValueError("injected serialization failure"),
+        ):
+            with self.assertRaisesRegex(ValueError, "serialization"):
+                select_standard_checkpoint(
+                    mode="baseline",
+                    manifest_path=self.manifest,
+                    output_path=self.output,
+                )
+
+        self.assertFalse(self.output.exists())
+        self.assertEqual(list(self.root.glob(".selection.json.*.tmp")), [])
 
     def test_standard_manifest_requires_one_dataset_standard_protocol_and_seed_42(self) -> None:
         cases = (
