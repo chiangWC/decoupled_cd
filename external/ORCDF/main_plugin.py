@@ -41,7 +41,7 @@ from ORCDF.utils import get_device, set_seed, setup_logger
 
 
 def parse_all():
-    pre = argparse.ArgumentParser(add_help=False)
+    pre = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     pre.add_argument("--plugin-mode", choices=("train", "evaluate"), required=True)
     pre.add_argument("--plugin-decouple", action="store_true")
     pre.add_argument("--plugin-aux-weight", type=float, default=0.0)
@@ -90,6 +90,24 @@ def parse_all():
         and plugin_args.plugin_init_checkpoint is None
     ):
         pre.error("baseline-finetune requires --plugin-init-checkpoint")
+    if (
+        plugin_args.plugin_mode == "train"
+        and plugin_args.plugin_init_mode == "baseline-finetune"
+        and (
+            not plugin_args.plugin_data_protocol
+            or not plugin_args.plugin_dataset_name
+        )
+    ):
+        pre.error(
+            "baseline-finetune requires --plugin-data-protocol and "
+            "--plugin-dataset-name"
+        )
+    if (
+        plugin_args.plugin_mode == "train"
+        and plugin_args.plugin_init_mode == "random"
+        and plugin_args.plugin_init_checkpoint is not None
+    ):
+        pre.error("random initialization cannot use --plugin-init-checkpoint")
     if plugin_args.plugin_mode == "evaluate":
         if plugin_args.plugin_checkpoint is None or plugin_args.plugin_eval_split is None:
             pre.error("evaluate mode requires --plugin-checkpoint and --plugin-eval-split")
@@ -269,6 +287,7 @@ def prepare_training_initialization(
     device,
     q_matrix_path,
     q_matrix_bytes,
+    protocol,
 ):
     args.plugin_base_lr = args.lr
     args.plugin_init_checkpoint_sha256 = None
@@ -284,9 +303,7 @@ def prepare_training_initialization(
             snapshot=init_snapshot,
             q_matrix_bytes=q_matrix_bytes,
             processor_id_maps=processor_id_maps(proc),
-            data_protocol=args.plugin_data_protocol,
-            dataset_name=args.plugin_dataset_name,
-            seed=args.seed,
+            campaign_protocol=protocol,
         )
         load_training_initialization_checkpoint(
             model,
@@ -382,6 +399,7 @@ def main():
             device=device,
             q_matrix_path=q_matrix_path,
             q_matrix_bytes=q_matrix_bytes,
+            protocol=protocol,
         )
     trainer = Trainer(model, loaders, proc, trainer_args, logger)
     if args.plugin_mode == "train":

@@ -21,6 +21,7 @@ sys.path.insert(0, str(ORCDF_ROOT))
 
 from ORCDF import plugin as orcdf_plugin  # noqa: E402
 from ORCDF.model import ORCDFNet  # noqa: E402
+from ORCDF.trainer import Trainer as ORCDFTrainer  # noqa: E402
 
 
 def model_kwargs() -> dict[str, object]:
@@ -204,6 +205,44 @@ class ORCDFPluginTests(unittest.TestCase):
 
         self.assertEqual(len(optimizer.param_groups), 1)
 
+    def test_real_trainer_and_plugin_optimizer_groups_use_effective_lr(self) -> None:
+        model = orcdf_plugin.DecoupledORCDF(
+            **model_kwargs(),
+            decouple=True,
+            aux_weight=0.5,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            args = SimpleNamespace(
+                lr=0.004 * 0.25,
+                weight_decay=0.0,
+                log_dir=directory,
+            )
+            trainer = ORCDFTrainer(
+                model,
+                loaders=([], [], []),
+                data_proc=None,
+                args=args,
+                logger=mock.Mock(),
+            )
+        orcdf_plugin.add_plugin_parameters_to_optimizer(
+            trainer.optimizer,
+            model,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+        )
+
+        self.assertEqual(len(trainer.optimizer.param_groups), 3)
+        self.assertEqual(
+            [group["lr"] for group in trainer.optimizer.param_groups],
+            [0.001, 0.001, 0.001],
+        )
+        self.assertTrue(
+            any(
+                parameter is model.ukc_gate
+                for parameter in trainer.optimizer.param_groups[-1]["params"]
+            )
+        )
+
     def test_cli_accepts_auxiliary_detach_and_warmup(self) -> None:
         main_plugin = load_main_plugin()
         argv = [
@@ -244,6 +283,10 @@ class ORCDFPluginTests(unittest.TestCase):
                     str(checkpoint),
                     "--plugin-lr-multiplier",
                     "0.25",
+                    "--plugin-data-protocol",
+                    split,
+                    "--plugin-dataset-name",
+                    "fixture",
                 ]
                 with mock.patch.object(sys, "argv", argv):
                     args = main_plugin.parse_all()
@@ -291,6 +334,47 @@ class ORCDFPluginTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 main_plugin.parse_all()
 
+    def test_initialization_cli_is_fail_closed_for_abbreviations_and_random_checkpoint(
+        self,
+    ) -> None:
+        main_plugin = load_main_plugin()
+        invalid_options = (
+            ("--plugin-init-c", "/tmp/checkpoint.pth"),
+            ("--plugin-init-m", "baseline-finetune"),
+            ("--plugin-lr-m", "0.25"),
+            ("--plugin-init-c=/tmp/checkpoint.pth",),
+            ("--plugin-init-m=baseline-finetune",),
+            ("--plugin-lr-m=0.25",),
+        )
+        for option in invalid_options:
+            with self.subTest(option=option):
+                argv = [
+                    "main_plugin.py",
+                    "--plugin-mode",
+                    "evaluate",
+                    "--plugin-checkpoint",
+                    "/tmp/plugin.pth",
+                    "--plugin-eval-split",
+                    "valid",
+                    *option,
+                ]
+                with mock.patch.object(sys, "argv", argv):
+                    with self.assertRaises(SystemExit):
+                        main_plugin.parse_all()
+
+        random_checkpoint = [
+            "main_plugin.py",
+            "--plugin-mode",
+            "train",
+            "--plugin-init-mode",
+            "random",
+            "--plugin-init-checkpoint",
+            "/tmp/checkpoint.pth",
+        ]
+        with mock.patch.object(sys, "argv", random_checkpoint):
+            with self.assertRaises(SystemExit):
+                main_plugin.parse_all()
+
     def test_baseline_initialization_loads_before_trainer_and_applies_effective_lr(
         self,
     ) -> None:
@@ -332,12 +416,119 @@ class ORCDFPluginTests(unittest.TestCase):
                 device="cpu",
                 q_matrix_path=Path("/data/Q_matrix.csv"),
                 q_matrix_bytes=b"q",
+                protocol={
+                    **{
+                        "split": "valid", "seed": 42, "doa_seed": 42,
+                        "min_responses": 3, "max_pairs_per_concept": 100_000,
+                        "split_seed": 2024, "q_matrix_sha256": "0" * 64,
+                    },
+                    "data_protocol": "standard", "dataset_name": "fixture",
+                },
             )
 
         events.append("trainer")
         self.assertEqual(events, ["snapshot", "validate", "load", "trainer"])
         self.assertEqual(args.lr, 0.004)
         self.assertEqual(trainer_args.lr, 0.001)
+
+    def test_main_loads_baseline_before_trainer_construction(self) -> None:
+        main_plugin = load_main_plugin()
+        events = []
+        trainer_lrs = []
+        snapshot = EvaluationArtifactSnapshot(b"checkpoint", b"{}\n", b"q")
+        with tempfile.TemporaryDirectory() as directory:
+            q_matrix = Path(directory) / "Q_matrix.csv"
+            q_matrix.write_bytes(b"q")
+            args = SimpleNamespace(
+                data_dir=directory,
+                log_dir=directory,
+                seed=42,
+                lr=0.004,
+                weight_decay=0.0,
+                epochs=1,
+                patience=1,
+                latent_dim=2,
+                gcn_layers=1,
+                keep_prob=1.0,
+                if_type="ncd",
+                mode="all",
+                flip_ratio=0.15,
+                ssl_temp=0.5,
+                ssl_weight=0.0,
+                prednet_len1=4,
+                prednet_len2=2,
+                dropout=0.0,
+                plugin_mode="train",
+                plugin_decouple=False,
+                plugin_aux_weight=0.25,
+                plugin_aux_detach_item_difficulty=False,
+                plugin_aux_warmup_fraction=0.0,
+                plugin_init_checkpoint=Path("/baseline/checkpoint.pth"),
+                plugin_init_mode="baseline-finetune",
+                plugin_lr_multiplier=0.25,
+                plugin_initialization_explicit=True,
+                plugin_model_name="orcdf",
+                plugin_doa_seed=42,
+                plugin_min_responses=3,
+                plugin_max_pairs_per_concept=100_000,
+                plugin_split_seed=2024,
+                plugin_data_protocol="standard",
+                plugin_dataset_name="fixture",
+                plugin_q_matrix_file=q_matrix,
+            )
+            proc = SimpleNamespace(
+                stu_ids=[], exer_ids=[], cpt_ids=[],
+                num_students=1, num_exercises=1, num_concepts=1,
+                graph_dict={},
+                get_loaders=lambda: ([], [], []),
+            )
+
+            class Model:
+                def to(self, _device):
+                    return self
+
+                def get_graph_dict(self, _graph):
+                    pass
+
+            class RecordingTrainer:
+                def __init__(self, _model, _loaders, _proc, trainer_args, _logger):
+                    events.append("trainer")
+                    trainer_lrs.append(trainer_args.lr)
+                    self.args = trainer_args
+                    self.optimizer = mock.Mock()
+
+            with (
+                mock.patch.object(main_plugin, "parse_all", return_value=args),
+                mock.patch.object(main_plugin, "resolve_plugin_q_matrix", return_value=q_matrix),
+                mock.patch.object(main_plugin, "setup_logger", return_value=mock.Mock()),
+                mock.patch.object(main_plugin, "get_device", return_value="cpu"),
+                mock.patch.object(main_plugin, "set_seed"),
+                mock.patch.object(main_plugin, "CognitiveDataProcessor", return_value=proc),
+                mock.patch.object(main_plugin, "DecoupledORCDF", return_value=Model()),
+                mock.patch.object(main_plugin, "Trainer", RecordingTrainer),
+                mock.patch.object(main_plugin, "add_plugin_parameters_to_optimizer"),
+                mock.patch.object(
+                    main_plugin,
+                    "snapshot_evaluation_artifacts",
+                    side_effect=lambda *_: events.append("snapshot") or snapshot,
+                ),
+                mock.patch.object(
+                    main_plugin,
+                    "validate_training_initialization",
+                    side_effect=lambda **_: events.append("validate"),
+                ),
+                mock.patch.object(
+                    main_plugin,
+                    "load_training_initialization_checkpoint",
+                    side_effect=lambda *_: events.append("load"),
+                ),
+                mock.patch.object(main_plugin, "run_candidate_training", return_value={}),
+            ):
+                main_plugin.main()
+
+        self.assertEqual(events, ["snapshot", "validate", "load", "trainer"])
+        self.assertEqual(args.lr, 0.004)
+        self.assertEqual(trainer_lrs, [0.001])
 
     def test_campaign_protocol_and_recipe_bind_joint_split(self) -> None:
         main_plugin = load_main_plugin()

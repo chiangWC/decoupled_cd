@@ -170,7 +170,7 @@ class SVGCDPluginTests(unittest.TestCase):
 
     def test_one_cycle_budget_counts_all_three_steps_per_batch(self) -> None:
         model = torch.nn.Linear(1, 1)
-        args = svgcd_args(epochs=2)
+        args = svgcd_args(epochs=2, lr=0.001 * 0.25)
         trainer = svgcd_trainer.Trainer(
             model,
             loaders=([None] * 4, [], []),
@@ -180,6 +180,15 @@ class SVGCDPluginTests(unittest.TestCase):
         )
 
         self.assertEqual(trainer.scheduler.total_steps, 24)
+        self.assertEqual(trainer.scheduler.base_lrs, [0.000025])
+        self.assertEqual(
+            [group["max_lr"] for group in trainer.optimizer.param_groups],
+            [0.00025],
+        )
+        self.assertEqual(
+            [group["initial_lr"] for group in trainer.optimizer.param_groups],
+            [0.000025],
+        )
 
     def test_zero_weight_has_exact_base_state_and_parameters(self) -> None:
         main_plugin = load_main_plugin()
@@ -271,6 +280,10 @@ class SVGCDPluginTests(unittest.TestCase):
                     str(checkpoint),
                     "--plugin-lr-multiplier",
                     "0.25",
+                    "--plugin-data-protocol",
+                    split,
+                    "--plugin-dataset-name",
+                    "fixture",
                 ]
                 with mock.patch.object(sys, "argv", argv):
                     args = main_plugin.parse_all()
@@ -318,6 +331,47 @@ class SVGCDPluginTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 main_plugin.parse_all()
 
+    def test_initialization_cli_is_fail_closed_for_abbreviations_and_random_checkpoint(
+        self,
+    ) -> None:
+        main_plugin = load_main_plugin()
+        invalid_options = (
+            ("--plugin-init-c", "/tmp/checkpoint.pth"),
+            ("--plugin-init-m", "baseline-finetune"),
+            ("--plugin-lr-m", "0.25"),
+            ("--plugin-init-c=/tmp/checkpoint.pth",),
+            ("--plugin-init-m=baseline-finetune",),
+            ("--plugin-lr-m=0.25",),
+        )
+        for option in invalid_options:
+            with self.subTest(option=option):
+                argv = [
+                    "main_plugin.py",
+                    "--plugin-mode",
+                    "evaluate",
+                    "--plugin-checkpoint",
+                    "/tmp/plugin.pth",
+                    "--plugin-eval-split",
+                    "valid",
+                    *option,
+                ]
+                with mock.patch.object(sys, "argv", argv):
+                    with self.assertRaises(SystemExit):
+                        main_plugin.parse_all()
+
+        random_checkpoint = [
+            "main_plugin.py",
+            "--plugin-mode",
+            "train",
+            "--plugin-init-mode",
+            "random",
+            "--plugin-init-checkpoint",
+            "/tmp/checkpoint.pth",
+        ]
+        with mock.patch.object(sys, "argv", random_checkpoint):
+            with self.assertRaises(SystemExit):
+                main_plugin.parse_all()
+
     def test_baseline_initialization_loads_before_trainer_and_applies_effective_lr(
         self,
     ) -> None:
@@ -359,12 +413,105 @@ class SVGCDPluginTests(unittest.TestCase):
                 device="cpu",
                 q_matrix_path=Path("/data/Q_matrix.csv"),
                 q_matrix_bytes=b"q",
+                protocol={
+                    **{
+                        "split": "valid", "seed": 42, "doa_seed": 42,
+                        "min_responses": 3, "max_pairs_per_concept": 100_000,
+                        "split_seed": 2024, "q_matrix_sha256": "0" * 64,
+                    },
+                    "data_protocol": "standard", "dataset_name": "fixture",
+                },
             )
 
         events.append("trainer")
         self.assertEqual(events, ["snapshot", "validate", "load", "trainer"])
         self.assertEqual(args.lr, 0.001)
         self.assertEqual(trainer_args.lr, 0.00025)
+
+    def test_main_loads_baseline_before_trainer_construction(self) -> None:
+        main_plugin = load_main_plugin()
+        events = []
+        trainer_lrs = []
+        snapshot = EvaluationArtifactSnapshot(b"checkpoint", b"{}\n", b"q")
+        with tempfile.TemporaryDirectory() as directory:
+            q_matrix = Path(directory) / "Q_matrix.csv"
+            q_matrix.write_bytes(b"q")
+            args = svgcd_args(
+                data_dir=directory,
+                seed=42,
+                patience=1,
+                emb_dim=2,
+                dnn_units=[4, 2],
+                dropout_rate=0.0,
+                n_gnn_layer=1,
+                cl_tau=0.7,
+                cl_weight=0.0,
+                beta=0.4,
+                plugin_mode="train",
+                plugin_aux_weight=0.25,
+                plugin_aux_detach_item_difficulty=False,
+                plugin_aux_warmup_fraction=0.0,
+                plugin_init_checkpoint=Path("/baseline/checkpoint.pth"),
+                plugin_init_mode="baseline-finetune",
+                plugin_lr_multiplier=0.25,
+                plugin_initialization_explicit=True,
+                plugin_model_name="svgcd",
+                plugin_doa_seed=42,
+                plugin_min_responses=3,
+                plugin_max_pairs_per_concept=100_000,
+                plugin_split_seed=2024,
+                plugin_data_protocol="standard",
+                plugin_dataset_name="fixture",
+                plugin_q_matrix_file=q_matrix,
+            )
+            proc = SimpleNamespace(
+                stu_ids=[], exer_ids=[], cpt_ids=[],
+                num_students=1, num_exercises=1, num_concepts=1,
+                correct_adj=None, wrong_adj=None,
+                get_loaders=lambda: ([], [], []),
+            )
+
+            class Model:
+                def to(self, _device):
+                    return self
+
+            class RecordingTrainer:
+                def __init__(self, _model, _loaders, _proc, trainer_args, _logger):
+                    events.append("trainer")
+                    trainer_lrs.append(trainer_args.lr)
+                    self.args = trainer_args
+
+            with (
+                mock.patch.object(main_plugin, "parse_all", return_value=args),
+                mock.patch.object(main_plugin, "resolve_plugin_q_matrix", return_value=q_matrix),
+                mock.patch.object(main_plugin, "setup_logger", return_value=mock.Mock()),
+                mock.patch.object(main_plugin, "get_device", return_value="cpu"),
+                mock.patch.object(main_plugin, "set_seed"),
+                mock.patch.object(main_plugin, "CognitiveDataProcessor", return_value=proc),
+                mock.patch.object(main_plugin, "AuxSVGCD", return_value=Model()),
+                mock.patch.object(main_plugin, "Trainer", RecordingTrainer),
+                mock.patch.object(
+                    main_plugin,
+                    "snapshot_evaluation_artifacts",
+                    side_effect=lambda *_: events.append("snapshot") or snapshot,
+                ),
+                mock.patch.object(
+                    main_plugin,
+                    "validate_training_initialization",
+                    side_effect=lambda **_: events.append("validate"),
+                ),
+                mock.patch.object(
+                    main_plugin,
+                    "load_training_initialization_checkpoint",
+                    side_effect=lambda *_: events.append("load"),
+                ),
+                mock.patch.object(main_plugin, "run_candidate_training", return_value={}),
+            ):
+                main_plugin.main()
+
+        self.assertEqual(events, ["snapshot", "validate", "load", "trainer"])
+        self.assertEqual(args.lr, 0.001)
+        self.assertEqual(trainer_lrs, [0.00025])
 
     def test_campaign_protocol_and_recipe_bind_joint_split(self) -> None:
         main_plugin = load_main_plugin()

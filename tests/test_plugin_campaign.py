@@ -211,9 +211,7 @@ class PluginCampaignTests(unittest.TestCase):
             snapshot=snapshot,
             q_matrix_bytes=b"q-matrix",
             processor_id_maps=id_maps,
-            data_protocol="standard",
-            dataset_name="fixture",
-            seed=42,
+            campaign_protocol=manifest_record["protocol"],
         )
 
         invalid_cases = (
@@ -245,9 +243,7 @@ class PluginCampaignTests(unittest.TestCase):
             "snapshot": snapshot,
             "q_matrix_bytes": b"q-matrix",
             "processor_id_maps": id_maps,
-            "data_protocol": "standard",
-            "dataset_name": "fixture",
-            "seed": 42,
+            "campaign_protocol": manifest_record["protocol"],
         }
         for expected, overrides in invalid_cases:
             with self.subTest(expected=expected):
@@ -264,9 +260,11 @@ class PluginCampaignTests(unittest.TestCase):
                 snapshot=snapshot,
                 q_matrix_bytes=b"q",
                 processor_id_maps={},
-                data_protocol="standard",
-                dataset_name="fixture",
-                seed=42,
+                campaign_protocol={
+                    **PROTOCOL,
+                    "data_protocol": "standard",
+                    "dataset_name": "fixture",
+                },
             )
 
     def test_training_initialization_manifest_is_fail_closed(self) -> None:
@@ -297,15 +295,13 @@ class PluginCampaignTests(unittest.TestCase):
             snapshot=snapshot,
             q_matrix_bytes=b"q",
             processor_id_maps=id_maps,
-            data_protocol="holdout",
-            dataset_name="fixture",
-            seed=42,
+            campaign_protocol=record["protocol"],
         )
         cases = (
             ("manifest", None),
-            ("Q-matrix", [{**record, "protocol": {**record["protocol"], "q_matrix_sha256": "0" * 64}}]),
+            ("protocol", [{**record, "protocol": {**record["protocol"], "q_matrix_sha256": "0" * 64}}]),
             ("aux_weight", [{**record, "plugin_config": {"aux_weight": 0.1}}]),
-            ("data protocol", [{**record, "protocol": {**record["protocol"], "data_protocol": "standard"}}]),
+            ("protocol", [{**record, "protocol": {**record["protocol"], "data_protocol": "standard"}}]),
             ("exactly one", [record, record]),
         )
         for expected, records in cases:
@@ -319,6 +315,80 @@ class PluginCampaignTests(unittest.TestCase):
                     )
                 with self.assertRaisesRegex((ValueError, FileNotFoundError), expected):
                     validate_training_initialization(**defaults)
+
+    def test_training_initialization_requires_exact_complete_campaign_protocol(
+        self,
+    ) -> None:
+        candidates = self.root / "candidates"
+        candidate = candidates / "epoch-001"
+        candidate.mkdir(parents=True)
+        checkpoint = candidate / "checkpoint.pth"
+        checkpoint.write_bytes(b"checkpoint")
+        id_maps = {"stu_ids": ["s1"], "exer_ids": ["e1"], "cpt_ids": ["c1"]}
+        id_maps_bytes = (json.dumps(id_maps, sort_keys=True) + "\n").encode()
+        (candidate / "id_maps.json").write_bytes(id_maps_bytes)
+        protocol = {
+            **PROTOCOL,
+            "q_matrix_sha256": hashlib.sha256(b"q").hexdigest(),
+            "data_protocol": "standard",
+            "dataset_name": "fixture",
+        }
+        record = {
+            "checkpoint_path": "candidates/epoch-001/checkpoint.pth",
+            "checkpoint_sha256": hashlib.sha256(b"checkpoint").hexdigest(),
+            "id_maps_sha256": hashlib.sha256(id_maps_bytes).hexdigest(),
+            "plugin_config": {"aux_weight": 0.0},
+            "protocol": protocol,
+        }
+        manifest = candidates / "manifest.jsonl"
+        snapshot = EvaluationArtifactSnapshot(b"checkpoint", id_maps_bytes, b"q")
+        defaults = dict(
+            checkpoint_path=checkpoint,
+            snapshot=snapshot,
+            q_matrix_bytes=b"q",
+            processor_id_maps=id_maps,
+            campaign_protocol=protocol,
+        )
+        drift_values = {
+            "split": "test",
+            "seed": 7,
+            "doa_seed": 7,
+            "min_responses": 4,
+            "max_pairs_per_concept": 99,
+            "split_seed": 7,
+            "q_matrix_sha256": "0" * 64,
+            "data_protocol": "holdout",
+            "dataset_name": "other",
+        }
+        for field in protocol:
+            with self.subTest(kind="missing", field=field):
+                changed = dict(protocol)
+                changed.pop(field)
+                manifest.write_text(
+                    json.dumps({**record, "protocol": changed}) + "\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaises((ValueError, KeyError)):
+                    validate_training_initialization(**defaults)
+        for field, value in drift_values.items():
+            with self.subTest(kind="drift", field=field):
+                changed = {**protocol, field: value}
+                manifest.write_text(
+                    json.dumps({**record, "protocol": changed}) + "\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaises(ValueError):
+                    validate_training_initialization(**defaults)
+
+        manifest.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        for field in ("data_protocol", "dataset_name"):
+            with self.subTest(kind="current-missing", field=field):
+                current = dict(protocol)
+                current.pop(field)
+                with self.assertRaises(ValueError):
+                    validate_training_initialization(
+                        **{**defaults, "campaign_protocol": current}
+                    )
 
     def test_evaluation_uses_frozen_finetune_provenance_not_cli_metadata(
         self,

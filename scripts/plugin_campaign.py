@@ -87,9 +87,7 @@ def validate_training_initialization(
     snapshot: EvaluationArtifactSnapshot,
     q_matrix_bytes: bytes,
     processor_id_maps: Mapping[str, Any],
-    data_protocol: str | None,
-    dataset_name: str | None,
-    seed: int,
+    campaign_protocol: Mapping[str, Any],
 ) -> None:
     """Reject a baseline checkpoint that does not match training resources."""
     checkpoint_path = Path(checkpoint_path)
@@ -150,16 +148,23 @@ def validate_training_initialization(
     protocol = record.get("protocol")
     if not isinstance(protocol, Mapping):
         raise ValueError("training initialization manifest protocol must be an object")
-    if seed != 42 or protocol.get("seed") != 42:
-        raise ValueError("training initialization seed must be 42")
-    if bool(data_protocol) != bool(dataset_name):
-        raise ValueError("training initialization data protocol and dataset must pair")
-    if protocol.get("data_protocol") != data_protocol:
-        raise ValueError("training initialization manifest data protocol mismatch")
-    if protocol.get("dataset_name") != dataset_name:
-        raise ValueError("training initialization manifest dataset mismatch")
-    if protocol.get("q_matrix_sha256") != sha256_bytes(q_matrix_bytes):
-        raise ValueError("training initialization manifest Q-matrix SHA mismatch")
+    if not isinstance(campaign_protocol, Mapping):
+        raise ValueError("training initialization campaign protocol must be an object")
+    if not campaign_protocol.get("data_protocol") or not campaign_protocol.get(
+        "dataset_name"
+    ):
+        raise ValueError(
+            "baseline-finetune requires explicit data_protocol and dataset_name"
+        )
+    try:
+        current_protocol = _validated_protocol(campaign_protocol)
+        baseline_protocol = _validated_protocol(protocol)
+    except ValueError as exc:
+        raise ValueError(f"training initialization protocol is invalid: {exc}") from exc
+    if baseline_protocol != current_protocol:
+        raise ValueError("training initialization manifest campaign protocol mismatch")
+    if current_protocol["q_matrix_sha256"] != sha256_bytes(q_matrix_bytes):
+        raise ValueError("training initialization current Q-matrix SHA mismatch")
 
     try:
         frozen_id_maps = json.loads(snapshot.id_maps_bytes)
