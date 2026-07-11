@@ -225,7 +225,39 @@ class CoverageAwareStateComposer(nn.Module):
         return state_map, weights
 
 
+def _inverse_softplus(value: float) -> float:
+    if value <= 0.0:
+        raise ValueError("effective positive weight must be greater than zero")
+    return math.log(math.expm1(value))
+
+
+class PositiveLinear(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        *,
+        effective_weight: float,
+        bias: float,
+        perturbation: float = 0.01,
+    ) -> None:
+        super().__init__()
+        center = _inverse_softplus(effective_weight)
+        self.raw_weight = nn.Parameter(torch.empty(out_features, in_features))
+        nn.init.normal_(self.raw_weight, mean=center, std=perturbation)
+        self.bias = nn.Parameter(torch.full((out_features,), bias))
+
+    @property
+    def effective_weight(self) -> torch.Tensor:
+        return F.softplus(self.raw_weight)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return F.linear(inputs, self.effective_weight, self.bias)
+
+
 class MonotonicDiagnosisDecoder(nn.Module):
+    DISCRIMINATION_FLOOR = 1e-6
+
     def __init__(
         self,
         *,
@@ -235,9 +267,37 @@ class MonotonicDiagnosisDecoder(nn.Module):
     ) -> None:
         super().__init__()
         self.mastery_head = nn.Linear(dim, 1)
-        self.concept_difficulty = nn.Embedding(num_concepts, 1)
+        self.item_concept_difficulty = nn.Embedding(
+            num_exercises, num_concepts
+        )
         self.exercise_discrimination = nn.Embedding(num_exercises, 1)
-        self.exercise_bias = nn.Embedding(num_exercises, 1)
+        self.interaction_layers = nn.ModuleList(
+            [
+                PositiveLinear(
+                    num_concepts,
+                    512,
+                    effective_weight=0.5,
+                    bias=0.0,
+                ),
+                PositiveLinear(
+                    512,
+                    256,
+                    effective_weight=1.0 / 512,
+                    bias=-0.5,
+                ),
+                PositiveLinear(
+                    256,
+                    1,
+                    effective_weight=1.0 / 256,
+                    bias=-0.5,
+                ),
+            ]
+        )
+        nn.init.zeros_(self.item_concept_difficulty.weight)
+        nn.init.constant_(
+            self.exercise_discrimination.weight,
+            _inverse_softplus(1.0 - self.DISCRIMINATION_FLOOR),
+        )
 
     def decode_from_mastery(
         self,
@@ -245,15 +305,20 @@ class MonotonicDiagnosisDecoder(nn.Module):
         q_vectors: torch.Tensor,
         target_exercise_ids: torch.Tensor,
     ) -> torch.Tensor:
-        weights = q_vectors / q_vectors.sum(dim=1, keepdim=True).clamp_min(1.0)
-        difficulty = self.concept_difficulty.weight.squeeze(-1)
-        margin = (target_mastery - difficulty.unsqueeze(0)) * weights
+        beta = torch.sigmoid(
+            self.item_concept_difficulty(target_exercise_ids)
+        )
         discrimination = F.softplus(
             self.exercise_discrimination(target_exercise_ids)
-        ).squeeze(-1)
-        logits = discrimination * margin.sum(dim=1) + self.exercise_bias(
-            target_exercise_ids
-        ).squeeze(-1)
+        ) + self.DISCRIMINATION_FLOOR
+        hidden = (
+            q_vectors
+            * (target_mastery - beta)
+            * discrimination
+        )
+        hidden = torch.sigmoid(self.interaction_layers[0](hidden))
+        hidden = torch.sigmoid(self.interaction_layers[1](hidden))
+        logits = self.interaction_layers[2](hidden).squeeze(-1)
         return torch.sigmoid(logits)
 
     def forward(

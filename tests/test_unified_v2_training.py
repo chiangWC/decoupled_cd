@@ -377,7 +377,15 @@ class UnifiedV2TrainingTests(unittest.TestCase):
 
             summary = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(summary["model"], "unified_v2")
-            self.assertEqual(summary["architecture_manifest"]["modules"], "m1-m4")
+            self.assertEqual(
+                summary["architecture_manifest"]["modules"],
+                "m1-m4-neuralcdm",
+            )
+            self.assertEqual(
+                summary["architecture_manifest"]["decoder"],
+                "neuralcdm-monotonic",
+            )
+            self.assertEqual(summary["architecture_manifest"]["version"], 2)
             self.assertRegex(
                 summary["architecture_fingerprint"], r"^[0-9a-f]{64}$"
             )
@@ -471,7 +479,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 "architecture_fingerprint": fingerprint,
             },
             "version": {
-                "architecture_manifest": {**manifest, "version": 2},
+                "architecture_manifest": {**manifest, "version": 1},
                 "architecture_fingerprint": fingerprint,
             },
             "field_type": {

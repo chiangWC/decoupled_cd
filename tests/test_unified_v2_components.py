@@ -1,7 +1,10 @@
 import inspect
+import math
 import unittest
+from unittest import mock
 
 import torch
+import torch.nn as nn
 
 from models.unified_decoupled_cdm import UnifiedDecoupledCDM
 from models.unified_v2_components import (
@@ -11,6 +14,15 @@ from models.unified_v2_components import (
     UntestedKnowledgeInferenceNetwork,
 )
 from models.unified_v2_spec import UnifiedArchitectureSpec
+
+
+def inverse_softplus(value: float) -> float:
+    return math.log(math.expm1(value))
+
+
+def set_effective_weight(layer: nn.Module, value: float) -> None:
+    with torch.no_grad():
+        layer.raw_weight.fill_(inverse_softplus(value))
 
 
 class UnifiedComponentTests(unittest.TestCase):
@@ -269,6 +281,224 @@ class UnifiedComponentTests(unittest.TestCase):
         low = decoder.decode_from_mastery(torch.tensor([[0.2]]), torch.tensor([[1.0]]), torch.tensor([0]))
         high = decoder.decode_from_mastery(torch.tensor([[0.8]]), torch.tensor([[1.0]]), torch.tensor([0]))
         self.assertGreaterEqual(float(high), float(low))
+
+    def test_neuralcdm_decoder_is_monotone_at_random_and_boundary_mastery(self):
+        torch.manual_seed(42)
+        decoder = MonotonicDiagnosisDecoder(
+            num_exercises=3, num_concepts=4, dim=4
+        )
+        self.assertEqual(len(decoder.interaction_layers), 3)
+        q = torch.tensor(
+            [[1.0, 1.0, 0.0, 0.0], [0.0, 1.0, 0.0, 1.0]]
+        )
+        exercise_ids = torch.tensor([0, 1])
+        ordered_pairs = [
+            (torch.zeros(2, 4), torch.ones(2, 4)),
+            (torch.rand(2, 4), torch.rand(2, 4)),
+        ]
+        for left, right in ordered_pairs:
+            lower = torch.minimum(left, right)
+            upper = torch.maximum(left, right)
+            low_probs = decoder.decode_from_mastery(lower, q, exercise_ids)
+            high_probs = decoder.decode_from_mastery(upper, q, exercise_ids)
+            self.assertTrue(torch.all(high_probs >= low_probs - 1e-8))
+            for row_tensor, concept_tensor in q.nonzero():
+                row = int(row_tensor)
+                concept = int(concept_tensor)
+                coordinate_high = lower.clone()
+                coordinate_high[row, concept] = upper[row, concept]
+                changed = decoder.decode_from_mastery(
+                    coordinate_high, q, exercise_ids
+                )
+                self.assertGreaterEqual(
+                    float(changed[row]), float(low_probs[row]) - 1e-8
+                )
+
+    def test_neuralcdm_required_mastery_jacobian_is_nonnegative(self):
+        torch.manual_seed(42)
+        decoder = MonotonicDiagnosisDecoder(
+            num_exercises=2, num_concepts=4, dim=4
+        )
+        self.assertEqual(len(decoder.interaction_layers), 3)
+        q = torch.tensor(
+            [[1.0, 1.0, 0.0, 0.0], [0.0, 1.0, 0.0, 1.0]]
+        )
+        mastery = torch.tensor(
+            [[0.2, 0.4, 0.6, 0.8], [0.8, 0.6, 0.4, 0.2]],
+            requires_grad=True,
+        )
+        probabilities = decoder.decode_from_mastery(
+            mastery, q, torch.tensor([0, 1])
+        )
+        for row in range(2):
+            gradient = torch.autograd.grad(
+                probabilities[row], mastery, retain_graph=True
+            )[0]
+            required = q[row].bool()
+            self.assertTrue(torch.all(gradient[row, required] >= -1e-8))
+
+    def test_neuralcdm_non_q_mastery_is_exactly_invariant(self):
+        decoder = MonotonicDiagnosisDecoder(
+            num_exercises=1, num_concepts=3, dim=4
+        )
+        self.assertEqual(len(decoder.interaction_layers), 3)
+        q = torch.tensor([[1.0, 1.0, 0.0]])
+        first = decoder.decode_from_mastery(
+            torch.tensor([[0.3, 0.7, 0.0]]), q, torch.tensor([0])
+        )
+        second = decoder.decode_from_mastery(
+            torch.tensor([[0.3, 0.7, 1.0]]), q, torch.tensor([0])
+        )
+        self.assertTrue(torch.equal(first, second))
+
+    def test_neuralcdm_item_concept_difficulty_is_item_specific(self):
+        decoder = MonotonicDiagnosisDecoder(
+            num_exercises=2, num_concepts=2, dim=4
+        )
+        with torch.no_grad():
+            decoder.item_concept_difficulty.weight[0].fill_(
+                torch.logit(torch.tensor(0.2))
+            )
+            decoder.item_concept_difficulty.weight[1].fill_(
+                torch.logit(torch.tensor(0.8))
+            )
+            decoder.exercise_discrimination.weight.fill_(inverse_softplus(1.0))
+        probabilities = decoder.decode_from_mastery(
+            torch.full((2, 2), 0.5),
+            torch.ones(2, 2),
+            torch.tensor([0, 1]),
+        )
+        self.assertNotEqual(float(probabilities[0]), float(probabilities[1]))
+
+    def test_neuralcdm_expresses_nonlinear_multiconcept_logit_interaction(self):
+        decoder = MonotonicDiagnosisDecoder(
+            num_exercises=1, num_concepts=2, dim=4
+        )
+        with torch.no_grad():
+            decoder.item_concept_difficulty.weight.fill_(-20.0)
+            decoder.exercise_discrimination.weight.fill_(inverse_softplus(1.0))
+            for layer in decoder.interaction_layers:
+                layer.raw_weight.fill_(-20.0)
+                layer.bias.fill_(-20.0)
+            first, second, output = decoder.interaction_layers
+            first.raw_weight[0, :2].fill_(inverse_softplus(4.0))
+            first.bias[0] = -6.0
+            second.raw_weight[0, 0] = inverse_softplus(4.0)
+            second.bias[0] = -2.0
+            output.raw_weight[0, 0] = inverse_softplus(4.0)
+            output.bias[0] = -2.0
+        corners = torch.tensor(
+            [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+        )
+        probabilities = decoder.decode_from_mastery(
+            corners, torch.ones(4, 2), torch.zeros(4, dtype=torch.long)
+        )
+        logits = torch.logit(probabilities)
+        mixed = logits[3] - logits[1] - logits[2] + logits[0]
+        self.assertGreater(abs(float(mixed)), 1e-2)
+
+    def test_neuralcdm_initialization_is_reproducible_nonsaturated_and_trainable(self):
+        torch.manual_seed(42)
+        first = MonotonicDiagnosisDecoder(
+            num_exercises=3, num_concepts=8, dim=4
+        )
+        torch.manual_seed(42)
+        second = MonotonicDiagnosisDecoder(
+            num_exercises=3, num_concepts=8, dim=4
+        )
+        for name, value in first.state_dict().items():
+            self.assertTrue(torch.equal(value, second.state_dict()[name]))
+        self.assertGreater(
+            float(first.interaction_layers[0].effective_weight.std()), 0.0
+        )
+
+        q = torch.tensor(
+            [
+                [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0],
+            ]
+        )
+        mastery = torch.tensor(
+            [
+                [0.2, 0.8, 0.4, 0.6, 0.3, 0.7, 0.5, 0.9],
+                [0.8, 0.2, 0.6, 0.4, 0.7, 0.3, 0.5, 0.1],
+                [0.3, 0.7, 0.2, 0.8, 0.4, 0.6, 0.9, 0.1],
+            ],
+            requires_grad=True,
+        )
+        probabilities = first.decode_from_mastery(
+            mastery, q, torch.tensor([0, 1, 2])
+        )
+        self.assertTrue(torch.all((probabilities > 0.05) & (probabilities < 0.95)))
+        probabilities.sum().backward()
+        required = q.bool()
+        self.assertTrue(torch.isfinite(mastery.grad).all())
+        self.assertGreater(float(mastery.grad[required].abs().sum()), 0.0)
+        beta_grad = first.item_concept_difficulty.weight.grad
+        self.assertTrue(torch.isfinite(beta_grad).all())
+        self.assertGreater(float(beta_grad[required].abs().sum()), 0.0)
+        discrimination_grad = first.exercise_discrimination.weight.grad
+        self.assertTrue(torch.isfinite(discrimination_grad).all())
+        self.assertTrue(torch.all(discrimination_grad.abs().sum(dim=1) > 0))
+        for layer in first.interaction_layers:
+            self.assertTrue(torch.isfinite(layer.raw_weight.grad).all())
+            self.assertTrue(torch.isfinite(layer.bias.grad).all())
+            self.assertGreater(float(layer.raw_weight.grad.abs().sum()), 0.0)
+            self.assertGreater(float(layer.bias.grad.abs().sum()), 0.0)
+
+    def test_mastery_tensor_feeds_the_only_neuralcdm_prediction_path(self):
+        model = UnifiedDecoupledCDM(
+            num_students=2,
+            num_exercises=2,
+            num_concepts=2,
+            dim=4,
+            architecture=UnifiedArchitectureSpec(inference="prior", composer="mask"),
+        )
+        target_students = torch.tensor([0, 1])
+        with mock.patch.object(
+            model.decoder,
+            "decode_from_mastery",
+            wraps=model.decoder.decode_from_mastery,
+        ) as decode:
+            output = model(
+                q_matrix=torch.eye(2),
+                concept_graph=torch.eye(2),
+                student_exercise_mask=torch.eye(2),
+                response_matrix=torch.eye(2),
+                student_tkc_mask=torch.eye(2),
+                student_ukc_mask=1.0 - torch.eye(2),
+                student_concept_evidence=None,
+                target_student_ids=target_students,
+                target_exercise_ids=torch.tensor([0, 1]),
+            )
+        captured_mastery = decode.call_args.args[0]
+        self.assertEqual(tuple(output.mastery.shape), (2, 2))
+        self.assertGreater(output.mastery.numel(), 0)
+        self.assertTrue(torch.equal(captured_mastery, output.mastery[target_students]))
+        self.assertEqual(output.probs.data_ptr(), output.cognitive_probs.data_ptr())
+        names = {name for name, _ in model.decoder.named_parameters()}
+        self.assertTrue(any(name.startswith("item_concept_difficulty") for name in names))
+        self.assertNotIn("concept_difficulty.weight", names)
+        self.assertNotIn("exercise_bias.weight", names)
+        forbidden = ("guess", "slip", "legacy", "residual")
+        source = inspect.getsource(MonotonicDiagnosisDecoder).lower()
+        for token in forbidden:
+            self.assertNotIn(token, source)
+
+    def test_old_linear_m4_checkpoint_is_rejected(self):
+        decoder = MonotonicDiagnosisDecoder(
+            num_exercises=2, num_concepts=3, dim=4
+        )
+        legacy = {
+            "mastery_head.weight": torch.zeros(1, 4),
+            "mastery_head.bias": torch.zeros(1),
+            "concept_difficulty.weight": torch.zeros(3, 1),
+            "exercise_discrimination.weight": torch.zeros(2, 1),
+            "exercise_bias.weight": torch.zeros(2, 1),
+        }
+        with self.assertRaisesRegex(RuntimeError, "Missing key|Unexpected key"):
+            decoder.load_state_dict(legacy)
 
     def test_m1_changes_with_student_responses(self):
         encoder = TestedKnowledgeEvidenceEncoder(dim=4, evidence_cap=20.0)

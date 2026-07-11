@@ -35,10 +35,10 @@ class RemoteCampaignTests(unittest.TestCase):
         self.architecture_payload = {
             "inference": "prior",
             "composer": "mask",
-            "decoder": "monotonic",
+            "decoder": "neuralcdm-monotonic",
             "mastery_output": "student-concept",
-            "version": 1,
-            "modules": "m1-m4",
+            "version": 2,
+            "modules": "m1-m4-neuralcdm",
         }
         self.architecture_manifest.write_text(
             json.dumps(self.architecture_payload, sort_keys=True),

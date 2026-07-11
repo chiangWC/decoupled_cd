@@ -133,7 +133,10 @@ class UnifiedDecoupledCDM(nn.Module):
 
         q_vectors = q_matrix[target_exercise_ids]
         q_weights = q_vectors / q_vectors.sum(dim=1, keepdim=True).clamp_min(1.0)
-        difficulty = q_weights @ self.decoder.concept_difficulty.weight.squeeze(-1)
+        beta = torch.sigmoid(
+            self.decoder.item_concept_difficulty(target_exercise_ids)
+        )
+        difficulty = (q_weights * beta).sum(dim=1)
         zeros = torch.zeros_like(probs)
         return DecoupledForwardOutput(
             student_state=state_map.mean(dim=1),

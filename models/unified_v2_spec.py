@@ -13,9 +13,9 @@ _FINGERPRINT_NOT_PROVIDED = object()
 class UnifiedArchitectureSpec:
     inference: Literal["prior", "graph"] = "prior"
     composer: Literal["mask", "coverage"] = "mask"
-    decoder: Literal["monotonic"] = "monotonic"
+    decoder: Literal["neuralcdm-monotonic"] = "neuralcdm-monotonic"
     mastery_output: Literal["student-concept"] = "student-concept"
-    version: int = 1
+    version: int = 2
 
     def __post_init__(self) -> None:
         if type(self.inference) is not str or self.inference not in {
@@ -28,15 +28,18 @@ class UnifiedArchitectureSpec:
             "coverage",
         }:
             raise ValueError("composer must be 'mask' or 'coverage'")
-        if type(self.decoder) is not str or self.decoder != "monotonic":
-            raise ValueError("decoder must be 'monotonic'")
+        if (
+            type(self.decoder) is not str
+            or self.decoder != "neuralcdm-monotonic"
+        ):
+            raise ValueError("decoder must be 'neuralcdm-monotonic'")
         if (
             type(self.mastery_output) is not str
             or self.mastery_output != "student-concept"
         ):
             raise ValueError("mastery_output must be 'student-concept'")
-        if type(self.version) is not int or self.version != 1:
-            raise ValueError("version must be integer 1")
+        if type(self.version) is not int or self.version != 2:
+            raise ValueError("version must be integer 2")
         if self.composer == "coverage" and self.inference != "graph":
             raise ValueError("coverage composer requires graph inference")
 
@@ -108,9 +111,9 @@ class UnifiedArchitectureSpec:
     def manifest(self) -> dict[str, str | int]:
         payload = asdict(self)
         payload["modules"] = {
-            ("prior", "mask"): "m1-m4",
-            ("graph", "mask"): "m1-m2-m4",
-            ("graph", "coverage"): "m1-m2-m3-m4",
+            ("prior", "mask"): "m1-m4-neuralcdm",
+            ("graph", "mask"): "m1-m2-m4-neuralcdm",
+            ("graph", "coverage"): "m1-m2-m3-m4-neuralcdm",
         }[(self.inference, self.composer)]
         return payload
 
