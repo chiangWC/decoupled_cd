@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+import sys
 from typing import Any, Mapping, Sequence
 
 from models.unified_v2_spec import UnifiedArchitectureSpec
@@ -36,6 +37,14 @@ DATASET_DIRECTORIES = {
     "MOOCRadar": ("moocradar", "moocradar_chold_v2"),
     "XES3G5M": ("xes3g5m", "xes3g5m_chold_v2"),
 }
+OUTER_RUNNER_OVERRIDE: Path | None = None
+
+
+def _sanitized_subprocess_env() -> dict[str, str]:
+    environment = dict(os.environ)
+    environment.pop("MKL_THREADING_LAYER", None)
+    environment.pop("MKL_SERVICE_FORCE_INTEL", None)
+    return environment
 
 
 def _architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
@@ -159,6 +168,23 @@ def _load_state(state_dir: Path, repo_root: Path) -> dict[str, Any]:
     baseline = _load_json(state_dir / "baseline.json", label="registered baseline")
     if canonical_sha256(baseline) != state.get("baseline_sha256"):
         raise ValueError("registered baseline hash does not match controller state")
+    validation_data = state.get("validation_data")
+    if (
+        not isinstance(validation_data, Mapping)
+        or canonical_sha256(validation_data) != state.get("validation_data_sha256")
+    ):
+        raise ValueError("registered validation data manifest is invalid")
+    for records in validation_data.values():
+        if not isinstance(records, list) or not all(
+            isinstance(record, Mapping) for record in records
+        ):
+            raise ValueError("registered validation data records are invalid")
+        for record in records:
+            snapshot = _snapshot_file(Path(str(record.get("path"))))
+            try:
+                _verify_snapshot_record(record, snapshot, label="validation data")
+            except ValueError as error:
+                raise ValueError("registered validation data hash mismatch") from error
     return state
 
 
@@ -202,28 +228,113 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _verify_file_record(
-    record: object,
+def _stat_identity(stat: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_size,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+    )
+
+
+def _snapshot_file(path: Path) -> dict[str, object]:
+    resolved = path.resolve()
+    digest = hashlib.sha256()
+    size = 0
+    with resolved.open("rb") as handle:
+        before = os.fstat(handle.fileno())
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+        after = os.fstat(handle.fileno())
+    if _stat_identity(before) != _stat_identity(after) or size != before.st_size:
+        raise ValueError(f"file changed while snapshotting: {resolved}")
+    return {
+        "path": str(resolved),
+        "size_bytes": size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _snapshot_json(
     path: Path,
     *,
     label: str,
-) -> dict[str, object]:
+) -> tuple[dict[str, Any], dict[str, object]]:
+    resolved = path.resolve()
+    with resolved.open("rb") as handle:
+        before = os.fstat(handle.fileno())
+        data = handle.read()
+        after = os.fstat(handle.fileno())
+    if _stat_identity(before) != _stat_identity(after) or len(data) != before.st_size:
+        raise ValueError(f"{label} changed while snapshotting: {resolved}")
+    try:
+        payload = json.loads(data)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot parse {label}: {resolved}") from error
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return payload, {
+        "path": str(resolved),
+        "size_bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def _copy_snapshot_file(source: Path, destination: Path) -> dict[str, object]:
+    source = source.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        destination,
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+        0o600,
+    )
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with source.open("rb") as source_handle, os.fdopen(
+            descriptor, "wb"
+        ) as destination_handle:
+            before = os.fstat(source_handle.fileno())
+            for chunk in iter(lambda: source_handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+                size += len(chunk)
+                destination_handle.write(chunk)
+            after = os.fstat(source_handle.fileno())
+            destination_handle.flush()
+            os.fsync(destination_handle.fileno())
+        if _stat_identity(before) != _stat_identity(after) or size != before.st_size:
+            raise ValueError(f"validation source changed while copying: {source}")
+    except BaseException:
+        try:
+            destination.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    _fsync_directory(destination.parent)
+    return {
+        "path": str(destination.resolve()),
+        "size_bytes": size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _verify_snapshot_record(
+    record: object,
+    snapshot: Mapping[str, object],
+    *,
+    label: str,
+) -> None:
     if not isinstance(record, Mapping):
         raise ValueError(f"{label} has no immutable hash record")
-    expected_path = path.resolve()
-    if Path(str(record.get("path"))).resolve() != expected_path:
+    if Path(str(record.get("path"))).resolve() != Path(str(snapshot["path"])):
         raise ValueError(f"{label} does not match registered summary path")
-    if not expected_path.is_file():
-        raise ValueError(f"{label} is not a regular file: {expected_path}")
-    size = expected_path.stat().st_size
-    digest = _sha256_file(expected_path)
-    if record.get("size_bytes") != size or record.get("sha256") != digest:
+    if (
+        record.get("size_bytes") != snapshot["size_bytes"]
+        or record.get("sha256") != snapshot["sha256"]
+    ):
         raise ValueError(f"{label} output hash mismatch")
-    return {
-        "path": str(expected_path),
-        "size_bytes": size,
-        "sha256": digest,
-    }
 
 
 def _find_path_record(records: object, path: Path, *, label: str) -> Mapping[str, Any]:
@@ -278,6 +389,8 @@ def _validate_baseline_rows(
     dataset_ids: Sequence[str],
     cohort_sha256: str,
 ) -> list[dict[str, object]]:
+    if _contains_test_reference(payload):
+        raise ValueError("test metric/path is forbidden in registered baseline")
     rows = payload.get("rows")
     if not isinstance(rows, list):
         raise ValueError("baseline rows must be a JSON list")
@@ -319,6 +432,8 @@ def initialize_controller(
     manifest_path: Path,
     architecture: str,
     baseline_rows_path: Path,
+    data_root: Path,
+    artifact_root: Path,
 ) -> dict[str, object]:
     state_dir = state_dir.resolve()
     repo_root = repo_root.resolve()
@@ -344,32 +459,65 @@ def initialize_controller(
         cohort_sha256=cohort_hash,
     )
     registered_baseline = {"rows": baseline_rows}
+    data_root = data_root.resolve()
+    artifact_root = artifact_root.resolve()
+    if _has_test_token(str(data_root)) or _has_test_token(str(artifact_root)):
+        raise ValueError("test paths are forbidden in registered controller roots")
+    validation_sources: dict[str, list[Path]] = {}
+    for dataset_id in dataset_ids:
+        for split_id in ("standard", "holdout"):
+            key = f"{dataset_id}:{split_id}"
+            paths = _expected_data_paths(
+                dataset_id=dataset_id,
+                split_id=split_id,
+                data_root=data_root,
+            )
+            if any(_has_test_token(path) for path in paths):
+                raise ValueError("test path is forbidden in validation data")
+            validation_sources[key] = [Path(path).resolve() for path in paths]
     route_commit = _route_head(repo_root)
-    state: dict[str, object] = {
-        "schema_version": 1,
-        "controller_id": secrets.token_hex(32),
-        "route_commit": route_commit,
-        "cohort_sha256": cohort_hash,
-        "manifest_sha256": canonical_sha256(manifest),
-        "architecture": architecture,
-        "architecture_fingerprint": spec.fingerprint(),
-        "dataset_ids": dataset_ids,
-        "baseline_sha256": canonical_sha256(registered_baseline),
-        "cursor": 0,
-        "successes": 0,
-        "zero_delta_threshold_seen": False,
-        "issuance_counter": 0,
-        "active_pair": None,
-        "complete": False,
-        "blocked": False,
-        "global_pass": None,
-    }
 
     os.mkdir(state_dir, 0o700)
     try:
-        for directory in ("issued", "consumed", "proofs"):
+        for directory in ("issued", "consumed", "proofs", "data"):
             os.mkdir(state_dir / directory, 0o700)
             _fsync_directory(state_dir)
+        copied_data_root = state_dir / "data"
+        validation_data: dict[str, list[dict[str, object]]] = {}
+        for key, sources in validation_sources.items():
+            validation_data[key] = [
+                _copy_snapshot_file(
+                    source,
+                    copied_data_root / source.relative_to(data_root),
+                )
+                for source in sources
+            ]
+        state: dict[str, object] = {
+            "schema_version": 1,
+            "controller_id": secrets.token_hex(32),
+            "route_commit": route_commit,
+            "cohort_sha256": cohort_hash,
+            "manifest_sha256": canonical_sha256(manifest),
+            "architecture": architecture,
+            "architecture_fingerprint": spec.fingerprint(),
+            "dataset_ids": dataset_ids,
+            "baseline_sha256": canonical_sha256(registered_baseline),
+            "source_data_root": str(data_root),
+            "data_root": str(copied_data_root),
+            "artifact_root": str(artifact_root),
+            "validation_data": validation_data,
+            "validation_data_sha256": canonical_sha256(validation_data),
+            "cursor": 0,
+            "successes": 0,
+            "zero_delta_threshold_seen": False,
+            "issuance_counter": 0,
+            "active_pair": None,
+            "pending_issuance": None,
+            "launch": None,
+            "complete": False,
+            "blocked": False,
+            "global_pass": None,
+        }
         _exclusive_bytes(state_dir / "controller.lock", b"")
         _exclusive_json(state_dir / "cohort.json", cohort)
         _exclusive_json(state_dir / "manifest.json", manifest)
@@ -427,12 +575,15 @@ def _verify_registered_input(
     if not isinstance(record, Mapping):
         raise ValueError(f"outer status has no {label} immutable input")
     path = Path(str(record.get("path"))).resolve()
-    fingerprint = _verify_file_record(record, path, label=label)
-    payload = _load_json(path, label=label)
+    payload, fingerprint = _snapshot_json(path, label=label)
+    _verify_snapshot_record(record, fingerprint, label=label)
     if payload != registered_payload:
         raise ValueError(f"outer status {label} content mismatch")
     # Also ensure the controller-owned copy still has the same semantics.
-    if _load_json(registered_path, label=f"registered {label}") != payload:
+    registered_copy, _ = _snapshot_json(
+        registered_path, label=f"registered {label}"
+    )
+    if registered_copy != payload:
         raise ValueError(f"controller-owned {label} content mismatch")
     return fingerprint
 
@@ -450,13 +601,27 @@ def _verify_split_proof(
     if summary_path.parent != attempt_dir:
         raise ValueError("consumed capability summary is outside its attempt dir")
     status_path = attempt_dir / "status.json"
-    status = _load_json(status_path, label=f"{split_id} outer status")
+    status, status_fingerprint = _snapshot_json(
+        status_path, label=f"{split_id} outer status"
+    )
     if status.get("status") != "completed" or status.get("exit_code") != 0:
         raise ValueError(f"{split_id} outer attempt did not complete")
     if status.get("parameters", {}).get("seed") != 42:
         raise ValueError(f"{split_id} outer attempt seed must be 42")
     if status.get("code", {}).get("route_commit") != state.get("route_commit"):
         raise ValueError(f"{split_id} outer status route commit mismatch")
+    launch = state.get("launch")
+    commands = launch.get("commands") if isinstance(launch, Mapping) else None
+    outer_command = commands.get(split_id) if isinstance(commands, Mapping) else None
+    invocation = status.get("invocation")
+    if not isinstance(outer_command, list) or "--" not in outer_command:
+        raise ValueError(f"{split_id} controller launch command is invalid")
+    expected_child_command = outer_command[outer_command.index("--") + 1 :]
+    if (
+        not isinstance(invocation, Mapping)
+        or invocation.get("command") != expected_child_command
+    ):
+        raise ValueError(f"{split_id} outer status command mismatch")
 
     registered_manifest = _load_json(
         state_dir / "manifest.json", label="registered architecture manifest"
@@ -494,30 +659,37 @@ def _verify_split_proof(
     dataset_records = status.get("datasets")
     if not isinstance(dataset_records, list):
         raise ValueError("outer status has no dataset hash manifest")
-    if {str(Path(path).resolve()) for path in expected_data_paths} != {
-        str(Path(str(record.get("path"))).resolve())
-        for record in dataset_records
-        if isinstance(record, Mapping)
-    }:
+    if not all(isinstance(record, Mapping) for record in dataset_records):
+        raise ValueError("outer status dataset manifest entries must be objects")
+    actual_dataset_paths = [
+        str(Path(str(record.get("path"))).resolve()) for record in dataset_records
+    ]
+    if (
+        len(actual_dataset_paths) != len(expected_data_paths)
+        or len(set(actual_dataset_paths)) != len(actual_dataset_paths)
+        or set(actual_dataset_paths)
+        != {str(Path(path).resolve()) for path in expected_data_paths}
+    ):
         raise ValueError("outer status dataset paths do not match consumed capability")
-    verified_datasets = [
-        _verify_file_record(
+    verified_datasets = []
+    for path in expected_data_paths:
+        snapshot = _snapshot_file(Path(path))
+        _verify_snapshot_record(
             _find_path_record(dataset_records, Path(path), label="dataset"),
-            Path(path),
+            snapshot,
             label="dataset hash",
         )
-        for path in expected_data_paths
-    ]
+        verified_datasets.append(snapshot)
 
     output_record = _find_path_record(
         status.get("output_hashes"), summary_path, label="registered summary path"
     )
-    summary_fingerprint = _verify_file_record(
-        output_record,
-        summary_path,
-        label="validation summary",
+    summary, summary_fingerprint = _snapshot_json(
+        summary_path, label=f"{split_id} validation summary"
     )
-    summary = _load_json(summary_path, label=f"{split_id} validation summary")
+    _verify_snapshot_record(
+        output_record, summary_fingerprint, label="validation summary"
+    )
     if _contains_test_reference(summary):
         raise ValueError("test metric/path is forbidden in validation summary")
     if (
@@ -536,6 +708,22 @@ def _verify_split_proof(
         or summary.get("evaluation_input_role") != "valid"
     ):
         raise ValueError(f"{split_id} validation summary binding mismatch")
+    mastery_shape = summary.get("mastery_shape")
+    if (
+        not isinstance(mastery_shape, list)
+        or not mastery_shape
+        or any(type(value) is not int or value <= 0 for value in mastery_shape)
+    ):
+        raise ValueError(f"{split_id} mastery_shape must be nonempty and positive")
+    _finite_metric(summary, "final_loss")
+    numerical_recipe = summary.get("numerical_recipe")
+    if not isinstance(numerical_recipe, Mapping):
+        raise ValueError(f"{split_id} numerical_recipe is missing")
+    mastery_loss_weight = _finite_metric(
+        numerical_recipe, "mastery_loss_weight"
+    )
+    if mastery_loss_weight <= 0.0:
+        raise ValueError(f"{split_id} mastery_loss_weight must be positive")
     metrics = {
         field: _finite_metric(summary, field)
         for field in ("overall_auc", "zero_auc", "ordinary_doa", "weighted_doa")
@@ -554,17 +742,23 @@ def _verify_split_proof(
             )
         },
         "attempt_dir": str(attempt_dir),
-        "status": {
-            "path": str(status_path),
-            "size_bytes": status_path.stat().st_size,
-            "sha256": _sha256_file(status_path),
-        },
+        "status": status_fingerprint,
         "summary": summary_fingerprint,
         "manifest": manifest_fingerprint,
         "cohort": cohort_fingerprint,
         "datasets": verified_datasets,
         "metrics": metrics,
     }
+
+
+def _joint_gate_success(deltas: Mapping[str, float]) -> bool:
+    return (
+        deltas["standard_overall_auc"] >= 0.0
+        and deltas["holdout_overall_auc"] >= 0.0
+        and deltas["weighted_doa"] >= 0.0
+        and deltas["zero_auc"] > 0.0
+        and deltas["ordinary_doa"] > 0.0
+    )
 
 
 def _advance_active_pair(
@@ -576,6 +770,21 @@ def _advance_active_pair(
     if not isinstance(active_pair, Mapping):
         return state
     consumed = _load_consumed_pair(state_dir, active_pair)
+    launch = state.get("launch")
+    attempts = launch.get("attempts") if isinstance(launch, Mapping) else None
+    if (
+        not isinstance(launch, Mapping)
+        or launch.get("phase") != "running"
+        or launch.get("counter") != active_pair.get("counter")
+        or launch.get("dataset_id") != active_pair.get("dataset_id")
+        or not isinstance(attempts, Mapping)
+        or any(
+            str(Path(str(attempts.get(split_id))).resolve())
+            != str(Path(str(consumed[split_id].get("attempt_dir"))).resolve())
+            for split_id in ("standard", "holdout")
+        )
+    ):
+        raise ValueError("controller launch attempts do not bind consumed pair")
     split_proofs = {
         split_id: _verify_split_proof(
             state_dir=state_dir,
@@ -607,13 +816,7 @@ def _advance_active_pair(
         "zero_auc": holdout["zero_auc"] - baseline["zero_auc"],
         "ordinary_doa": standard["ordinary_doa"] - baseline["ordinary_doa"],
     }
-    joint_success = (
-        deltas["standard_overall_auc"] >= 0.0
-        and deltas["holdout_overall_auc"] >= 0.0
-        and deltas["weighted_doa"] >= 0.0
-        and deltas["zero_auc"] > 0.0
-        and deltas["ordinary_doa"] > 0.0
-    )
+    joint_success = _joint_gate_success(deltas)
     dataset_id = str(active_pair.get("dataset_id"))
     proof: dict[str, Any] = {
         "schema_version": 1,
@@ -626,6 +829,7 @@ def _advance_active_pair(
         "deltas": deltas,
         "joint_success": joint_success,
         "zero_delta_at_least_0.001": deltas["zero_auc"] >= 0.001,
+        "launch": dict(launch),
     }
     proof_path = state_dir / "proofs" / (
         f"{int(active_pair['counter']):06d}-{dataset_id}.json"
@@ -656,6 +860,59 @@ def _advance_active_pair(
     return state
 
 
+def _ensure_issued_capabilities(
+    state_dir: Path,
+    token: Mapping[str, Any],
+) -> dict[str, str]:
+    capabilities = token.get("capabilities")
+    if not isinstance(capabilities, Mapping):
+        raise ValueError("pending issuance has no capability payloads")
+    filenames: dict[str, str] = {}
+    for split_id in ("standard", "holdout"):
+        capability = capabilities.get(split_id)
+        if not isinstance(capability, Mapping):
+            raise ValueError(f"pending issuance has no {split_id} capability")
+        path = _capability_path(state_dir, capability)
+        if path.exists():
+            if _load_json(path, label="pending issued capability") != capability:
+                raise ValueError("pending issued capability registry mismatch")
+        else:
+            _exclusive_json(path, capability)
+        filenames[split_id] = path.name
+    return filenames
+
+
+def _finish_pending_issuance(
+    *,
+    state_dir: Path,
+    state: dict[str, Any],
+    output_path: Path,
+) -> dict[str, object]:
+    pending = state.get("pending_issuance")
+    if not isinstance(pending, Mapping):
+        raise ValueError("controller has no pending issuance")
+    registered_output = Path(str(pending.get("output_path"))).resolve()
+    token = pending.get("token")
+    if registered_output != output_path or not isinstance(token, Mapping):
+        raise ValueError("pending issuance output does not match registry")
+    filenames = _ensure_issued_capabilities(state_dir, token)
+    state["active_pair"] = {
+        "counter": token["counter"],
+        "dataset_id": token["dataset_id"],
+        "capability_files": filenames,
+        "token": token,
+        "output_path": str(output_path),
+        "token_published": False,
+    }
+    state["pending_issuance"] = None
+    state["issuance_counter"] = token["counter"]
+    _atomic_json(state_dir / "state.json", state)
+    _atomic_json(output_path, token)
+    state["active_pair"]["token_published"] = True
+    _atomic_json(state_dir / "state.json", state)
+    return dict(token)
+
+
 def authorize_next(
     *,
     state_dir: Path,
@@ -670,6 +927,59 @@ def authorize_next(
             raise RuntimeError("primary cohort is unreachable under registered stop rule")
         if state.get("complete"):
             raise ValueError("controller iteration is already complete")
+        launch = state.get("launch")
+        if isinstance(launch, Mapping):
+            state["blocked"] = True
+            state["launch"] = {**launch, "phase": "interrupted"}
+            _atomic_json(state_dir / "state.json", state)
+            raise RuntimeError("prior controller launch was interrupted")
+        if isinstance(state.get("pending_issuance"), Mapping):
+            return _finish_pending_issuance(
+                state_dir=state_dir,
+                state=state,
+                output_path=output_path,
+            )
+        active_pair = state.get("active_pair")
+        if isinstance(active_pair, Mapping) and not active_pair.get(
+            "token_published", True
+        ):
+            registered_output = Path(str(active_pair.get("output_path"))).resolve()
+            token = active_pair.get("token")
+            if registered_output != output_path or not isinstance(token, Mapping):
+                raise ValueError("pending token recovery output does not match registry")
+            _atomic_json(output_path, token)
+            state["active_pair"]["token_published"] = True
+            _atomic_json(state_dir / "state.json", state)
+            return dict(token)
+        if isinstance(active_pair, Mapping):
+            raise RuntimeError("active pair requires controller run-pair")
+        if output_path.exists() and state.get("active_pair") is None:
+            if output_path.stat().st_size == 0:
+                _unlink_fsync(output_path)
+            else:
+                try:
+                    reservation, _ = _snapshot_json(
+                        output_path, label="authorization output reservation"
+                    )
+                except ValueError as error:
+                    raise FileExistsError(output_path) from error
+                token = reservation.get("token")
+                if (
+                    reservation.get("controller_reservation")
+                    != state.get("controller_id")
+                    or not isinstance(token, Mapping)
+                ):
+                    raise FileExistsError(output_path)
+                state["pending_issuance"] = {
+                    "output_path": str(output_path),
+                    "token": token,
+                }
+                _atomic_json(state_dir / "state.json", state)
+                return _finish_pending_issuance(
+                    state_dir=state_dir,
+                    state=state,
+                    output_path=output_path,
+                )
         _exclusive_bytes(output_path, b"")
         original_state = json.loads(json.dumps(state))
         original_issued = {path.name for path in (state_dir / "issued").glob("*.json")}
@@ -677,8 +987,6 @@ def authorize_next(
         preserve_progress = False
         committed = False
         try:
-            if state.get("active_pair") is not None:
-                state = _advance_active_pair(state_dir=state_dir, state=state)
             if state.get("blocked"):
                 preserve_progress = True
                 raise RuntimeError(
@@ -724,25 +1032,29 @@ def authorize_next(
                     "split_id": split_id,
                     "nonce": secrets.token_hex(32),
                 }
-                _exclusive_json(
-                    _capability_path(state_dir, capability), capability
-                )
                 capabilities[split_id] = capability
             token: dict[str, object] = {
                 **common,
                 "capabilities": capabilities,
             }
-            state["issuance_counter"] = counter
-            state["active_pair"] = {
-                "counter": counter,
-                "dataset_id": dataset_id,
-                "capability_files": {
-                    split_id: _capability_path(state_dir, capability).name
-                    for split_id, capability in capabilities.items()
+            _atomic_json(
+                output_path,
+                {
+                    "schema_version": 1,
+                    "controller_reservation": state["controller_id"],
+                    "token": token,
                 },
+            )
+            state["pending_issuance"] = {
+                "output_path": str(output_path),
+                "token": token,
             }
             _atomic_json(state_dir / "state.json", state)
-            _atomic_json(output_path, token)
+            token = _finish_pending_issuance(
+                state_dir=state_dir,
+                state=state,
+                output_path=output_path,
+            )
             committed = True
             return token
         except BaseException:
@@ -759,6 +1071,208 @@ def authorize_next(
         finally:
             if not committed:
                 _unlink_fsync(output_path)
+
+
+def _outer_command(
+    *,
+    state_dir: Path,
+    repo_root: Path,
+    state: Mapping[str, Any],
+    dataset_id: str,
+    split_id: str,
+) -> list[str]:
+    runner = OUTER_RUNNER_OVERRIDE or repo_root / "scripts" / "run_remote_campaign.py"
+    artifact_root = Path(str(state["artifact_root"])) / dataset_id / split_id
+    records = state["validation_data"][f"{dataset_id}:{split_id}"]
+    command = [
+        sys.executable,
+        str(runner),
+        "--artifact-root",
+        str(artifact_root),
+        "--repo-root",
+        str(repo_root),
+        "--cwd",
+        str(repo_root),
+    ]
+    for record in records:
+        command.extend(["--dataset-file", str(record["path"])])
+    command.extend(
+        [
+            "--output-file",
+            "validation-summary.json",
+            "--summary-output",
+            "validation-summary.json",
+            "--architecture-manifest",
+            str(state_dir / "manifest.json"),
+            "--cohort",
+            str(state_dir / "cohort.json"),
+            "--seed",
+            "42",
+            "--doa-seed",
+            "42",
+            "--min-responses",
+            "3",
+            "--",
+            sys.executable,
+            str(repo_root / "scripts" / "run_unified_validation.py"),
+            "run-split",
+            "--dataset-id",
+            dataset_id,
+            "--split-id",
+            split_id,
+            "--architecture",
+            str(state["architecture"]),
+            "--data-root",
+            str(state["data_root"]),
+            "--controller-state-dir",
+            str(state_dir),
+            "--repo-root",
+            str(repo_root),
+            "--capability",
+            str(state["active_pair"]["output_path"]),
+            "--output",
+            "validation-summary.json",
+        ]
+    )
+    return command
+
+
+def _attempt_names(root: Path) -> list[str]:
+    if not root.exists():
+        return []
+    return sorted(
+        path.name
+        for path in root.iterdir()
+        if path.is_dir() and re.fullmatch(r"attempt-[0-9]+", path.name)
+    )
+
+
+def _block_launch(
+    state_dir: Path,
+    repo_root: Path,
+    *,
+    launch_id: str,
+    error: str,
+) -> None:
+    with _controller_lock(state_dir):
+        state = _load_state(state_dir, repo_root)
+        launch = state.get("launch")
+        if isinstance(launch, Mapping) and launch.get("launch_id") == launch_id:
+            state["blocked"] = True
+            state["launch"] = {**launch, "phase": "failed", "error": error}
+            _atomic_json(state_dir / "state.json", state)
+
+
+def run_registered_pair(
+    *,
+    state_dir: Path,
+    repo_root: Path,
+) -> dict[str, Any]:
+    state_dir = state_dir.resolve()
+    repo_root = repo_root.resolve()
+    with _controller_lock(state_dir):
+        state = _load_state(state_dir, repo_root)
+        if state.get("blocked") or state.get("complete"):
+            raise RuntimeError("controller cannot launch a blocked/complete iteration")
+        if state.get("launch") is not None:
+            state["blocked"] = True
+            state["launch"] = {
+                **state["launch"],
+                "phase": "interrupted",
+            }
+            _atomic_json(state_dir / "state.json", state)
+            raise RuntimeError("prior controller launch was interrupted")
+        active = state.get("active_pair")
+        if not isinstance(active, Mapping) or not active.get("token_published"):
+            raise ValueError("run-pair requires a published active capability pair")
+        dataset_id = str(active["dataset_id"])
+        counter = int(active["counter"])
+        before_attempts = {
+            split_id: _attempt_names(
+                Path(str(state["artifact_root"])) / dataset_id / split_id
+            )
+            for split_id in ("standard", "holdout")
+        }
+        commands = {
+            split_id: _outer_command(
+                state_dir=state_dir,
+                repo_root=repo_root,
+                state=state,
+                dataset_id=dataset_id,
+                split_id=split_id,
+            )
+            for split_id in ("standard", "holdout")
+        }
+        launch_id = secrets.token_hex(32)
+        state["launch"] = {
+            "phase": "running",
+            "launch_id": launch_id,
+            "owner_pid": os.getpid(),
+            "counter": counter,
+            "dataset_id": dataset_id,
+            "before_attempts": before_attempts,
+            "commands": commands,
+        }
+        _atomic_json(state_dir / "state.json", state)
+
+    new_attempts: dict[str, str] = {}
+    try:
+        for split_id in ("standard", "holdout"):
+            completed = subprocess.Popen(
+                commands[split_id],
+                cwd=repo_root,
+                env=_sanitized_subprocess_env(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout, stderr = completed.communicate()
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"{split_id} outer campaign failed with "
+                    f"{completed.returncode}: {stderr.strip()}"
+                )
+            split_root = Path(str(state["artifact_root"])) / dataset_id / split_id
+            after = set(_attempt_names(split_root))
+            created = sorted(after - set(before_attempts[split_id]))
+            if len(created) != 1:
+                raise RuntimeError(
+                    f"{split_id} outer campaign created {len(created)} attempts"
+                )
+            attempt_path = (split_root / created[0]).resolve()
+            if stdout.strip() and Path(stdout.strip().splitlines()[-1]).resolve() != attempt_path:
+                raise RuntimeError(f"{split_id} outer campaign reported wrong attempt")
+            new_attempts[split_id] = str(attempt_path)
+    except BaseException as error:
+        _block_launch(
+            state_dir,
+            repo_root,
+            launch_id=launch_id,
+            error=f"{type(error).__name__}: {error}",
+        )
+        raise
+
+    try:
+        with _controller_lock(state_dir):
+            state = _load_state(state_dir, repo_root)
+            launch = state.get("launch")
+            if not isinstance(launch, Mapping) or launch.get("launch_id") != launch_id:
+                raise RuntimeError("controller launch journal changed before proof freeze")
+            state["launch"] = {**launch, "attempts": new_attempts}
+            state = _advance_active_pair(state_dir=state_dir, state=state)
+            proof_path = state_dir / "proofs" / f"{counter:06d}-{dataset_id}.json"
+            proof = _load_json(proof_path, label="controller launch proof")
+            state["launch"] = None
+            _atomic_json(state_dir / "state.json", state)
+            return proof
+    except BaseException as error:
+        _block_launch(
+            state_dir,
+            repo_root,
+            launch_id=launch_id,
+            error=f"{type(error).__name__}: {error}",
+        )
+        raise
 
 
 def consume_split_capability(
@@ -808,23 +1322,45 @@ def consume_split_capability(
             or state.get("architecture") != architecture
         ):
             raise ValueError("capability is stale or outside the active registry pair")
+        launch = state.get("launch")
+        if (
+            not isinstance(launch, Mapping)
+            or launch.get("phase") != "running"
+            or launch.get("counter") != capability.get("counter")
+            or launch.get("dataset_id") != dataset_id
+        ):
+            raise ValueError("capability consumption requires active controller launch")
+        if data_root.resolve() != Path(str(state.get("data_root"))).resolve():
+            raise ValueError("controller launch data root mismatch")
+        attempt_dir = attempt_dir.resolve()
+        expected_attempt_root = (
+            Path(str(state.get("artifact_root"))).resolve()
+            / dataset_id
+            / split_id
+        )
+        before_attempts = launch.get("before_attempts")
+        if (
+            attempt_dir.parent != expected_attempt_root
+            or not re.fullmatch(r"attempt-[0-9]+", attempt_dir.name)
+            or not isinstance(before_attempts, Mapping)
+            or attempt_dir.name in before_attempts.get(split_id, [])
+        ):
+            raise ValueError("attempt is not the unique new controller launch attempt")
         issued_path = _capability_path(state_dir, capability)
+        consumed_path = state_dir / "consumed" / issued_path.name
+        if consumed_path.exists():
+            raise ValueError("capability is already present in the consumed registry")
         if not issued_path.is_file():
             raise ValueError("capability is not present in the issued registry")
         registered = _load_json(issued_path, label="issued capability registry")
         if registered != capability:
             raise ValueError("capability does not exactly match the issued registry")
 
-        attempt_dir = attempt_dir.resolve()
         output_path = (
             raw_output.resolve()
             if raw_output.is_absolute()
             else attempt_dir / raw_output
         )
-        consumed_path = state_dir / "consumed" / issued_path.name
-        os.replace(issued_path, consumed_path)
-        _fsync_directory(state_dir / "issued")
-        _fsync_directory(state_dir / "consumed")
         consumption: dict[str, object] = {
             **capability,
             "architecture": state["architecture"],
@@ -843,4 +1379,5 @@ def consume_split_capability(
             ),
         }
         _atomic_json(consumed_path, consumption)
+        _unlink_fsync(issued_path)
         return consumption

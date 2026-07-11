@@ -24,6 +24,7 @@ from scripts.unified_validation_controller import (
     authorize_next,
     consume_split_capability,
     initialize_controller,
+    run_registered_pair,
 )
 
 
@@ -398,6 +399,13 @@ def _authorize(args: argparse.Namespace) -> None:
         state_dir=args.controller_state_dir,
         repo_root=args.repo_root,
         output_path=_output_path(args.output),
+    )
+
+
+def _run_pair(args: argparse.Namespace) -> None:
+    run_registered_pair(
+        state_dir=args.controller_state_dir,
+        repo_root=args.repo_root,
     )
 
 
@@ -824,6 +832,8 @@ def _controller_init(args: argparse.Namespace) -> None:
         manifest_path=args.architecture_manifest,
         architecture=args.architecture,
         baseline_rows_path=args.baseline_rows,
+        data_root=args.data_root,
+        artifact_root=args.artifact_root,
     )
 
 
@@ -838,6 +848,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     controller_init.add_argument("--architecture", choices=ARCHITECTURES, required=True)
     controller_init.add_argument("--architecture-manifest", type=Path, required=True)
     controller_init.add_argument("--baseline-rows", type=Path, required=True)
+    controller_init.add_argument("--data-root", type=Path, required=True)
+    controller_init.add_argument("--artifact-root", type=Path, required=True)
     controller_init.set_defaults(handler=_controller_init)
 
     manifest = subparsers.add_parser("manifest")
@@ -855,6 +867,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     authorize.add_argument("--repo-root", type=Path, required=True)
     authorize.add_argument("--output", type=Path, required=True)
     authorize.set_defaults(handler=_authorize)
+
+    run_pair = subparsers.add_parser("run-pair")
+    run_pair.add_argument("--controller-state-dir", type=Path, required=True)
+    run_pair.add_argument("--repo-root", type=Path, required=True)
+    run_pair.set_defaults(handler=_run_pair)
 
     run_split = subparsers.add_parser("run-split")
     run_split.add_argument("--dataset-id", choices=ELIGIBLE_DATASET_IDS, required=True)
