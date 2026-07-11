@@ -23,31 +23,61 @@
 - TKC/UKC 传播路径、读出路径和门控拓扑；
 - mastery head 的类型、输入与输出定义；
 - 训练损失的组成项及其作用位置；
-- residual/gate 的初始化规则；
+- 各框架模块的参数初始化规则；
 - forward 输出协议。
 
 允许按数据集改变：concept dimension、batch size、learning rate、weight decay、epochs、patience，以及已预先声明的数值型 loss weight。学生数、题目数、知识点数等数据决定的张量尺寸不计作架构差异。模块不能通过数据集专属默认值、固定为零的 gate 或零 loss weight 被变相关闭。
 
 ## 统一起点 Unified-V2-B0
 
-`Unified-V2-B0` 复用现有 V2 base 的预测主干，并增加始终存在的 mastery 接口。mastery head 从统一的逐知识点学生状态产生 `m[s,k]`，所有数据集返回相同形状语义的 mastery。训练阶段使用同一类 mastery 监督/排序目标；若不同数据集采用不同 loss weight，该权重只能通过 validation 选择且不得等于零。
+`Unified-V2-B0` 由必要的两端组成：已测知识证据编码器 M1 和单调诊断解码器 M4。M1 从作答历史产生逐学生、逐知识点的已测状态；对没有状态的知识点，B0 使用同一套可学习 concept prior 填充。M4 始终输出统一语义的 `m[s,k]`，再结合题目难度、区分度和 Q-matrix 计算答对概率。训练阶段使用同一类 mastery 监督/排序目标；若不同数据集采用不同 loss weight，该权重只能通过 validation 选择且不得等于零。
 
-新增路径必须使用 base-equivalent 初始化：残差分支的初始贡献为零，融合 gate 的初始输出保持原 base 预测。单元测试需证明新增模块系数为零或 residual 初始化时，预测与冻结的 V2 base 在数值容差内一致。这样可区分“模块带来增益”与“随机初始化改变基线”。
+统一模型不保留旧 base 与新路径的并行 residual，也不使用 hybrid readout 兜底。每个候选直接替换其负责的完整功能，并用相同训练预算和 validation 协议与 B0 比较。稳定初始化可以作为优化细节，但不得改变模块定义或成为论文贡献。
 
-## 候选模块与组合顺序
+## 框架级模块
 
-第一轮分别在 B0 上加入一个模块：
+最终框架只允许出现能够独立画成方框、具有明确输入输出和研究问题的模块：
 
-1. 学生条件化 TKC→UKC propagation；
-2. monotonic readout residual；
-3. base/structured hybrid readout 与可学习融合 gate；
-4. corrected support-aware gate；
-5. mastery auxiliary/separation objective；
-6. 覆盖感知证据置信度模块，仅在前五项均无法满足硬门时实现。
+1. **M1 已测知识证据编码器（Tested-Knowledge Evidence Encoder）**：输入学生作答历史和 Q-matrix，输出学生条件化的 TKC states。它是所有组合的必需模块。
+2. **M2 未测知识推断网络（Untested-Knowledge Inference Network）**：输入 TKC states 与知识关系图，直接生成学生条件化的 UKC states。它替换 B0 的 concept-prior 填充和旧的静态 UKC 路径，不以 residual 形式附着在旧路径上，也不能把同一 UKC 表征广播给所有学生。
+3. **M3 覆盖感知状态融合器（Coverage-Aware State Composer）**：输入 TKC states、UKC states、观测覆盖和证据可靠性，输出唯一的学生–知识点 mastery map。覆盖率、图可达性、propensity 等只是其内部信号，不能单独列为模块。
+4. **M4 单调诊断解码器（Monotonic Diagnosis Decoder）**：输入 mastery map、目标题目的 Q 向量、难度与区分度，输出答对概率；mastery 提升不得导致答对概率下降。它是所有组合的必需模块，并保证 AUC 与 DOA 消费同一认知状态。
 
-每个候选都是全局架构：同一次候选评估必须在冻结的 primary cohort 及其 standard/holdout validation 上全部运行。通过硬门的最优单模块形成 B1；下一轮仅测试 `B1 + 一个剩余模块`。没有单模块通过时，只测试具有明确依赖关系或互补机制的二模块组合，例如 `propagation+hybrid`、`mastery+monotonic`，不进行无边界排列组合。
+`corrected support`、mastery auxiliary/separation、masked reconstruction、zero initialization、warm-up、dropout 和 loss weight 均归入内部机制或训练策略，不进入主框架图，也不作为独立模块计数。
 
-新模块必须先说明它弥补的可测失效模式，并有对应消融。不能仅因某一数据集 test 数值不佳而新增模块。
+## 组合顺序
+
+模块识别只比较以下可解释组合：
+
+1. `M1 + M4`：无 UKC 推断的统一诊断基线 B0；
+2. `M1 + M2 + M4`：用观测 mask 对 TKC states 与 M2 的 UKC states 作确定性拼接，识别未测知识推断是否有效；该 mask assembly 不是可学习模块；
+3. `M1 + M2 + M3 + M4`：识别覆盖感知融合能否同时改善 zero AUC、保住 standard/holdout overall AUC；
+4. 在最终推理架构不变的前提下比较训练目标，训练目标结果单列，不记为新增模块。
+
+每个组合都是全局架构：同一次候选评估必须在冻结的 primary cohort 及其 standard/holdout validation 上全部运行。M2 或 M3 只有通过全局硬门才可保留；失败则全局删除，不允许变成数据集专用开关。
+
+## 文献升级通道
+
+只有 M2 或 M3 经 validation 证明存在明确失效模式，才允许搜索相邻领域论文并替换整块功能。每次升级必须先写出“失效指标 → 借鉴假设 → 新模块输入输出 → 可证伪硬门”，不能仅因某一数据集 test 数值不佳而新增结构。
+
+- **Incomplete Multi-view Learning**：把有作答的 TKC view 与缺失的 UKC view 视为不完整多视图，优先考察 missing-view inference、consensus representation、quality-aware fusion。参考 UEAF 的缺失视图推断与自适应视图权重，以及 incomplete multi-view 的 quality-aware instance-level fusion。
+- **Semi-supervised Node Learning / Missing Node Features**：把 TKC 视为有观测节点、UKC 视为缺失特征节点，优先考察 APPNP 式 predict-then-propagate、基于 Dirichlet energy 的 Feature Propagation。借鉴对象必须成为完整的 M2，而不是在旧图输出上加修正项。
+- **Recommendation Exposure Bias / MNAR**：把“学生是否在某知识点作答”建模为观测过程。ExposureMF 或 doubly robust learning 可为 M3 提供显式 exposure/propensity estimator；只有当该估计器产生逐学生–知识点可靠性并参与完整状态构成时，才算 M3 的结构设计。
+- **Positive-Unlabeled Learning**：nnPU 等方法属于风险估计，默认只作为训练目标候选，不计作推理模块。只有形成独立的 latent observation-state estimator 并输出给 M3 时才可能升级为框架模块。
+- **Noisy-label Learning**：Co-teaching 等方法属于训练范式，默认不进入推理框架。只有确认作答标签噪声而非知识覆盖缺失是主要失效原因时才进行单独训练消融，且不能用双网络训练包装成本文核心模块。
+
+文献借鉴不是复制论文名称：必须说明认知诊断中的变量对应关系，并保留原论文引用。一次只替换 M2 或 M3 中的一块；新旧模块不能以 residual、adapter 或 mixture-of-experts 方式同时堆叠。连续两个文献替代模块均未通过全局硬门后，停止结构搜索。
+
+### 文献入口
+
+- Wen et al., *Unified Embedding Alignment with Missing Views Inferring for Incomplete Multi-View Clustering*, AAAI 2019: <https://doi.org/10.1609/aaai.v33i01.33015393>
+- Liu et al., *Quality-aware and Soft Consistency Driven Representation Fusion for Incomplete Multi-view Multi-label Classification*, AAAI 2026: <https://doi.org/10.1609/aaai.v40i28.39564>
+- Gasteiger et al., *Predict then Propagate: Graph Neural Networks meet Personalized PageRank*, ICLR 2019: <https://iclr.cc/virtual/2019/poster/1117>
+- Rossi et al., *On the Unreasonable Effectiveness of Feature Propagation in Learning on Graphs with Missing Node Features*, LoG 2022: <https://openreview.net/forum?id=qe_qOarxjg>
+- Liang et al., *Modeling User Exposure in Recommendation*, WWW 2016: <https://arxiv.org/abs/1510.07025>
+- Wang et al., *Doubly Robust Joint Learning for Recommendation on Data Missing Not at Random*, ICML 2019: <https://proceedings.mlr.press/v97/wang19n.html>
+- Kiryo et al., *Positive-Unlabeled Learning with Non-Negative Risk Estimator*, NeurIPS 2017: <https://proceedings.neurips.cc/paper/2017/hash/7cce53cf90577442771720a370c3c723-Abstract.html>
+- Han et al., *Co-teaching: Robust Training of Deep Neural Networks with Extremely Noisy Labels*, NeurIPS 2018: <https://proceedings.neurips.cc/paper/2018/hash/a19744e268754fb0148b017647355b7b-Abstract.html>
 
 ## Validation 硬门与排序
 
@@ -84,7 +114,7 @@
 
 统一 architecture manifest 由训练 CLI 的架构字段规范化后计算 SHA-256；冻结、checkpoint、summary 和评估产物都记录该 fingerprint。campaign runner 在启动 cohort 前校验所有数据集 fingerprint 一致，不一致即拒绝运行。
 
-新增标准库 `unittest` 覆盖：mastery 始终非空且形状为 `[students, concepts]`；base-equivalent 初始化；模块不能被数据集配置关闭；任意数量 manifest 的 fingerprint 一致；primary cohort 冻结后不可替换成员；standard/holdout 分发；DOA 输入语义；validation-only 模块选择；失败 attempt 不静默改变 batch。每个候选先进行 synthetic CPU/GPU smoke，再进入真实数据训练。
+新增标准库 `unittest` 覆盖：M1–M4 的输入输出契约；mastery 始终非空且形状为 `[students, concepts]`；单调解码约束；M2 输出随学生 TKC states 改变；M3 在 TKC/UKC 缺失边界上行为明确；不存在 legacy/hybrid readout 绕过；模块不能被数据集配置关闭；任意数量 manifest 的 fingerprint 一致；primary cohort 冻结后不可替换成员；standard/holdout 分发；DOA 输入语义；validation-only 模块选择；失败 attempt 不静默改变 batch。每个候选先进行 synthetic CPU/GPU smoke，再进入真实数据训练。
 
 GPU 继续优先选择空闲卡；显存未过半的卡允许并发，但同一卡使用 `flock` 串行保护。所有数据、日志、checkpoint、预测和 mastery 留在远端资产目录，不进入 Git。实现里程碑以 `chiangWC <215551297+chiangWC@users.noreply.github.com>` 提交并生成 bundle，不 push，也不修改 `decoupled_cd_v2`。
 
