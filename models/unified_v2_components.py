@@ -158,8 +158,10 @@ class CoverageAwareStateComposer(nn.Module):
     def __init__(self, *, dim: int) -> None:
         super().__init__()
         del dim
-        self.confidence_scale = nn.Parameter(torch.ones(3))
-        self.confidence_bias = nn.Parameter(torch.zeros(3))
+        self.direct_log_slope = nn.Parameter(torch.zeros(()))
+        self.direct_intercept = nn.Parameter(torch.zeros(()))
+        self.inferred_log_slope = nn.Parameter(torch.zeros(()))
+        self.inferred_intercept = nn.Parameter(torch.zeros(()))
 
     def forward(
         self,
@@ -180,7 +182,24 @@ class CoverageAwareStateComposer(nn.Module):
             dim=-1,
         )
         log_odds = torch.logit(confidence.clamp(1e-6, 1.0 - 1e-6))
-        logits = self.confidence_scale * log_odds + self.confidence_bias
+        direct_logit = (
+            self.direct_log_slope.exp()
+            * (log_odds[..., 0] - log_odds[..., 2])
+            + self.direct_intercept
+        )
+        inferred_logit = (
+            self.inferred_log_slope.exp()
+            * (log_odds[..., 1] - log_odds[..., 2])
+            + self.inferred_intercept
+        )
+        logits = torch.stack(
+            [
+                direct_logit,
+                inferred_logit,
+                torch.zeros_like(direct_logit),
+            ],
+            dim=-1,
+        )
         tkc_valid = tkc_mask.bool()
         valid = torch.stack(
             [

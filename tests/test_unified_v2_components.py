@@ -116,6 +116,40 @@ class UnifiedComponentTests(unittest.TestCase):
 
         self.assertFalse(torch.equal(before[..., 1], after[..., 1]))
 
+    def test_m3_calibration_has_no_jacobian_null_direction(self):
+        composer = CoverageAwareStateComposer(dim=2)
+        _, weights = composer(
+            tkc_states=torch.zeros(1, 4, 2),
+            ukc_states=torch.zeros(1, 4, 2),
+            concept_prior=torch.zeros(4, 2),
+            tkc_mask=torch.tensor([[1.0, 1.0, 0.0, 0.0]]),
+            direct_reliability=torch.tensor([[0.2, 0.7, 0.0, 0.0]]),
+            inferred_reliability=torch.tensor([[0.0, 0.0, 0.25, 0.65]]),
+        )
+        selected_weights = torch.stack(
+            [
+                weights[0, 0, 0],
+                weights[0, 1, 0],
+                weights[0, 2, 1],
+                weights[0, 3, 1],
+            ]
+        )
+        parameters = tuple(composer.parameters())
+        jacobian_rows = []
+        for weight in selected_weights:
+            gradients = torch.autograd.grad(
+                weight,
+                parameters,
+                retain_graph=True,
+            )
+            jacobian_rows.append(
+                torch.cat([gradient.reshape(-1) for gradient in gradients])
+            )
+        jacobian = torch.stack(jacobian_rows)
+
+        self.assertEqual(tuple(jacobian.shape), (4, 4))
+        self.assertEqual(int(torch.linalg.matrix_rank(jacobian)), 4)
+
     def test_b0_always_emits_student_concept_mastery(self):
         model = UnifiedDecoupledCDM(
             num_students=3,
