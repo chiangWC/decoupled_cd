@@ -56,6 +56,66 @@ class UnifiedComponentTests(unittest.TestCase):
             inspect.signature(CoverageAwareStateComposer.forward).parameters,
         )
 
+    def test_m3_unreachable_ukc_has_only_prior_candidate(self):
+        composer = CoverageAwareStateComposer(dim=2)
+        prior = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+
+        state, weight = composer(
+            tkc_states=torch.zeros(1, 2, 2),
+            ukc_states=prior.unsqueeze(0),
+            concept_prior=prior,
+            tkc_mask=torch.tensor([[1.0, 0.0]]),
+            direct_reliability=torch.tensor([[0.4, 0.0]]),
+            inferred_reliability=torch.zeros(1, 2),
+        )
+
+        self.assertEqual(float(weight[0, 1, 1]), 0.0)
+        self.assertEqual(float(weight[0, 1, 2]), 1.0)
+        self.assertTrue(torch.equal(state[0, 1], prior[1]))
+
+    def test_m3_all_calibration_parameters_receive_nonzero_gradients(self):
+        composer = CoverageAwareStateComposer(dim=2)
+        state, _ = composer(
+            tkc_states=torch.tensor(
+                [[[1.0, 2.0], [2.0, 3.0], [0.0, 0.0], [0.0, 0.0]]]
+            ),
+            ukc_states=torch.tensor(
+                [[[0.0, 0.0], [0.0, 0.0], [3.0, 4.0], [4.0, 5.0]]]
+            ),
+            concept_prior=torch.zeros(4, 2),
+            tkc_mask=torch.tensor([[1.0, 1.0, 0.0, 0.0]]),
+            direct_reliability=torch.tensor([[0.2, 0.3, 0.0, 0.0]]),
+            inferred_reliability=torch.tensor([[0.0, 0.0, 0.25, 0.35]]),
+        )
+
+        state.sum().backward()
+
+        for name, parameter in composer.named_parameters():
+            with self.subTest(parameter=name):
+                self.assertIsNotNone(parameter.grad)
+                self.assertTrue(torch.isfinite(parameter.grad).all())
+                self.assertTrue(torch.all(parameter.grad != 0), parameter.grad)
+
+    def test_m3_optimizer_step_changes_partial_inference_weight(self):
+        composer = CoverageAwareStateComposer(dim=2)
+        optimizer = torch.optim.SGD(composer.parameters(), lr=0.1)
+        inputs = {
+            "tkc_states": torch.zeros(1, 1, 2),
+            "ukc_states": torch.ones(1, 1, 2),
+            "concept_prior": torch.zeros(1, 2),
+            "tkc_mask": torch.zeros(1, 1),
+            "direct_reliability": torch.zeros(1, 1),
+            "inferred_reliability": torch.tensor([[0.25]]),
+        }
+        _, before = composer(**inputs)
+
+        optimizer.zero_grad()
+        (-before[..., 1].sum()).backward()
+        optimizer.step()
+        _, after = composer(**inputs)
+
+        self.assertFalse(torch.equal(before[..., 1], after[..., 1]))
+
     def test_b0_always_emits_student_concept_mastery(self):
         model = UnifiedDecoupledCDM(
             num_students=3,
@@ -279,15 +339,73 @@ class UnifiedComponentTests(unittest.TestCase):
         self.assertTrue(torch.equal(out.reachable_mask, expected_reachability))
         self.assertTrue(
             torch.equal(
-                out.inferred_reliability,
-                expected_reachability.float(),
+                out.inferred_reliability.gt(0),
+                expected_reachability,
             )
+        )
+        self.assertTrue(
+            torch.all(out.inferred_reliability[expected_reachability] < 1.0)
         )
         self.assertTrue(torch.equal(out.ukc_states[0, 1:], torch.zeros(2, 2)))
         self.assertTrue(
             torch.equal(
                 out.ukc_states[1, 1:],
                 module.concept_prior[1:],
+            )
+        )
+
+    def test_m2_reliability_tracks_source_evidence_and_hop_decay(self):
+        module = UntestedKnowledgeInferenceNetwork(
+            num_concepts=4,
+            dim=2,
+            layers=2,
+        )
+        tkc_mask = torch.tensor(
+            [[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]
+        )
+        out = module(
+            tkc_states=torch.zeros(2, 4, 2),
+            tkc_mask=tkc_mask,
+            ukc_mask=1.0 - tkc_mask,
+            concept_graph=torch.tensor(
+                [
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 0.0],
+                ]
+            ),
+            direct_reliability=torch.tensor(
+                [[0.25, 0.0, 0.0, 0.0], [0.75, 0.0, 0.0, 0.0]]
+            ),
+        )
+
+        self.assertTrue(
+            torch.equal(
+                out.reachable_mask,
+                torch.tensor(
+                    [
+                        [False, True, True, False],
+                        [False, True, True, False],
+                    ]
+                ),
+            )
+        )
+        reachable_reliability = out.inferred_reliability[:, 1:3]
+        self.assertTrue(torch.all(reachable_reliability > 0.0))
+        self.assertTrue(torch.all(reachable_reliability < 1.0))
+        self.assertTrue(
+            torch.all(reachable_reliability[1] > reachable_reliability[0])
+        )
+        self.assertTrue(
+            torch.all(
+                reachable_reliability[:, 0] > reachable_reliability[:, 1]
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                out.inferred_reliability[:, 3],
+                torch.zeros(2),
             )
         )
 

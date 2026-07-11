@@ -60,6 +60,8 @@ class TestedKnowledgeEvidenceEncoder(nn.Module):
 
 
 class UntestedKnowledgeInferenceNetwork(nn.Module):
+    RELIABILITY_DECAY = 0.9
+
     def __init__(
         self,
         *,
@@ -97,6 +99,7 @@ class UntestedKnowledgeInferenceNetwork(nn.Module):
 
         hidden = tkc_states
         structurally_reachable = tkc_mask.bool() & direct_reliability.gt(0)
+        propagated_reliability = eligible_source
         for index, layer in enumerate(self.layers):
             transition = (
                 first_transition
@@ -121,6 +124,16 @@ class UntestedKnowledgeInferenceNetwork(nn.Module):
             structurally_reachable = (
                 structurally_reachable | propagated_reachability
             )
+            propagated_reliability = torch.where(
+                tkc_mask.bool(),
+                eligible_source,
+                self.RELIABILITY_DECAY
+                * torch.einsum(
+                    "kj,sj->sk",
+                    later_transition,
+                    propagated_reliability,
+                ),
+            )
 
         reachable = structurally_reachable & ukc_mask.bool()
         prior = self.concept_prior.unsqueeze(0).expand_as(hidden)
@@ -129,7 +142,11 @@ class UntestedKnowledgeInferenceNetwork(nn.Module):
             hidden,
             prior,
         ) * ukc_mask.unsqueeze(-1)
-        inferred_reliability = reachable.to(tkc_states.dtype)
+        inferred_reliability = torch.where(
+            reachable,
+            propagated_reliability,
+            torch.zeros_like(propagated_reliability),
+        )
         return InferredKnowledgeState(
             ukc_states=ukc_states,
             inferred_reliability=inferred_reliability,
@@ -140,10 +157,9 @@ class UntestedKnowledgeInferenceNetwork(nn.Module):
 class CoverageAwareStateComposer(nn.Module):
     def __init__(self, *, dim: int) -> None:
         super().__init__()
-        self.quality_network = nn.Linear(3, 3)
-        with torch.no_grad():
-            self.quality_network.weight.copy_(28.0 * torch.eye(3))
-            self.quality_network.bias.fill_(-14.0)
+        del dim
+        self.confidence_scale = nn.Parameter(torch.ones(3))
+        self.confidence_bias = nn.Parameter(torch.zeros(3))
 
     def forward(
         self,
@@ -154,7 +170,7 @@ class CoverageAwareStateComposer(nn.Module):
         direct_reliability: torch.Tensor,
         inferred_reliability: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        quality = torch.stack(
+        confidence = torch.stack(
             [
                 direct_reliability,
                 inferred_reliability,
@@ -163,11 +179,17 @@ class CoverageAwareStateComposer(nn.Module):
             ],
             dim=-1,
         )
-        logits = self.quality_network(quality).view(*quality.shape[:-1], 3)
+        log_odds = torch.logit(confidence.clamp(1e-6, 1.0 - 1e-6))
+        logits = self.confidence_scale * log_odds + self.confidence_bias
+        tkc_valid = tkc_mask.bool()
         valid = torch.stack(
-            [tkc_mask, 1.0 - tkc_mask, torch.ones_like(tkc_mask)],
+            [
+                tkc_valid,
+                ~tkc_valid & inferred_reliability.gt(0),
+                torch.ones_like(tkc_valid),
+            ],
             dim=-1,
-        ).bool()
+        )
         weights = torch.softmax(
             logits.masked_fill(~valid, -1e9),
             dim=-1,
