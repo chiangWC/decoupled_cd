@@ -19,6 +19,7 @@ from scripts.unified_dataset_audit import canonical_sha256
 
 
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+NONCE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ARCHITECTURES = {
     "b0": ("prior", "mask"),
     "m2": ("graph", "mask"),
@@ -361,6 +362,13 @@ def _finite_metric(summary: Mapping[str, Any], field: str) -> float:
     ):
         raise ValueError(f"validation summary metric is invalid: {field}")
     return value
+
+
+def _finite_nonnegative(summary: Mapping[str, Any], field: str) -> float:
+    value = summary.get(field)
+    if type(value) not in {int, float} or not math.isfinite(value) or value < 0.0:
+        raise ValueError(f"validation summary value is invalid: {field}")
+    return float(value)
 
 
 def _has_test_token(value: str) -> bool:
@@ -711,15 +719,15 @@ def _verify_split_proof(
     mastery_shape = summary.get("mastery_shape")
     if (
         not isinstance(mastery_shape, list)
-        or not mastery_shape
+        or len(mastery_shape) != 2
         or any(type(value) is not int or value <= 0 for value in mastery_shape)
     ):
-        raise ValueError(f"{split_id} mastery_shape must be nonempty and positive")
-    _finite_metric(summary, "final_loss")
+        raise ValueError(f"{split_id} mastery_shape must contain two positive integers")
+    _finite_nonnegative(summary, "final_loss")
     numerical_recipe = summary.get("numerical_recipe")
     if not isinstance(numerical_recipe, Mapping):
         raise ValueError(f"{split_id} numerical_recipe is missing")
-    mastery_loss_weight = _finite_metric(
+    mastery_loss_weight = _finite_nonnegative(
         numerical_recipe, "mastery_loss_weight"
     )
     if mastery_loss_weight <= 0.0:
@@ -882,6 +890,52 @@ def _ensure_issued_capabilities(
     return filenames
 
 
+def _validate_pending_token(
+    state: Mapping[str, Any], token: Mapping[str, Any]
+) -> None:
+    dataset_ids = state.get("dataset_ids")
+    cursor = state.get("cursor")
+    if (
+        not isinstance(dataset_ids, list)
+        or type(cursor) is not int
+        or not 0 <= cursor < len(dataset_ids)
+    ):
+        raise ValueError("controller progress cannot validate pending issuance")
+    common = {
+        "schema_version": 1,
+        "controller_id": state.get("controller_id"),
+        "route_commit": state.get("route_commit"),
+        "counter": int(state.get("issuance_counter", 0)) + 1,
+        "dataset_id": dataset_ids[cursor],
+    }
+    if set(token) != {*common, "capabilities"} or any(
+        token.get(field) != value for field, value in common.items()
+    ):
+        raise ValueError("pending issuance token envelope is invalid")
+    capabilities = token.get("capabilities")
+    if not isinstance(capabilities, Mapping) or set(capabilities) != {
+        "standard",
+        "holdout",
+    }:
+        raise ValueError("pending issuance split set is invalid")
+    nonces: set[str] = set()
+    for split_id in ("standard", "holdout"):
+        capability = capabilities.get(split_id)
+        expected_fields = {*common, "split_id", "nonce"}
+        if (
+            not isinstance(capability, Mapping)
+            or set(capability) != expected_fields
+            or any(capability.get(field) != value for field, value in common.items())
+            or capability.get("split_id") != split_id
+            or not isinstance(capability.get("nonce"), str)
+            or NONCE_PATTERN.fullmatch(str(capability["nonce"])) is None
+        ):
+            raise ValueError(f"pending {split_id} capability is invalid")
+        nonces.add(str(capability["nonce"]))
+    if len(nonces) != 2:
+        raise ValueError("pending issuance capability nonces must be distinct")
+
+
 def _finish_pending_issuance(
     *,
     state_dir: Path,
@@ -895,6 +949,7 @@ def _finish_pending_issuance(
     token = pending.get("token")
     if registered_output != output_path or not isinstance(token, Mapping):
         raise ValueError("pending issuance output does not match registry")
+    _validate_pending_token(state, token)
     filenames = _ensure_issued_capabilities(state_dir, token)
     state["active_pair"] = {
         "counter": token["counter"],
@@ -957,29 +1012,7 @@ def authorize_next(
             if output_path.stat().st_size == 0:
                 _unlink_fsync(output_path)
             else:
-                try:
-                    reservation, _ = _snapshot_json(
-                        output_path, label="authorization output reservation"
-                    )
-                except ValueError as error:
-                    raise FileExistsError(output_path) from error
-                token = reservation.get("token")
-                if (
-                    reservation.get("controller_reservation")
-                    != state.get("controller_id")
-                    or not isinstance(token, Mapping)
-                ):
-                    raise FileExistsError(output_path)
-                state["pending_issuance"] = {
-                    "output_path": str(output_path),
-                    "token": token,
-                }
-                _atomic_json(state_dir / "state.json", state)
-                return _finish_pending_issuance(
-                    state_dir=state_dir,
-                    state=state,
-                    output_path=output_path,
-                )
+                raise FileExistsError(output_path)
         _exclusive_bytes(output_path, b"")
         original_state = json.loads(json.dumps(state))
         original_issued = {path.name for path in (state_dir / "issued").glob("*.json")}
@@ -1037,14 +1070,6 @@ def authorize_next(
                 **common,
                 "capabilities": capabilities,
             }
-            _atomic_json(
-                output_path,
-                {
-                    "schema_version": 1,
-                    "controller_reservation": state["controller_id"],
-                    "token": token,
-                },
-            )
             state["pending_issuance"] = {
                 "output_path": str(output_path),
                 "token": token,
@@ -1291,27 +1316,42 @@ def consume_split_capability(
     with _controller_lock(state_dir):
         state = _load_state(state_dir, repo_root)
         token = _load_json(token_path.resolve(), label="capability token")
+        active_pair = state.get("active_pair")
+        if not isinstance(active_pair, Mapping):
+            raise ValueError("controller has no active issued pair")
+        authoritative_token = active_pair.get("token")
+        if not isinstance(authoritative_token, Mapping) or token != authoritative_token:
+            raise ValueError("capability token does not match active controller token")
         capabilities = token.get("capabilities")
-        if not isinstance(capabilities, Mapping):
+        if not isinstance(capabilities, Mapping) or set(capabilities) != {
+            "standard",
+            "holdout",
+        }:
             raise ValueError("capability token has no split registry references")
         capability = capabilities.get(split_id)
         if not isinstance(capability, Mapping):
             raise ValueError(f"capability token has no {split_id} capability")
         capability = dict(capability)
         expected_top = {
-            field: capability.get(field)
-            for field in (
-                "controller_id",
-                "route_commit",
-                "counter",
-                "dataset_id",
-            )
+            "schema_version": 1,
+            "controller_id": state.get("controller_id"),
+            "route_commit": state.get("route_commit"),
+            "counter": active_pair.get("counter"),
+            "dataset_id": active_pair.get("dataset_id"),
         }
-        if any(token.get(field) != value for field, value in expected_top.items()):
+        if (
+            set(token) != {*expected_top, "capabilities"}
+            or any(token.get(field) != value for field, value in expected_top.items())
+            or set(capability) != {*expected_top, "split_id", "nonce"}
+            or any(
+                capability.get(field) != value
+                for field, value in expected_top.items()
+            )
+            or capability.get("split_id") != split_id
+            or not isinstance(capability.get("nonce"), str)
+            or NONCE_PATTERN.fullmatch(str(capability["nonce"])) is None
+        ):
             raise ValueError("capability token envelope does not match capability")
-        active_pair = state.get("active_pair")
-        if not isinstance(active_pair, Mapping):
-            raise ValueError("controller has no active issued pair")
         if (
             capability.get("controller_id") != state.get("controller_id")
             or capability.get("route_commit") != state.get("route_commit")
@@ -1346,7 +1386,20 @@ def consume_split_capability(
             or attempt_dir.name in before_attempts.get(split_id, [])
         ):
             raise ValueError("attempt is not the unique new controller launch attempt")
-        issued_path = _capability_path(state_dir, capability)
+        capability_files = active_pair.get("capability_files")
+        issued_name = (
+            capability_files.get(split_id)
+            if isinstance(capability_files, Mapping)
+            else None
+        )
+        if (
+            not isinstance(issued_name, str)
+            or Path(issued_name).name != issued_name
+            or "/" in issued_name
+            or "\\" in issued_name
+        ):
+            raise ValueError("active capability registry filename is invalid")
+        issued_path = state_dir / "issued" / issued_name
         consumed_path = state_dir / "consumed" / issued_path.name
         if consumed_path.exists():
             raise ValueError("capability is already present in the consumed registry")

@@ -546,6 +546,175 @@ print(attempt_dir)
         self.assertEqual(state["issuance_counter"], 0)
         self.assertFalse(any((self.state_dir / "issued").glob("*.json")))
 
+    def test_forged_output_reservation_cannot_select_dataset_or_counter(self) -> None:
+        state = self.initialize()
+        original_state = json.loads(json.dumps(state))
+        output_path = self.root / "forged-reservation.json"
+        common = {
+            "schema_version": 1,
+            "controller_id": state["controller_id"],
+            "route_commit": state["route_commit"],
+            "counter": 999,
+            "dataset_id": "XES3G5M",
+        }
+        token = {
+            **common,
+            "capabilities": {
+                split_id: {
+                    **common,
+                    "split_id": split_id,
+                    "nonce": split_id[0] * 64,
+                }
+                for split_id in ("standard", "holdout")
+            },
+        }
+        output_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "controller_reservation": state["controller_id"],
+                    "token": token,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(FileExistsError):
+            authorize_next(
+                state_dir=self.state_dir,
+                repo_root=PROJECT_ROOT,
+                output_path=output_path,
+            )
+
+        self.assertEqual(
+            json.loads((self.state_dir / "state.json").read_text()), original_state
+        )
+        self.assertFalse(any((self.state_dir / "issued").rglob("*.json")))
+
+    def test_forged_output_reservation_cannot_traverse_registry_paths(self) -> None:
+        state = self.initialize()
+        original_state = json.loads(json.dumps(state))
+        output_path = self.root / "traversal-reservation.json"
+        common = {
+            "schema_version": 1,
+            "controller_id": state["controller_id"],
+            "route_commit": state["route_commit"],
+            "counter": 1,
+            "dataset_id": "../XES3G5M",
+        }
+        token = {
+            **common,
+            "capabilities": {
+                "standard": {
+                    **common,
+                    "split_id": "standard",
+                    "nonce": "../../escape",
+                },
+                "holdout": {
+                    **common,
+                    "split_id": "holdout",
+                    "nonce": "a" * 64,
+                },
+            },
+        }
+        output_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "controller_reservation": state["controller_id"],
+                    "token": token,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(FileExistsError):
+            authorize_next(
+                state_dir=self.state_dir,
+                repo_root=PROJECT_ROOT,
+                output_path=output_path,
+            )
+
+        self.assertEqual(
+            json.loads((self.state_dir / "state.json").read_text()), original_state
+        )
+        self.assertFalse(any((self.state_dir / "issued").rglob("*.json")))
+        self.assertFalse((self.state_dir / "escape.json").exists())
+
+    def test_pending_token_validator_binds_exact_controller_state(self) -> None:
+        state = self.initialize()
+        common = {
+            "schema_version": 1,
+            "controller_id": state["controller_id"],
+            "route_commit": state["route_commit"],
+            "counter": 1,
+            "dataset_id": "ASSIST09",
+        }
+        valid = {
+            **common,
+            "capabilities": {
+                split_id: {
+                    **common,
+                    "split_id": split_id,
+                    "nonce": character * 64,
+                }
+                for split_id, character in (("standard", "a"), ("holdout", "b"))
+            },
+        }
+        controller_module._validate_pending_token(state, valid)
+
+        invalid_tokens = []
+        for field, value in (
+            ("controller_id", "forged"),
+            ("route_commit", "f" * 40),
+            ("counter", 999),
+            ("dataset_id", "XES3G5M"),
+        ):
+            forged = json.loads(json.dumps(valid))
+            forged[field] = value
+            invalid_tokens.append(forged)
+        forged = json.loads(json.dumps(valid))
+        forged["capabilities"]["standard"]["counter"] = 999
+        invalid_tokens.append(forged)
+        forged = json.loads(json.dumps(valid))
+        forged["capabilities"]["extra"] = forged["capabilities"]["standard"]
+        invalid_tokens.append(forged)
+        forged = json.loads(json.dumps(valid))
+        forged["capabilities"]["standard"]["nonce"] = "A" * 64
+        invalid_tokens.append(forged)
+        forged = json.loads(json.dumps(valid))
+        forged["capabilities"]["standard"]["nonce"] = "../escape"
+        invalid_tokens.append(forged)
+
+        for index, forged in enumerate(invalid_tokens):
+            with self.subTest(case=index), self.assertRaises(ValueError):
+                controller_module._validate_pending_token(state, forged)
+
+    def test_consume_uses_active_registry_filename_not_caller_fields(self) -> None:
+        self.initialize()
+        token_path, _ = self.issue()
+        state = json.loads((self.state_dir / "state.json").read_text())
+        self._set_unit_launch(state, dataset_id="ASSIST09")
+        attempt_dir = self.artifact_root / "ASSIST09" / "standard" / "attempt-001"
+        attempt_dir.mkdir(parents=True)
+
+        with patch(
+            "scripts.unified_validation_controller._capability_path",
+            side_effect=AssertionError("consume reconstructed an untrusted path"),
+        ):
+            consumed = consume_split_capability(
+                state_dir=self.state_dir,
+                repo_root=PROJECT_ROOT,
+                token_path=token_path,
+                dataset_id="ASSIST09",
+                split_id="standard",
+                architecture="m2",
+                data_root=Path(state["data_root"]),
+                raw_output=Path("validation-summary.json"),
+                attempt_dir=attempt_dir,
+            )
+        self.assertEqual(consumed["split_id"], "standard")
+
     def test_final_token_write_failure_rolls_back_issuance_transaction(self) -> None:
         self.initialize()
         output_path = self.root / "capability.json"
@@ -613,6 +782,50 @@ controller.authorize_next(
         state = json.loads((self.state_dir / "state.json").read_text())
         self.assertTrue(state["active_pair"]["token_published"])
         self.assertIsNone(state["pending_issuance"])
+
+    def test_process_death_after_placeholder_before_pending_generates_fresh_token(self) -> None:
+        self.initialize()
+        output_path = self.root / "placeholder-crash-capability.json"
+        code = f"""
+import os
+from pathlib import Path
+from scripts import unified_validation_controller as controller
+
+original = controller._exclusive_bytes
+output = Path({str(output_path)!r}).resolve()
+def crash(path, data, **kwargs):
+    original(path, data, **kwargs)
+    if path.resolve() == output:
+        os._exit(92)
+controller._exclusive_bytes = crash
+controller.authorize_next(
+    state_dir=Path({str(self.state_dir)!r}),
+    repo_root=Path({str(PROJECT_ROOT)!r}),
+    output_path=output,
+)
+"""
+        crashed = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=PROJECT_ROOT,
+            check=False,
+            env=controller_module._sanitized_subprocess_env(),
+        )
+        self.assertEqual(crashed.returncode, 92)
+        state_after_crash = json.loads((self.state_dir / "state.json").read_text())
+        self.assertIsNone(state_after_crash["pending_issuance"])
+        self.assertIsNone(state_after_crash["active_pair"])
+        self.assertEqual(output_path.stat().st_size, 0)
+        self.assertFalse(any((self.state_dir / "issued").glob("*.json")))
+
+        recovered = authorize_next(
+            state_dir=self.state_dir,
+            repo_root=PROJECT_ROOT,
+            output_path=output_path,
+        )
+        self.assertEqual(recovered["counter"], 1)
+        self.assertEqual(recovered["dataset_id"], "ASSIST09")
+        self.assertEqual(set(recovered["capabilities"]), {"standard", "holdout"})
+        self.assertEqual(json.loads(output_path.read_text()), recovered)
 
     def test_forged_recomputed_hash_token_has_no_registry_authority(self) -> None:
         self.initialize()
@@ -980,7 +1193,7 @@ controller.authorize_next(
         self.assertEqual(state["cursor"], 1)
         self.assertEqual(state["successes"], 1)
         self.assertEqual(len(list((self.state_dir / "proofs").glob("*.json"))), 1)
-        with self.assertRaisesRegex(ValueError, "stale|registry|issued"):
+        with self.assertRaisesRegex(ValueError, "stale|registry|issued|active controller"):
             consume_split_capability(
                 state_dir=self.state_dir,
                 repo_root=PROJECT_ROOT,
@@ -1164,8 +1377,12 @@ controller.authorize_next(
         status_path = Path(standard["status_path"])
         cases = (
             ("mastery_shape", [], "mastery_shape"),
+            ("mastery_shape", [2], "mastery_shape"),
+            ("final_loss", -0.1, "final_loss"),
             ("final_loss", float("inf"), "final_loss"),
             ("mastery_loss_weight", 0.0, "mastery_loss_weight"),
+            ("mastery_loss_weight", -0.1, "mastery_loss_weight"),
+            ("mastery_loss_weight", float("inf"), "mastery_loss_weight"),
         )
         for field, value, expected in cases:
             with self.subTest(field=field):
@@ -1186,6 +1403,33 @@ controller.authorize_next(
                 status_path.write_text(json.dumps(status), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, expected):
                     self._advance_unit_launch()
+
+    def test_summary_allows_unbounded_finite_loss_and_mastery_weight(self) -> None:
+        self.initialize()
+        token_path, token = self.issue()
+        records = self._prepare_pair_artifacts(
+            token_path, token, dataset_id="ASSIST09"
+        )
+        for split_id in ("standard", "holdout"):
+            record = records[split_id]
+            summary = dict(record["summary"])
+            summary["final_loss"] = 1.08
+            summary["numerical_recipe"] = {"mastery_loss_weight": 2.0}
+            summary_path = Path(record["summary_path"])
+            summary_path.write_text(json.dumps(summary), encoding="utf-8")
+            status = dict(record["status"])
+            status["output_hashes"] = {
+                "validation-summary.json": {
+                    "exists": True,
+                    **self._fingerprint(summary_path),
+                }
+            }
+            Path(record["status_path"]).write_text(
+                json.dumps(status), encoding="utf-8"
+            )
+
+        result = self._advance_unit_launch()
+        self.assertEqual(result["cursor"], 1)
 
     def test_advance_rechecks_controller_owned_baseline_hash_at_use(self) -> None:
         self.initialize()
