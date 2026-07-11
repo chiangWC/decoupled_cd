@@ -2,97 +2,95 @@
 
 ## Goal and trust boundary
 
-Replace caller-computable authorization hashes with a controller-owned,
-repository-bound one-time capability registry. The controller trusts its own
-state directory, the exact registered Git route commit, a verified cohort and
-architecture manifest, a copied baseline table, and outer campaign proofs
-tied to capabilities consumed by `run-split`. It does not trust caller-created
-decision JSON or an unregistered token.
+Replace caller-computable authorization and caller-authored proof files with a
+controller-owned, repository-bound execution state machine. The controller
+trusts only its fsynced state directory, exact registered Git commit,
+controller-copied cohort/manifest/baseline, registered validation data
+snapshots, and artifacts created by outer-campaign processes it directly
+launches and immediately snapshots. Caller-created decisions, statuses,
+summaries, paths, and internally consistent hashes have no authority.
 
-Task 9 is a new registered iteration. It begins at zero successes with four
-ordered cohort datasets remaining; Task 8 results remain exploratory.
+Task 9 is a new registered iteration. Task 8 results remain exploratory.
 
-## State directory
+## Exclusive registration
 
-`controller-init` creates the state directory with an exclusive `mkdir` and
-fails if it exists. Under one repository lock it records:
+`controller-init` exclusively creates the state directory and registers:
 
 - a random controller ID and exact current route HEAD;
-- canonical copies of the verified cohort and candidate architecture manifest,
-  plus cohort SHA-256, manifest SHA-256, and architecture fingerprint;
-- the cohort's dataset order, cursor, successes, and zero-delta threshold state;
-- a canonical copy and hash of complete baseline rows in the same dataset order;
-- monotonic issuance counter and the active pair, if any.
+- canonical copies/hashes of the cohort, candidate manifest/fingerprint, and
+  complete ordered baseline rows;
+- an explicit validation data root and exact train/valid/Q/holdout-assignment
+  paths and single-open fingerprints for every ordered dataset/split;
+- an explicit artifact root under which the controller alone allocates
+  per-dataset/per-split outer attempts;
+- cursor, successes, final zero-delta threshold, issuance counter, and launch
+  state.
 
-State JSON writes use write-fsync-rename-directory-fsync. Cohort, manifest,
-baseline, issued capabilities, consumed capabilities, and proofs are created
-exclusively or atomically renamed and fsynced. All transitions hold
-`controller.lock` with `flock(LOCK_EX)`.
+Registration recursively rejects test fields/paths. State, input copies,
+capability registries, launch journals, and proofs use exclusive creation or
+write-fsync-rename-directory-fsync under one `flock`.
 
 ## Capability lifecycle
 
-`authorize` accepts only the controller directory, repository root, and output
-path. It never accepts successes, remaining, allowed datasets, decision JSON,
-or proof paths.
+`authorize` accepts only controller state, repository root, and its output. It
+issues random standard/holdout capabilities only for the next ordered dataset.
+Each exact payload is stored in `issued/`; tokens contain no self-authentication
+hash. Issuance uses an O_EXCL output reservation plus a controller-owned pending
+journal so interruption is idempotently recovered or re-emitted.
 
-On the first call it issues capabilities only for the first ordered dataset's
-`standard` and `holdout` splits. Each capability has the controller ID, route
-commit, counter, dataset, split, and a cryptographically random nonce. The
-bearer token contains both capability payloads, while exact copies live in the
-controller's `issued/` registry. The token has no self-authentication hash.
+`run-split` may consume a capability only while a matching controller-owned
+launch journal is in `running` phase. It verifies exact route, counter,
+dataset/split/nonce, registered data root, and that `CAMPAIGN_ATTEMPT_DIR` is the
+unique new attempt beneath the registered artifact path. It first durably
+stages the complete consumption record and then atomically publishes it in
+`consumed/`; consumed existence is authoritative if issued cleanup is
+interrupted. Fabrication, reuse, stale counters, manual invocation, and route
+drift fail before child output/GPU/data work.
 
-`run-split` consumes one capability at its first executable line, before
-resolving/creating output or work paths and before GPU or data access. Under
-the controller lock it verifies route HEAD, active counter, dataset/split, and
-exact payload equality with the issued registry record. It records the
-resolved `CAMPAIGN_ATTEMPT_DIR` and expected validation-summary path, then
-records the runner's data root and the exact expected train/valid/Q/assignment
-paths without opening them, and atomically renames the capability from
-`issued/` to `consumed/`. A fabricated,
-reused, stale, or route-mismatched capability fails before child side effects.
-An outer campaign may already have created a failed attempt shell, but it
-cannot read child data, train, or become progress proof.
+## Controller-owned launch and proof
 
-## Progress proof and gates
+`run-pair` accepts no data, attempt, status, summary, command, or decision path.
+Under the controller lock it registers an irreversible launch ID and the exact
+two outer commands, then directly starts the repository's existing remote
+campaign runner for standard and holdout using the registered inputs and
+capabilities. Tests use an actual controlled temporary subprocess/runner and
+real attempt file lifecycle, not a mocked completion object.
 
-A later `authorize` call first advances the previously issued dataset. It
-derives both attempt directories and summaries solely from the two consumed
-registry records. For each outer `status.json`, it requires completed/exit 0,
-seed 42, the exact registered route commit, exact cohort and manifest immutable
-input fingerprints, and dataset fingerprints. The registered summary path,
-size, and SHA-256 must match the status output record and current file bytes.
-The status dataset manifest must contain exactly the paths recorded during
-capability consumption, and each current file must match its recorded size and
-SHA-256.
-Each summary must bind the registered cohort, manifest/fingerprint,
-controller ID/counter/capability nonce, dataset, split, seed 42, and
-validation-only input role. The controller stores an immutable proof containing status, summary,
-data, and output hashes before advancing.
+The controller requires each process to exit zero and create exactly one new
+attempt at the registered split artifact root. Any split/outer failure or
+controller interruption permanently blocks the iteration; attempts remain as
+negative records and no manual status can recover progress.
 
-Candidate metrics are compared only with the controller-owned baseline row.
-A dataset is a success only when all five conditions hold:
+Immediately after both children succeed, the same controller process freezes
+proof. JSON snapshots use one file descriptor: `fstat`, read bytes, second
+`fstat`, stability check, then size/hash/JSON parsing from those same bytes.
+Dataset snapshots stream/hash one descriptor with the same before/after
+stability check. No proof field is hashed and later reopened for parsing.
 
-- standard overall AUC does not regress;
-- holdout overall AUC does not regress;
-- weighted DOA does not regress;
-- exact-zero AUC strictly improves;
-- ordinary DOA strictly improves.
+Each outer status must bind the exact controller-launched command, route, seed,
+cohort/manifest, and the exact registered data fingerprints. Its summary output
+record must match the same-byte summary snapshot. Summary validation requires
+controller/counter/nonce, dataset/split, canonical manifest/fingerprint,
+cohort, seed 42, valid-only routing, nonempty mastery shape, finite final loss,
+and positive mastery-loss weight. The proof is fsynced before progress advances.
 
-After proof recording, `remaining` is derived from the fixed cursor. If
-`successes + remaining < 3`, authorization fails closed and no new capability
-is issued. Otherwise only the next ordered dataset pair is issued. After the
-last dataset, final global success additionally requires at least one exact-zero
-AUC delta of `0.001` or greater; completion writes state/proof only and issues
-no further capability.
+## Gates and stopping
+
+Candidate metrics are compared only with the controller-owned baseline row. A
+dataset succeeds only when standard and holdout overall AUC and weighted DOA do
+not regress, while exact-zero AUC and ordinary DOA strictly improve. Remaining
+is derived from the fixed cursor. If `successes + remaining < 3`, the iteration
+blocks. Final global success additionally requires at least one zero-AUC delta
+of `0.001` or greater. Only a successful `run-pair` may advance progress.
 
 ## Tests and scope
 
-TDD regressions cover exclusive initialization, only-next-pair issuance,
-forged caller-rehashed tokens, one-time reuse, stale capabilities, fake
-decision inputs, route mismatch, attempt/output hash mismatch, immutable proof
-closure, and consumption before output/GPU/data side effects. Existing cohort
-tamper, routing, no-overwrite, and GPU-lock regressions remain.
+TDD covers exclusive registration; forged/reused/stale capabilities; route
+drift; only-next issuance; pending-issuance recovery; atomic complete consume;
+manual run-split/proof rejection; controlled-Popen provenance and unique new
+attempts; outer failure permanent blocking; single-open TOCTOU injection;
+exact manifest cardinality; baseline/test rejection; every independent metric
+boundary; and positive/negative final threshold cases.
 
-The redesign changes controller/runner code, focused tests, ledger wording,
-and the Task 8 fix report only. It launches no training, reads no real test
-data, does not push, and does not start Task 9.
+No Task 9 controller is initialized, no real campaign/training is launched, no
+real test data is read, and nothing is pushed by this implementation task.

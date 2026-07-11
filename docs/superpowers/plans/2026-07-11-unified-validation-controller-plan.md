@@ -1,121 +1,86 @@
-# Unified Validation Controller Implementation Plan
+# Trusted Unified Validation Launch Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans task-by-task with TDD.
 
-**Goal:** Replace stateless self-hashed authorization with a route-bound, controller-owned, one-time capability state machine whose progress comes from immutable outer campaign proofs.
+**Goal:** Make only controller-launched outer campaigns capable of producing
+validation progress, with crash-safe capabilities and single-open immutable
+snapshots.
 
-**Architecture:** A new `scripts/unified_validation_controller.py` owns exclusive initialization, fsynced JSON state, one flock, issued/consumed capability registries, and proof validation. `scripts/run_unified_validation.py` exposes initialization/authorization CLI commands and calls capability consumption as the first `run-split` action. Progress is derived only from consumed records and their fixed outer attempt artifacts.
+**Architecture:** `unified_validation_controller.py` registers validation data
+and artifact roots, journals issuance/launch, constructs the two fixed outer
+commands, directly runs them, and snapshots the unique new attempts before
+advancing. `run-split` is an internal capability consumer usable only during an
+active launch.
 
-**Tech Stack:** Python 3.12 standard library (`fcntl`, `hashlib`, `json`, `os`, `secrets`, `subprocess`, `pathlib`), existing Unified V2 manifests/cohort schema, `unittest`.
+**Tech stack:** Python standard library, existing remote campaign runner,
+PyTorch/unittest fixtures.
 
-## Global Constraints
+## Constraints
 
-- Work only in the remote `complete_model` worktree; do not push or launch experiments.
-- Read no real test data and accept no test path/metric in controller proofs.
-- Every transition uses one controller flock plus fsynced exclusive-create or atomic replace.
-- Exact current route HEAD must equal the commit registered at initialization.
-- Authorization covers only the next ordered cohort dataset pair.
-- Dataset success is the conjunction of standard/holdout overall non-regression, weighted DOA non-regression, strict zero-AUC improvement, and strict ordinary-DOA improvement.
-- Final global success additionally requires one zero-AUC delta of at least `0.001`.
+- No real experiments, test-data reads, pushes, or caller proof paths.
+- Any launched-pair failure/interruption permanently blocks the iteration.
+- Every JSON/data proof hash and parse derives from one stable descriptor.
+- All controller writes are fsynced, atomic, journaled, and flocked.
 
----
+### Task 1: Stable snapshot and exact registration
 
-### Task 1: Controller initialization and immutable registered inputs
+**Files:** `scripts/unified_validation_controller.py`,
+`tests/test_unified_validation_controller.py`, `scripts/run_unified_validation.py`.
 
-**Files:**
-- Create: `scripts/unified_validation_controller.py`
-- Create: `tests/test_unified_validation_controller.py`
-- Modify: `scripts/run_unified_validation.py`
+- [ ] Add failing TOCTOU tests that replace summary/status between old hash and
+  parse, malformed/duplicate dataset manifest tests, and baseline test-token
+  rejection.
+- [ ] Implement `snapshot_json(path)` and `snapshot_file(path)` using one fd and
+  stable before/after `fstat`; route all proof validation through snapshots.
+- [ ] Extend `controller-init` with required validation data/artifact roots and
+  copy exact no-test data fingerprints into state.
+- [ ] Verify focused GREEN.
 
-**Interfaces:**
-- Produces: `initialize_controller(state_dir: Path, repo_root: Path, cohort_path: Path, manifest_path: Path, architecture: str, baseline_rows_path: Path) -> dict[str, object]`.
-- Produces: `controller-init` CLI with the same inputs.
+### Task 2: Crash-safe capability lifecycle
 
-- [ ] **Step 1: Write failing tests** for exclusive initialization, route HEAD binding, copied cohort/manifest/baseline artifacts, ordered dataset state, and baseline hash/schema rejection.
-- [ ] **Step 2: Run controller tests and verify RED** from the missing module/CLI.
-- [ ] **Step 3: Implement fsync helpers and initialization** using atomic `os.mkdir`, `open("x")`, file/parent fsync, exact `git rev-parse HEAD`, verified cohort loading, exact manifest validation, and baseline row validation.
-- [ ] **Step 4: Run controller and existing cohort tests; verify GREEN.**
+**Files:** `scripts/unified_validation_controller.py`,
+`tests/test_unified_validation_controller.py`.
 
-### Task 2: Next-pair issuance and exact one-time consumption
+- [ ] Observe failure-injection RED for consumed publish, issued cleanup, and
+  issuance interruptions.
+- [ ] Publish a complete consumed record atomically before issued cleanup;
+  consumed existence wins recovery.
+- [ ] Add pending issuance journal/token payload and idempotent recovery/re-emit
+  for every interruption boundary.
+- [ ] Verify forged/reuse/stale/route and crash tests GREEN.
 
-**Files:**
-- Modify: `scripts/unified_validation_controller.py`
-- Modify: `scripts/run_unified_validation.py`
-- Modify: `tests/test_unified_validation_controller.py`
-- Modify: `tests/test_unified_validation.py`
+### Task 3: Controller-owned run-pair provenance
 
-**Interfaces:**
-- Produces: `authorize_next(state_dir: Path, repo_root: Path, output_path: Path) -> dict[str, object]`.
-- Produces: `consume_split_capability(state_dir: Path, repo_root: Path, token_path: Path, dataset_id: str, split_id: str, data_root: Path, raw_output: Path, attempt_dir: Path) -> dict[str, object]`.
-- Token fields: controller ID, route commit, monotonic counter, one dataset ID, and exact standard/holdout payloads with independent random nonces; no authentication hash.
+**Files:** `scripts/unified_validation_controller.py`,
+`scripts/run_unified_validation.py`, `tests/test_unified_validation_controller.py`.
 
-- [ ] **Step 1: Write failing tests** proving only dataset 0 is issued, fabricated/recomputed-hash tokens fail registry lookup, standard/holdout consume independently once, reuse fails, stale counters fail, and route mismatch fails.
-- [ ] **Step 2: Run each security regression and verify the expected RED failure.**
-- [ ] **Step 3: Implement locked issuance** with exact `issued/` registry records and atomic state update.
-- [ ] **Step 4: Implement locked consumption** that verifies registry payload and route/counter, records attempt/output/data paths, fsyncs, then atomically renames `issued/` to `consumed/`.
-- [ ] **Step 5: Make `_run_split` call consumption first** and replace old stateless authorization inputs with `--controller-state-dir/--repo-root/--capability`.
-- [ ] **Step 6: Run focused tests and verify GREEN.**
+- [ ] Build a controlled temporary outer-runner fixture that really creates a
+  new attempt, running/final status, summary, and hashes via `Popen`.
+- [ ] Observe RED for manual run-split consumption/progress, caller status,
+  nonunique attempts, wrong command, child nonzero, and controller interruption.
+- [ ] Add `run-pair` CLI with no caller paths. Journal the exact fixed commands,
+  Popen both splits, require exit zero and one new registered attempt, then
+  snapshot/freeze proof in the same controller process.
+- [ ] Make failure/interruption permanently block; prohibit later reconstruction.
+- [ ] Verify provenance tests GREEN.
 
-### Task 3: Immutable outer proof advancement and stop gates
+### Task 4: Proof schema and full gates
 
-**Files:**
-- Modify: `scripts/unified_validation_controller.py`
-- Modify: `scripts/run_unified_validation.py`
-- Modify: `tests/test_unified_validation_controller.py`
+**Files:** `scripts/unified_validation_controller.py`,
+`tests/test_unified_validation_controller.py`, `docs/unified_v2_validation_log.md`.
 
-**Interfaces:**
-- `authorize_next` advances an active pair only after both capabilities are consumed and their fixed attempt artifacts validate.
-- Proof records contain consumed identity, status/summary hashes, exact dataset manifests, metrics/deltas, joint success, and route/cohort/manifest/capability bindings.
-
-- [ ] **Step 1: Write proof fixture helpers** that create standard/holdout summaries and completed outer statuses with exact path/size/SHA records.
-- [ ] **Step 2: Write and verify RED tests** for fake decisions, wrong attempt directory, output hash mismatch, route/cohort/manifest/data mismatch, invalid seed/test routing, stale tokens, ordered issuance, and fail-closed reachability.
-- [ ] **Step 3: Implement proof loading from consumed records only** and reject caller proof/decision paths.
-- [ ] **Step 4: Validate outer status closure** against route, immutable cohort/manifest, expected dataset paths/current hashes, and summary output path/size/SHA.
-- [ ] **Step 5: Validate summary capability/schema bindings**, compare the registered baseline row, compute the five-condition joint gate, write a proof, and update progress atomically.
-- [ ] **Step 6: Issue only the next pair or finish without issuance**, enforcing reachability and the final `+0.001` global gate.
-- [ ] **Step 7: Run controller tests and verify GREEN.**
-
-### Task 4: Remove misleading authorization and update evidence boundaries
-
-**Files:**
-- Modify: `scripts/run_unified_validation.py`
-- Modify: `tests/test_unified_validation.py`
-- Modify: `docs/unified_v2_validation_log.md`
-- Modify: `.superpowers/sdd/task-8-fix-report.md`
-
-**Interfaces:**
-- Removes: `authorization_sha256`, `--decision`, `--remaining`, `--allow`, and self-authentication wording.
-- Split summaries add controller ID, counter, nonce, route commit, cohort SHA, and architecture manifest/fingerprint.
-
-- [ ] **Step 1: Write/adjust runner tests** for consumption before output/work/GPU/data side effects and bound summary schema.
-- [ ] **Step 2: Verify RED against any remaining stateless path.**
-- [ ] **Step 3: Delete stateless authorization and update runner summary bindings.**
-- [ ] **Step 4: Update ledger/report** with registry-backed wording and unchanged exploratory classifications.
-- [ ] **Step 5: Run focused tests and verify GREEN.**
+- [ ] Add RED tests for mastery shape, finite loss, positive mastery weight,
+  valid-only routing, every independent five-gate failure/equality boundary,
+  and positive/negative final `0.001` cases.
+- [ ] Implement strict summary/status schema and full joint/final gates.
+- [ ] Remove any caller-driven progress path and update ledger/report wording.
+- [ ] Verify focused tests GREEN.
 
 ### Task 5: Verification and delivery
 
-**Files:**
-- Modify: `.superpowers/sdd/task-8-fix-report.md`
-
-- [ ] **Step 1: Run syntax and whitespace checks.**
-
-```bash
-python -m compileall scripts/unified_validation_controller.py scripts/unified_cohort.py scripts/run_unified_validation.py tests/test_unified_validation_controller.py tests/test_unified_cohort.py tests/test_unified_validation.py
-git diff --check
-```
-
-- [ ] **Step 2: Run focused tests.**
-
-```bash
-python -m unittest tests.test_unified_validation_controller tests.test_unified_cohort tests.test_unified_validation -v
-```
-
-- [ ] **Step 3: Run the full suite.**
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-- [ ] **Step 4: Update fix report** with RED evidence, exact commands/counts, state guarantees, and no experiment/test-data access.
-- [ ] **Step 5: Commit with `chiangWC` identity**, verify exact HEAD/clean tree, rerun focused tests post-commit, and report hashes without pushing.
+- [ ] Run compileall and `git diff --check`.
+- [ ] Run focused controller/cohort/runner tests.
+- [ ] Run the full unittest suite with zero failures.
+- [ ] Update `.superpowers/sdd/task-8-fix-report.md` with RED/GREEN evidence.
+- [ ] Commit as chiangWC, verify exact HEAD/clean tree, rerun focused tests, and
+  report hashes without push/experiment.
