@@ -74,9 +74,10 @@ def _build_cohort(
     return cohort
 
 
-def _load_existing(path: Path) -> dict[str, Any]:
+def load_verified_cohort(path: str | Path) -> dict[str, Any]:
+    cohort_path = Path(path)
     try:
-        existing = json.loads(path.read_text(encoding="utf-8"))
+        existing = json.loads(cohort_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ValueError(f"existing cohort is unreadable: {error}") from error
     if not isinstance(existing, dict):
@@ -84,7 +85,7 @@ def _load_existing(path: Path) -> dict[str, Any]:
     unhashed = dict(existing)
     stored_hash = unhashed.pop("cohort_sha256", None)
     if stored_hash != canonical_sha256(unhashed):
-        raise ValueError("existing cohort canonical SHA-256 mismatch")
+        raise ValueError("canonical SHA-256 mismatch for frozen cohort")
     return existing
 
 
@@ -135,7 +136,7 @@ def freeze_cohort(
             0o644,
         )
     except FileExistsError:
-        existing = _load_existing(cohort_path)
+        existing = load_verified_cohort(cohort_path)
         _verify_existing(existing, cohort)
         return existing
 

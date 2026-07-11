@@ -14,6 +14,13 @@ Task 8 campaign attempt received, opened, or hashed a real test CSV. Outer
 attempt input hashes cover only train, valid, Q-matrix, and (for holdout DOA)
 the holdout-assignment CSV.
 
+The B0 outer attempts predate the cohort freeze. They therefore have no outer
+immutable binding to either the later cohort artifact or an architecture
+manifest. Their inner summaries do verify seed 42, a common B0 fingerprint,
+finite metrics, nonempty mastery, and validation-only routing, but those inner
+checks make B0 a structural reference only; they do not retroactively turn the
+attempts into immutable cohort-bound candidate evidence.
+
 The exact-zero eligible pool is ASSIST09, ASSIST17, MOOCRadar, and XES3G5M.
 NIPS34 is asset-ready but has 0 standard and 0 holdout exact-zero validation
 rows, so it is not counted or frozen. Junyi and EdNet-ICDM remain provisional.
@@ -57,6 +64,9 @@ AUC, and standard ordinary/weighted DOA, matching the global selector schema.
 
 M2 was compared with B0 only after all eight M2 split attempts completed.
 Decision artifact: `<artifact-root>/m2/decision/candidate-decision.json`.
+This Task 8 comparison is retained as exploratory diagnosis. It predates the
+executable authorization path described below and is not a registered Task 9
+iteration.
 
 | Gate | M2 result |
 |---|---|
@@ -68,8 +78,10 @@ Decision artifact: `<artifact-root>/m2/decision/candidate-decision.json`.
 | Ordinary DOA strict improvement on at least 3/4 | FAIL: 2/4 (ASSIST09, ASSIST17) |
 
 M2+M3 was compared with M2 only after all eight M2+M3 split attempts
-completed. The controller allowed this falsification run because M2's strong
-ASSIST09/ASSIST17 gains left a plausible path to three improved datasets.
+completed. This was an exploratory/falsification run outside the
+preregistered stop rule: no executable authorization token was issued or
+consumed before its attempts. It must not be cited as evidence that the stop
+controller authorized a registered continuation.
 Decision artifact: `<artifact-root>/m2-m3/decision/candidate-decision.json`.
 
 | Gate | M2+M3 result |
@@ -84,10 +96,31 @@ Decision artifact: `<artifact-root>/m2-m3/decision/candidate-decision.json`.
 Both candidates fail globally. No numerical tuning was launched because no
 module set passed its hard gate.
 
+### Executable stop controller for Task 9
+
+Task 9 begins a new registered iteration, independent of the exploratory Task
+8 failures. Its initial `authorize` call has zero completed successes and four
+remaining frozen datasets. This `0 + 4 >= 3` state may issue a begin-iteration
+token for the new architecture without an override. After each immutable
+progress decision, the controller derives successes from positive zero-AUC
+and ordinary-DOA deltas and derives remaining from the frozen datasets not yet
+present in progress. If `successes + remaining < 3`, authorization fails
+closed and writes no token. There is no controller-override option by default.
+
+Every Task 9 `run-split` invocation must supply the verified cohort, the exact
+architecture manifest, and an affirmative authorization token. The token
+canonically binds the cohort SHA-256, manifest SHA-256, architecture
+fingerprint, progress-decision hashes, and allowed dataset/split pairs.
+`run-split` validates all bindings before creating an attempt/work directory,
+inspecting GPU state, or reading dataset assets. A missing, tampered,
+mismatched, or out-of-scope token rejects the launch. Each resulting split
+summary records the cohort and authorization hashes, so attempts cannot be
+detached from the registered iteration after the fact.
+
 ### Cumulative diagnosis against B0
 
-Although the registered incremental M2+M3 gate compares against M2, the
-cumulative B0 comparison isolates the replacement target for Task 9.
+Although the historical incremental M2+M3 comparison uses M2 as its reference,
+the cumulative B0 comparison isolates the replacement target for Task 9.
 ASSIST09, ASSIST17, and MOOCRadar all improve holdout zero AUC and standard
 ordinary DOA relative to B0. However, ASSIST09 standard overall AUC falls by
 `-0.0012334417`; ASSIST17 weighted DOA falls by `-0.0008173924`; and
@@ -102,6 +135,10 @@ safe or competitive final architecture.
 Every real job is `<artifact-root>/<candidate>/<dataset>/<split>/attempt-001`.
 All 24 real attempts completed with exit code 0, finite loss, nonempty mastery,
 and no OOM-triggered retry or batch change.
+
+These Task 8 outer attempts were created before the executable authorization
+contract. In particular, their absence of authorization/manifest bindings is
+why M2 and M2+M3 remain exploratory evidence despite the valid inner metrics.
 
 | Candidate | Dataset | Standard GPU / peak GiB | Holdout GPU / peak GiB |
 |---|---|---:|---:|

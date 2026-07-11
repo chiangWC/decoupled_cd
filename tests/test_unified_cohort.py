@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from scripts.unified_cohort import freeze_cohort
+from scripts.unified_cohort import freeze_cohort, load_verified_cohort
 from scripts.unified_dataset_audit import (
     DATASET_LAYOUTS,
     audit_pool,
@@ -182,6 +182,24 @@ class UnifiedCohortFreezeTests(DatasetFixtureMixin, unittest.TestCase):
         self.assertEqual(
             actual_hash, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         )
+
+    def test_public_loader_rejects_tampered_canonical_cohort(self):
+        frozen = freeze_cohort(
+            self.cohort_path,
+            self.dataset_ids,
+            audit=self.audit,
+            b0_validation_references=self.b0_references,
+        )
+        self.assertEqual(load_verified_cohort(self.cohort_path), frozen)
+
+        tampered = copy.deepcopy(frozen)
+        tampered["dataset_ids"] = [*self.dataset_ids, "XES3G5M"]
+        self.cohort_path.write_text(
+            json.dumps(tampered),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "canonical SHA-256 mismatch"):
+            load_verified_cohort(self.cohort_path)
 
     def test_same_freeze_is_idempotent_but_replacement_is_rejected(self):
         original = freeze_cohort(

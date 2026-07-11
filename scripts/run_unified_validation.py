@@ -18,6 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from models.unified_v2_spec import UnifiedArchitectureSpec
+from scripts.unified_cohort import load_verified_cohort
+from scripts.unified_dataset_audit import canonical_sha256
 
 
 ELIGIBLE_DATASET_IDS = (
@@ -298,6 +300,7 @@ def _validate_split_summary(
     dataset_id: str,
     split_id: str,
     fingerprint: str,
+    cohort_sha256: str,
 ) -> None:
     if summary.get("dataset_id") != dataset_id:
         raise ValueError("validation dataset identity mismatch")
@@ -305,6 +308,12 @@ def _validate_split_summary(
         raise ValueError("validation split identity mismatch")
     if summary.get("architecture_fingerprint") != fingerprint:
         raise ValueError("validation architecture fingerprint mismatch")
+    UnifiedArchitectureSpec.from_manifest(
+        summary.get("architecture_manifest"),
+        architecture_fingerprint=fingerprint,
+    )
+    if summary.get("cohort_sha256") != cohort_sha256:
+        raise ValueError("validation summary cohort SHA-256 mismatch")
     if summary.get("seed") != 42:
         raise ValueError("unified validation requires seed 42")
     validate_smoke_summary(
@@ -347,12 +356,14 @@ def assemble_candidate_rows(
             dataset_id=dataset_id,
             split_id="standard",
             fingerprint=fingerprint,
+            cohort_sha256=cohort_sha256,
         )
         _validate_split_summary(
             holdout,
             dataset_id=dataset_id,
             split_id="holdout",
             fingerprint=fingerprint,
+            cohort_sha256=cohort_sha256,
         )
         fingerprints.add(fingerprint)
         rows.append(
@@ -381,6 +392,171 @@ def assemble_candidate_rows(
 
 def can_reach_primary_cohort(*, successes: int, remaining: int) -> bool:
     return successes + remaining >= 3
+
+
+def _load_architecture_manifest(
+    path: Path,
+    *,
+    architecture: str,
+) -> dict[str, Any]:
+    manifest = _load_json(path)
+    expected = architecture_spec(architecture).manifest()
+    if manifest != expected:
+        raise ValueError("architecture manifest does not match requested architecture")
+    return manifest
+
+
+def _parse_allowed_runs(
+    values: Sequence[str], *, cohort_dataset_ids: Sequence[str]
+) -> list[str]:
+    allowed: set[str] = set()
+    for value in values:
+        try:
+            dataset_id, split_id = value.split(":", 1)
+        except ValueError as error:
+            raise ValueError(f"invalid allowed run: {value}") from error
+        if dataset_id not in cohort_dataset_ids or split_id not in {
+            "standard",
+            "holdout",
+        }:
+            raise ValueError(f"invalid allowed run: {value}")
+        allowed.add(f"{dataset_id}:{split_id}")
+    if not allowed:
+        raise ValueError("authorization requires at least one allowed dataset/split")
+    return sorted(allowed)
+
+
+def _decision_progress(
+    paths: Sequence[Path],
+    *,
+    cohort_sha256: str,
+    cohort_dataset_ids: Sequence[str],
+) -> tuple[int, set[str], list[dict[str, object]]]:
+    completed: dict[str, Mapping[str, object]] = {}
+    bindings: list[dict[str, object]] = []
+    for path in paths:
+        decision = _load_json(path)
+        if decision.get("cohort_sha256") != cohort_sha256:
+            raise ValueError("progress decision cohort SHA-256 mismatch")
+        deltas = decision.get("deltas")
+        if not isinstance(deltas, Mapping):
+            raise ValueError("progress decision has no dataset deltas")
+        for dataset_id, metrics in deltas.items():
+            if dataset_id not in cohort_dataset_ids:
+                raise ValueError(
+                    f"progress contains non-cohort dataset: {dataset_id}"
+                )
+            if dataset_id in completed:
+                raise ValueError(f"duplicate progress dataset: {dataset_id}")
+            if not isinstance(metrics, Mapping):
+                raise ValueError(f"invalid progress metrics: {dataset_id}")
+            completed[dataset_id] = metrics
+        bindings.append(
+            {
+                "path": str(path.resolve()),
+                "sha256": canonical_sha256(decision),
+            }
+        )
+    successes = sum(
+        _finite_float(metrics.get("zero_auc"), field="zero_auc") > 0.0
+        and _finite_float(metrics.get("ordinary_doa"), field="ordinary_doa") > 0.0
+        for metrics in completed.values()
+    )
+    return successes, set(completed), bindings
+
+
+def _authorize(args: argparse.Namespace) -> None:
+    cohort = load_verified_cohort(args.cohort)
+    dataset_ids = cohort.get("dataset_ids")
+    cohort_hash = cohort.get("cohort_sha256")
+    if not isinstance(dataset_ids, list) or not isinstance(cohort_hash, str):
+        raise ValueError("invalid frozen cohort")
+    manifest = _load_architecture_manifest(
+        args.architecture_manifest,
+        architecture=args.architecture,
+    )
+    successes, completed_dataset_ids, decision_bindings = _decision_progress(
+        args.decision or (),
+        cohort_sha256=cohort_hash,
+        cohort_dataset_ids=dataset_ids,
+    )
+    expected_remaining = len(dataset_ids) - len(completed_dataset_ids)
+    if args.remaining != expected_remaining:
+        raise ValueError(
+            "remaining must equal the frozen cohort datasets without progress: "
+            f"expected {expected_remaining}, got {args.remaining}"
+        )
+    if not can_reach_primary_cohort(successes=successes, remaining=args.remaining):
+        raise RuntimeError(
+            "primary cohort is unreachable under registered stop rule: "
+            f"{successes} successes + {args.remaining} remaining < 3"
+        )
+    allowed_runs = _parse_allowed_runs(
+        args.allow,
+        cohort_dataset_ids=dataset_ids,
+    )
+    token: dict[str, object] = {
+        "schema_version": 1,
+        "authorized": True,
+        "cohort_sha256": cohort_hash,
+        "architecture_fingerprint": architecture_fingerprint(args.architecture),
+        "architecture_manifest_sha256": canonical_sha256(manifest),
+        "allowed_runs": allowed_runs,
+        "progress_snapshot": {
+            "successes": successes,
+            "remaining": args.remaining,
+            "decision_bindings": decision_bindings,
+        },
+    }
+    completed_allowed = {
+        run.split(":", 1)[0] for run in allowed_runs
+    } & completed_dataset_ids
+    if completed_allowed:
+        raise ValueError(
+            "authorization cannot relaunch completed datasets: "
+            f"{sorted(completed_allowed)}"
+        )
+    token["authorization_sha256"] = canonical_sha256(token)
+    _write_json(_output_path(args.output), token)
+
+
+def _validate_run_authorization(args: argparse.Namespace) -> tuple[str, str]:
+    if (
+        args.cohort is None
+        or args.architecture_manifest is None
+        or args.authorization is None
+    ):
+        raise ValueError(
+            "cohort, architecture manifest, and authorization is required "
+            "before run-split"
+        )
+    cohort = load_verified_cohort(args.cohort)
+    cohort_hash = cohort.get("cohort_sha256")
+    manifest = _load_architecture_manifest(
+        args.architecture_manifest,
+        architecture=args.architecture,
+    )
+    token = _load_json(args.authorization)
+    unhashed = dict(token)
+    authorization_hash = unhashed.pop("authorization_sha256", None)
+    if not isinstance(authorization_hash, str) or authorization_hash != canonical_sha256(
+        unhashed
+    ):
+        raise ValueError("authorization canonical SHA-256 mismatch")
+    expected_fingerprint = architecture_fingerprint(args.architecture)
+    expected_run = f"{args.dataset_id}:{args.split_id}"
+    if not token.get("authorized"):
+        raise ValueError("run-split authorization is not affirmative")
+    if token.get("cohort_sha256") != cohort_hash:
+        raise ValueError("run-split authorization cohort mismatch")
+    if token.get("architecture_fingerprint") != expected_fingerprint:
+        raise ValueError("run-split authorization architecture mismatch")
+    if token.get("architecture_manifest_sha256") != canonical_sha256(manifest):
+        raise ValueError("run-split authorization manifest mismatch")
+    allowed_runs = token.get("allowed_runs")
+    if not isinstance(allowed_runs, list) or expected_run not in allowed_runs:
+        raise ValueError(f"run-split is not authorized: {expected_run}")
+    return str(cohort_hash), authorization_hash
 
 
 def _run_checked(command: Sequence[str], *, env: Mapping[str, str]) -> None:
@@ -458,7 +634,67 @@ def _extract_split_metrics(
     return overall_auc, zero_auc, ordinary_doa, weighted_doa
 
 
+def build_evaluation_commands(
+    *,
+    dataset_id: str,
+    split_id: str,
+    architecture: str,
+    data_root: Path,
+    train_summary_path: Path,
+    coverage_path: Path,
+    doa_path: Path,
+    device: str,
+) -> tuple[list[str], list[str]]:
+    train_path, valid_path, q_matrix_path, assignments = _split_paths(
+        dataset_id=dataset_id,
+        split_id=split_id,
+        data_root=data_root,
+    )
+    common_evaluation = [
+        "--dataset-name",
+        dataset_id,
+        "--summary",
+        str(train_summary_path),
+        "--model-name",
+        architecture,
+        "--split",
+        "valid",
+        "--train-interactions",
+        str(train_path),
+        "--valid-interactions",
+        str(valid_path),
+        "--test-interactions",
+        str(valid_path),
+        "--q-matrix",
+        str(q_matrix_path),
+        "--device",
+        device,
+    ]
+    coverage_command = [
+        sys.executable,
+        "scripts/evaluate_coverage_slice.py",
+        *common_evaluation,
+        "--output",
+        str(coverage_path),
+    ]
+    doa_command = [
+        sys.executable,
+        "scripts/evaluate_doa.py",
+        *common_evaluation,
+        "--min-responses",
+        "3",
+        "--doa-seed",
+        "42",
+        "--output",
+        str(doa_path),
+    ]
+    if assignments is not None:
+        doa_command.extend(["--holdout-assignments", str(assignments)])
+    return coverage_command, doa_command
+
+
 def _run_split(args: argparse.Namespace) -> None:
+    cohort_hash, authorization_hash = _validate_run_authorization(args)
     output_path = _output_path(args.output).resolve()
     work_dir = output_path.parent / "work"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -506,47 +742,17 @@ def _run_split(args: argparse.Namespace) -> None:
         )
         _run_checked(command, env=child_env)
 
-        common_evaluation = [
-            "--dataset-name",
-            args.dataset_id,
-            "--summary",
-            str(train_summary_path),
-            "--model-name",
-            args.architecture,
-            "--split",
-            "valid",
-            "--train-interactions",
-            str(train_path),
-            "--valid-interactions",
-            str(valid_path),
-            "--test-interactions",
-            str(valid_path),
-            "--q-matrix",
-            str(q_matrix_path),
-            "--device",
-            device,
-        ]
-        coverage_command = [
-            sys.executable,
-            "scripts/evaluate_coverage_slice.py",
-            *common_evaluation,
-            "--output",
-            str(coverage_path),
-        ]
+        coverage_command, doa_command = build_evaluation_commands(
+            dataset_id=args.dataset_id,
+            split_id=args.split_id,
+            architecture=args.architecture,
+            data_root=args.data_root,
+            train_summary_path=train_summary_path,
+            coverage_path=coverage_path,
+            doa_path=doa_path,
+            device=device,
+        )
         _run_checked(coverage_command, env=child_env)
-        doa_command = [
-            sys.executable,
-            "scripts/evaluate_doa.py",
-            *common_evaluation,
-            "--min-responses",
-            "3",
-            "--doa-seed",
-            "42",
-            "--output",
-            str(doa_path),
-        ]
-        if assignments is not None:
-            doa_command.extend(["--holdout-assignments", str(assignments)])
         _run_checked(doa_command, env=child_env)
 
         train_summary = _load_json(train_summary_path)
@@ -571,6 +777,8 @@ def _run_split(args: argparse.Namespace) -> None:
             "architecture": args.architecture,
             "architecture_manifest": architecture_spec(args.architecture).manifest(),
             "architecture_fingerprint": fingerprint,
+            "cohort_sha256": cohort_hash,
+            "authorization_sha256": authorization_hash,
             "seed": 42,
             "evaluation_input_role": "valid",
             "overall_auc": overall_auc,
@@ -595,6 +803,7 @@ def _run_split(args: argparse.Namespace) -> None:
             dataset_id=args.dataset_id,
             split_id=args.split_id,
             fingerprint=fingerprint,
+            cohort_sha256=cohort_hash,
         )
         _write_json(output_path, summary)
 
@@ -726,7 +935,7 @@ def _run_smoke(args: argparse.Namespace) -> None:
 
 
 def _assemble(args: argparse.Namespace) -> None:
-    cohort = _load_json(args.cohort)
+    cohort = load_verified_cohort(args.cohort)
     dataset_ids = cohort.get("dataset_ids")
     cohort_hash = cohort.get("cohort_sha256")
     if not isinstance(dataset_ids, list) or not isinstance(cohort_hash, str):
@@ -758,11 +967,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     smoke.add_argument("--output", type=Path, required=True)
     smoke.set_defaults(handler=_run_smoke)
 
+    authorize = subparsers.add_parser("authorize")
+    authorize.add_argument("--cohort", type=Path, required=True)
+    authorize.add_argument("--architecture", choices=ARCHITECTURES, required=True)
+    authorize.add_argument("--architecture-manifest", type=Path, required=True)
+    authorize.add_argument("--decision", type=Path, action="append")
+    authorize.add_argument("--remaining", type=int, required=True)
+    authorize.add_argument("--allow", action="append", required=True)
+    authorize.add_argument("--output", type=Path, required=True)
+    authorize.set_defaults(handler=_authorize)
+
     run_split = subparsers.add_parser("run-split")
     run_split.add_argument("--dataset-id", choices=ELIGIBLE_DATASET_IDS, required=True)
     run_split.add_argument("--split-id", choices=("standard", "holdout"), required=True)
     run_split.add_argument("--architecture", choices=ARCHITECTURES, required=True)
     run_split.add_argument("--data-root", type=Path, required=True)
+    run_split.add_argument("--cohort", type=Path)
+    run_split.add_argument("--architecture-manifest", type=Path)
+    run_split.add_argument("--authorization", type=Path)
     run_split.add_argument("--device", choices=("auto", "cpu"), default="auto")
     run_split.add_argument("--output", type=Path, required=True)
     run_split.set_defaults(handler=_run_split)
