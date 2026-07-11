@@ -17,8 +17,20 @@ if str(PROJECT_ROOT) not in sys.path:
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles
 from data.q_matrix import normalize_concept_sequence
-from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2, KaNCDBaseline
-from trainers.engine import _bundle_tensors, _validate_history_visibility
+from models import (
+    CountPriorBaseline,
+    DecoupledCDM,
+    DecoupledCDMEnsemble,
+    DecoupledCDMV2,
+    KaNCDBaseline,
+    UnifiedArchitectureSpec,
+    UnifiedDecoupledCDM,
+)
+from trainers.engine import (
+    _bundle_tensors,
+    _forward_model,
+    _validate_history_visibility,
+)
 from utils import compute_metrics, resolve_device, write_json
 
 
@@ -71,9 +83,46 @@ def load_model(
     bundles: dict[str, Any],
     concept_dim: int,
     device: str,
-) -> DecoupledCDM | DecoupledCDMEnsemble | DecoupledCDMV2 | CountPriorBaseline:
+) -> (
+    DecoupledCDM
+    | DecoupledCDMEnsemble
+    | DecoupledCDMV2
+    | CountPriorBaseline
+    | UnifiedDecoupledCDM
+):
     train_bundle = bundles["train"]
     model_variant = str(summary.get("model", "v1"))
+    if model_variant == "unified_v2":
+        manifest = summary.get("architecture_manifest")
+        if not isinstance(manifest, dict):
+            raise ValueError(
+                "unified_v2 summary requires architecture_manifest."
+            )
+        manifest_keys = (
+            "inference",
+            "composer",
+            "decoder",
+            "mastery_output",
+            "version",
+        )
+        try:
+            architecture = UnifiedArchitectureSpec(
+                **{key: manifest[key] for key in manifest_keys}
+            )
+        except KeyError as exc:
+            raise ValueError(
+                "unified_v2 architecture_manifest is incomplete."
+            ) from exc
+        model = UnifiedDecoupledCDM(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            dim=concept_dim,
+            architecture=architecture,
+        )
+        return _finalize_loaded_model(
+            model, checkpoint_path=checkpoint_path, device=device
+        )
     if model_variant == "v2":
         model = DecoupledCDMV2(
             num_students=train_bundle.num_students,
@@ -220,7 +269,8 @@ def predict_bundle(*, bundle: Any, model: DecoupledCDM | DecoupledCDMEnsemble, d
     torch_device = torch.device(device)
     tensors = _bundle_tensors(bundle, torch_device)
     with torch.no_grad():
-        output = model(
+        output = _forward_model(
+            model=model,
             q_matrix=tensors["q_matrix"],
             concept_graph=tensors["concept_graph"],
             prerequisite_graph=tensors["prerequisite_graph"],

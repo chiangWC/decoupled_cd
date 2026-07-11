@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data.q_matrix import normalize_concept_sequence
-from models import CountPriorBaseline
+from models import CountPriorBaseline, UnifiedDecoupledCDM
 from scripts.analyze_prediction_slices import load_model
 from scripts.evaluate_coverage_slice import prepare_bundles_from_paths, resolve_split_paths
 from scripts.evaluate_history_hiding_stress import (
@@ -21,7 +21,7 @@ from scripts.evaluate_history_hiding_stress import (
     load_summary,
     normalize_summary_for_current_loader,
 )
-from trainers.engine import _bundle_tensors
+from trainers.engine import _bundle_tensors, _forward_model
 from utils import compute_doa, resolve_device, write_json
 
 
@@ -78,7 +78,8 @@ def extract_mastery(*, model: Any, bundle: Any, device: str) -> torch.Tensor | N
     model.eval()
     tensors = _bundle_tensors(bundle, torch_device)
     with torch.no_grad():
-        output = model(
+        output = _forward_model(
+            model=model,
             q_matrix=tensors["q_matrix"],
             concept_graph=tensors["concept_graph"],
             prerequisite_graph=tensors["prerequisite_graph"],
@@ -93,6 +94,8 @@ def extract_mastery(*, model: Any, bundle: Any, device: str) -> torch.Tensor | N
             target_exercise_ids=tensors["interaction_exercise_ids"],
         )
     mastery = getattr(output, "mastery", None)
+    if isinstance(model, UnifiedDecoupledCDM):
+        assert mastery is not None, "unified_v2 must expose per-concept mastery"
     return mastery.detach().cpu() if mastery is not None else None
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from datetime import datetime, UTC
@@ -15,7 +16,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles, prepare_step_data_bundle
-from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2, KaNCDBaseline
+from models import (
+    CountPriorBaseline,
+    DecoupledCDM,
+    DecoupledCDMEnsemble,
+    DecoupledCDMV2,
+    KaNCDBaseline,
+    UnifiedArchitectureSpec,
+    UnifiedDecoupledCDM,
+)
 from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
@@ -39,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
     parser.add_argument(
         "--model",
-        choices=["v1", "v2", "b0", "kancd"],
+        choices=["v1", "v2", "unified_v2", "b0", "kancd"],
         default="v1",
         help=(
             "Model variant. v1 is the frozen mainline (adapters allowed). v2 is the clean core with "
@@ -47,6 +56,24 @@ def parse_args() -> argparse.Namespace:
             "logistic baseline over train-history statistics. kancd is a faithful in-harness "
             "KaNCD reimplementation (low-rank mastery extrapolation baseline)."
         ),
+    )
+    parser.add_argument(
+        "--unified-inference",
+        choices=["prior", "graph"],
+        default="prior",
+        help="Unified V2 UKC inference module.",
+    )
+    parser.add_argument(
+        "--unified-composer",
+        choices=["mask", "coverage"],
+        default="mask",
+        help="Unified V2 state composer.",
+    )
+    parser.add_argument(
+        "--unified-mastery-loss-weight",
+        type=float,
+        default=0.1,
+        help="Positive weight for direct supervision of unified mastery outputs.",
     )
     parser.add_argument(
         "--kancd-latent-dim",
@@ -686,6 +713,13 @@ V2_ONLY_FLAG_ATTRS = (
     "v2_target_fusion",
     "v2_lowrank_mastery",
     "v2_response_graph",
+    "v2_dual_graph",
+    "v2_dual_graph_adaptive",
+    "v2_router",
+    "v2_attn_readout",
+    "v2_irt_head",
+    "v2_consistency_adaptive",
+    "v2_curriculum",
     "v2_rg_primary",
     "v2_rg_mastery",
     "v2_dual_graph_support_adaptive",
@@ -693,6 +727,27 @@ V2_ONLY_FLAG_ATTRS = (
 
 
 def validate_model_args(args: argparse.Namespace) -> None:
+    if args.model == "unified_v2":
+        UnifiedArchitectureSpec(
+            inference=args.unified_inference,
+            composer=args.unified_composer,
+        )
+        if (
+            not math.isfinite(args.unified_mastery_loss_weight)
+            or args.unified_mastery_loss_weight <= 0.0
+        ):
+            raise ValueError(
+                "--unified-mastery-loss-weight must be positive; use a "
+                "finite and positive value for unified_v2."
+            )
+        if args.training_mode not in {
+            "full_batch",
+            "student_recompute_minibatch",
+        }:
+            raise ValueError(
+                "unified_v2 supports full_batch and "
+                "student_recompute_minibatch training."
+            )
     if args.model != "v1":
         enabled_v1_flags = [name for name in V1_ONLY_FLAG_ATTRS if getattr(args, name)]
         if enabled_v1_flags:
@@ -931,7 +986,19 @@ def main() -> None:
         history_evidence_logit_prior_prior_weight=args.history_evidence_logit_prior_prior_weight,
         history_evidence_logit_prior_mastery_confidence_cap=args.history_evidence_logit_prior_mastery_confidence_cap,
     )
-    if args.model == "v2":
+    if args.model == "unified_v2":
+        architecture = UnifiedArchitectureSpec(
+            inference=args.unified_inference,
+            composer=args.unified_composer,
+        )
+        model = UnifiedDecoupledCDM(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            dim=args.concept_dim,
+            architecture=architecture,
+        )
+    elif args.model == "v2":
         model = DecoupledCDMV2(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
@@ -1022,6 +1089,11 @@ def main() -> None:
         ukc_consistency_weight=args.v2_ukc_consistency_weight,
         ukc_consistency_drop_frac=args.v2_ukc_consistency_drop_frac,
         mastery_aux_bce_weight=args.v2_mastery_aux_weight,
+        unified_mastery_bce_weight=(
+            args.unified_mastery_loss_weight
+            if args.model == "unified_v2"
+            else 0.0
+        ),
         contrastive_weight=args.v2_contrastive_weight,
         consistency_weight=args.v2_consistency_weight,
         consistency_adaptive=args.v2_consistency_adaptive,
@@ -1051,8 +1123,25 @@ def main() -> None:
     )
     max_cuda_memory_allocated_gb = _max_cuda_memory_allocated_gb(resolved_device)
 
+    architecture_manifest = (
+        model.architecture.manifest()
+        if isinstance(model, UnifiedDecoupledCDM)
+        else None
+    )
+    architecture_fingerprint = (
+        model.architecture.fingerprint()
+        if isinstance(model, UnifiedDecoupledCDM)
+        else None
+    )
     v2_flag_snapshot = {
         "model": args.model,
+        "architecture_manifest": architecture_manifest,
+        "architecture_fingerprint": architecture_fingerprint,
+        "unified_mastery_loss_weight": (
+            args.unified_mastery_loss_weight
+            if args.model == "unified_v2"
+            else 0.0
+        ),
         "v2_ukc_propagation": args.v2_ukc_propagation,
         "v2_ukc_layers": args.v2_ukc_layers,
         "v2_ukc_evidence_cap": args.v2_ukc_evidence_cap,

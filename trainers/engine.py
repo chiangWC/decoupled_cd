@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import pandas as pd
 import torch
 import torch.nn.functional as F
 
 from data import StepDataBundle
-from models import DecoupledCDM
+from models import DecoupledCDM, UnifiedDecoupledCDM
 from utils import compute_metrics
 
 
@@ -62,6 +63,44 @@ def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, t
     }
 
 
+def _forward_model(*, model: DecoupledCDM, **kwargs):
+    """Call legacy and unified models without widening either public forward API."""
+    if isinstance(model, UnifiedDecoupledCDM):
+        kwargs.pop("prerequisite_graph", None)
+        kwargs.pop("similarity_graph", None)
+        kwargs.pop("exercise_evidence", None)
+    return model(**kwargs)
+
+
+def _unified_mastery_bce_loss(
+    *,
+    output,
+    student_concept_evidence: torch.Tensor | None,
+    student_ids: torch.Tensor | None = None,
+) -> torch.Tensor:
+    mastery = getattr(output, "mastery", None)
+    if mastery is None:
+        raise ValueError(
+            "unified_mastery_bce_weight requires a model that emits mastery."
+        )
+    if student_concept_evidence is None:
+        raise ValueError(
+            "unified_mastery_bce_weight requires student_concept_evidence."
+        )
+    evidence = (
+        student_concept_evidence
+        if student_ids is None
+        else student_concept_evidence[student_ids]
+    )
+    attempts = evidence[..., 0]
+    correct = evidence[..., 1]
+    target = (correct + 1.0) / (attempts + 2.0)
+    observed = attempts >= 3.0
+    if not bool(observed.any()):
+        return mastery.sum() * 0.0
+    return F.binary_cross_entropy(mastery[observed], target[observed])
+
+
 def _hash_interaction_rows(frame: pd.DataFrame) -> set[int]:
     if frame.empty:
         return set()
@@ -100,7 +139,8 @@ def evaluate_model(
 
     with torch.no_grad():
         if student_batch_size is None:
-            output = model(
+            output = _forward_model(
+                model=model,
                 q_matrix=tensors["q_matrix"],
                 concept_graph=tensors["concept_graph"],
                 prerequisite_graph=tensors["prerequisite_graph"],
@@ -132,7 +172,8 @@ def evaluate_model(
                 if batch_indices.numel() == 0:
                     continue
                 batch_labels = tensors["interaction_labels"][batch_indices]
-                output = model(
+                output = _forward_model(
+                    model=model,
                     q_matrix=tensors["q_matrix"],
                     concept_graph=tensors["concept_graph"],
                     prerequisite_graph=tensors["prerequisite_graph"],
@@ -266,6 +307,7 @@ def train_model(
     ukc_consistency_weight: float = 0.0,
     ukc_consistency_drop_frac: float = 0.2,
     mastery_aux_bce_weight: float = 0.0,
+    unified_mastery_bce_weight: float = 0.0,
     history_dropout_frac: float = 0.0,
     masked_response_weight: float = 0.0,
     masked_response_frac: float = 0.15,
@@ -282,6 +324,31 @@ def train_model(
         raise ValueError("ukc_consistency_weight is only implemented for full_batch training.")
     if ukc_consistency_weight > 0.0 and not hasattr(model, "compute_ukc_consistency_loss"):
         raise ValueError("ukc_consistency_weight requires a model with compute_ukc_consistency_loss.")
+    if isinstance(model, UnifiedDecoupledCDM):
+        if (
+            not math.isfinite(unified_mastery_bce_weight)
+            or unified_mastery_bce_weight <= 0.0
+        ):
+            raise ValueError(
+                "unified_mastery_bce_weight must be finite and positive "
+                "for unified models."
+            )
+        if training_mode not in {"full_batch", "student_recompute_minibatch"}:
+            raise ValueError(
+                "unified mastery supervision supports full_batch and "
+                "student_recompute_minibatch training."
+            )
+    else:
+        if not math.isfinite(unified_mastery_bce_weight):
+            raise ValueError("unified_mastery_bce_weight must be finite.")
+        if unified_mastery_bce_weight < 0.0:
+            raise ValueError(
+                "unified_mastery_bce_weight must be non-negative."
+            )
+        if unified_mastery_bce_weight > 0.0:
+            raise ValueError(
+                "unified_mastery_bce_weight is only supported by unified models."
+            )
     if not 0.0 <= history_dropout_frac < 1.0:
         raise ValueError("history_dropout_frac must be in [0, 1).")
     if masked_response_weight < 0.0:
@@ -493,6 +560,7 @@ def train_model(
                     ukc_consistency_weight=ukc_consistency_weight,
                     ukc_consistency_drop_frac=ukc_consistency_drop_frac,
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
+                    unified_mastery_bce_weight=unified_mastery_bce_weight,
                     history_dropout_frac=history_dropout_frac,
                     masked_response_weight=masked_response_weight,
                     masked_response_frac=masked_response_frac,
@@ -592,6 +660,7 @@ def train_model(
                     optimizer=optimizer,
                     student_batch_size=int(student_batch_size),
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
+                    unified_mastery_bce_weight=unified_mastery_bce_weight,
                     contrastive_weight=contrastive_weight,
                     consistency_weight=consistency_weight,
                     consistency_adaptive=consistency_adaptive,
@@ -872,6 +941,7 @@ def _train_full_batch_epoch(
     ukc_consistency_weight: float = 0.0,
     ukc_consistency_drop_frac: float = 0.2,
     mastery_aux_bce_weight: float = 0.0,
+    unified_mastery_bce_weight: float = 0.0,
     history_dropout_frac: float = 0.0,
     masked_response_weight: float = 0.0,
     masked_response_frac: float = 0.15,
@@ -883,7 +953,8 @@ def _train_full_batch_epoch(
     if history_dropout_frac > 0.0:
         forward_tensors, _ = _perturb_history_tensors(tensors, drop_frac=history_dropout_frac)
 
-    output = model(
+    output = _forward_model(
+        model=model,
         q_matrix=forward_tensors["q_matrix"],
         concept_graph=forward_tensors["concept_graph"],
         prerequisite_graph=forward_tensors["prerequisite_graph"],
@@ -903,6 +974,11 @@ def _train_full_batch_epoch(
             raise ValueError("mastery_aux_bce_weight requires a model that emits mastery_aux_logits.")
         loss = loss + mastery_aux_bce_weight * F.binary_cross_entropy_with_logits(
             output.mastery_aux_logits, tensors["interaction_labels"]
+        )
+    if unified_mastery_bce_weight > 0.0:
+        loss = loss + unified_mastery_bce_weight * _unified_mastery_bce_loss(
+            output=output,
+            student_concept_evidence=tensors["student_concept_evidence"],
         )
     if masked_response_weight > 0.0:
         loss = loss + masked_response_weight * _masked_response_loss(
@@ -1128,6 +1204,7 @@ def _train_student_recompute_minibatch_epoch(
     checkpoint_distillation_loss: str = "bce",
     dual_tower_branch_bce_weight: float = 0.0,
     mastery_aux_bce_weight: float = 0.0,
+    unified_mastery_bce_weight: float = 0.0,
     contrastive_weight: float = 0.0,
     consistency_weight: float = 0.0,
     consistency_adaptive: bool = False,
@@ -1165,7 +1242,8 @@ def _train_student_recompute_minibatch_epoch(
             continue
         batch_labels = tensors["interaction_labels"][batch_indices]
         optimizer.zero_grad()
-        output = model(
+        output = _forward_model(
+            model=model,
             q_matrix=tensors["q_matrix"],
             concept_graph=tensors["concept_graph"],
             prerequisite_graph=tensors["prerequisite_graph"],
@@ -1186,6 +1264,18 @@ def _train_student_recompute_minibatch_epoch(
                 raise ValueError("mastery_aux_bce_weight requires a model that emits mastery_aux_logits.")
             loss = loss + mastery_aux_bce_weight * F.binary_cross_entropy_with_logits(
                 output.mastery_aux_logits, batch_labels
+            )
+        if unified_mastery_bce_weight > 0.0:
+            mastery_student_ids = torch.unique(
+                tensors["interaction_student_ids"][batch_indices],
+                sorted=True,
+            )
+            loss = loss + unified_mastery_bce_weight * _unified_mastery_bce_loss(
+                output=output,
+                student_concept_evidence=tensors[
+                    "student_concept_evidence"
+                ],
+                student_ids=mastery_student_ids,
             )
         if consistency_weight > 0.0 or contrastive_weight > 0.0:
             if consistency_adaptive:
