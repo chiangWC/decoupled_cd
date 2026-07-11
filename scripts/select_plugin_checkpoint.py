@@ -66,7 +66,7 @@ def _sha256(value: Any, field: str) -> str:
     return value
 
 
-def _load_manifest(path: Path) -> list[dict[str, Any]]:
+def load_candidate_manifest(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -89,13 +89,40 @@ def _load_manifest(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _validated_protocol(candidate_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def validate_manifest_protocol(
+    candidate_rows: list[dict[str, Any]],
+    *,
+    expected_data_protocol: str | None = None,
+) -> dict[str, Any]:
     first = candidate_rows[0].get("protocol")
     if not isinstance(first, dict):
         raise SelectionError("candidate manifest must bind a validation protocol")
     missing = [field for field in PROTOCOL_FIELDS if field not in first]
     if missing:
         raise SelectionError(f"candidate protocol missing: {', '.join(missing)}")
+    has_data_protocol = "data_protocol" in first
+    has_dataset_name = "dataset_name" in first
+    if has_data_protocol != has_dataset_name:
+        raise SelectionError(
+            "candidate protocol data_protocol and dataset_name must be provided together"
+        )
+    if has_data_protocol:
+        if first["data_protocol"] not in {"standard", "holdout"}:
+            raise SelectionError(
+                "candidate protocol data_protocol must be 'standard' or 'holdout'"
+            )
+        if (
+            not isinstance(first["dataset_name"], str)
+            or not first["dataset_name"].strip()
+        ):
+            raise SelectionError(
+                "candidate protocol dataset_name must be a non-empty string"
+            )
+    if expected_data_protocol is not None:
+        if first.get("data_protocol") != expected_data_protocol:
+            raise SelectionError(
+                f"candidate protocol must be {expected_data_protocol!r}"
+            )
     for field, expected in APPROVED_PROTOCOL.items():
         if first[field] != expected:
             raise SelectionError(
@@ -109,7 +136,7 @@ def _validated_protocol(candidate_rows: list[dict[str, Any]]) -> dict[str, Any]:
     return dict(first)
 
 
-def _index_candidates(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def index_candidates(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     indexed: dict[str, dict[str, Any]] = {}
     for row in rows:
         model_name = row.get("model_name")
@@ -151,7 +178,7 @@ def _index_candidates(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return indexed
 
 
-def _load_doa_rows(path: Path) -> dict[str, dict[str, Any]]:
+def load_validation_doa_rows(path: Path) -> dict[str, dict[str, Any]]:
     try:
         handle = path.open(newline="", encoding="utf-8")
     except OSError as exc:
@@ -213,7 +240,7 @@ def _load_doa_rows(path: Path) -> dict[str, dict[str, Any]]:
     return rows
 
 
-def _load_baseline(path: Path | None) -> dict[str, Any]:
+def load_selection(path: Path | None) -> dict[str, Any]:
     if path is None:
         raise SelectionError("plugin mode requires --baseline-selection")
     try:
@@ -233,27 +260,13 @@ def _checkpoint_path(manifest_path: Path, relative_path: str) -> Path:
     return path
 
 
-def _validate_doa_binding(
+def validate_candidate_artifacts(
     *,
     candidates: dict[str, dict[str, Any]],
-    doa_rows: dict[str, dict[str, Any]],
-    protocol: dict[str, Any],
     manifest_path: Path,
 ) -> None:
     root = manifest_path.parent.parent
     for model_name, candidate in candidates.items():
-        doa = doa_rows[model_name]
-        for field in (
-            "split",
-            "doa_seed",
-            "min_responses",
-            "max_pairs_per_concept",
-            "split_seed",
-        ):
-            if doa[field] != protocol[field]:
-                raise SelectionError(
-                    f"{model_name} DOA {field} does not match candidate protocol"
-                )
         for path_field, hash_field in (
             ("checkpoint_path", "checkpoint_sha256"),
             ("mastery_path", "mastery_sha256"),
@@ -269,7 +282,34 @@ def _validate_doa_binding(
                 raise SelectionError(
                     f"candidate {model_name} {hash_field} does not match actual artifact"
                 )
-            if hash_field != "checkpoint_sha256" and actual_sha256 != doa[hash_field]:
+
+
+def validate_doa_binding(
+    *,
+    candidates: dict[str, dict[str, Any]],
+    doa_rows: dict[str, dict[str, Any]],
+    protocol: dict[str, Any],
+    manifest_path: Path,
+) -> None:
+    validate_candidate_artifacts(
+        candidates=candidates,
+        manifest_path=manifest_path,
+    )
+    for model_name, candidate in candidates.items():
+        doa = doa_rows[model_name]
+        for field in (
+            "split",
+            "doa_seed",
+            "min_responses",
+            "max_pairs_per_concept",
+            "split_seed",
+        ):
+            if doa[field] != protocol[field]:
+                raise SelectionError(
+                    f"{model_name} DOA {field} does not match candidate protocol"
+                )
+        for hash_field in ("mastery_sha256", "id_maps_sha256"):
+            if candidate[hash_field] != doa[hash_field]:
                 raise SelectionError(
                     f"{model_name} DOA {hash_field} does not match candidate artifact"
                 )
@@ -336,10 +376,10 @@ def select_checkpoint(
     if mode not in {"baseline", "plugin"}:
         raise SelectionError("mode must be 'baseline' or 'plugin'")
     manifest_path = Path(manifest_path)
-    candidate_rows = _load_manifest(manifest_path)
-    protocol = _validated_protocol(candidate_rows)
-    candidates = _index_candidates(candidate_rows)
-    doa_rows = _load_doa_rows(Path(doa_csv_path))
+    candidate_rows = load_candidate_manifest(manifest_path)
+    protocol = validate_manifest_protocol(candidate_rows)
+    candidates = index_candidates(candidate_rows)
+    doa_rows = load_validation_doa_rows(Path(doa_csv_path))
     validation_identities = {
         (row["dataset"], row["holdout_assignments_sha256"])
         for row in doa_rows.values()
@@ -354,7 +394,7 @@ def select_checkpoint(
     missing = sorted(set(candidates) - set(doa_rows))
     if missing:
         raise SelectionError(f"DOA CSV is missing candidates: {', '.join(missing)}")
-    _validate_doa_binding(
+    validate_doa_binding(
         candidates=candidates,
         doa_rows=doa_rows,
         protocol=protocol,
@@ -381,7 +421,7 @@ def select_checkpoint(
         baseline_auc = selected["validation"]["auc"]
         baseline_weighted = selected_doa["holdout_doa_weighted"]
     else:
-        baseline = _load_baseline(
+        baseline = load_selection(
             Path(baseline_selection_path) if baseline_selection_path else None
         )
         if baseline.get("protocol") != protocol:
