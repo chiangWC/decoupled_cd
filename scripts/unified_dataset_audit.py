@@ -90,6 +90,7 @@ def _validation_coverage(
     counts = {
         "validation_rows": 0,
         "exact_zero_validation_rows": 0,
+        "partial_unseen_validation_rows": 0,
         "rows_with_unseen_target_concepts": 0,
         "unseen_target_concepts": 0,
         "empty_target_rows": 0,
@@ -111,6 +112,8 @@ def _validation_coverage(
             unseen = target - seen
             if len(unseen) == len(target):
                 counts["exact_zero_validation_rows"] += 1
+            elif unseen:
+                counts["partial_unseen_validation_rows"] += 1
             if unseen:
                 counts["rows_with_unseen_target_concepts"] += 1
                 counts["unseen_target_concepts"] += len(unseen)
@@ -251,6 +254,10 @@ def audit_pool(root: str | Path) -> dict[str, Any]:
             ),
             "rows_with_unseen_target_concepts": (
                 "at least one target concept is absent from the student's training history"
+            ),
+            "partial_unseen_validation_rows": (
+                "some but not all target concepts are absent from the student's "
+                "training history"
             ),
         },
         "datasets": datasets,

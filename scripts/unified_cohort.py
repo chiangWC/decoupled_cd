@@ -8,6 +8,20 @@ from typing import Any, Mapping, Sequence
 from scripts.unified_dataset_audit import canonical_sha256
 
 
+def _verify_canonical_hash(
+    payload: Mapping[str, Any],
+    *,
+    hash_field: str,
+    mismatch_message: str,
+) -> str:
+    stored_hash = payload.get(hash_field)
+    unhashed = dict(payload)
+    unhashed.pop(hash_field, None)
+    if not isinstance(stored_hash, str) or stored_hash != canonical_sha256(unhashed):
+        raise ValueError(mismatch_message)
+    return stored_hash
+
+
 def _build_cohort(
     dataset_ids: Sequence[str],
     *,
@@ -23,19 +37,27 @@ def _build_cohort(
     datasets = audit.get("datasets")
     if not isinstance(datasets, Mapping):
         raise ValueError("audit has no dataset records")
-    audit_sha256 = audit.get("audit_sha256")
-    if not isinstance(audit_sha256, str) or len(audit_sha256) != 64:
-        raise ValueError("audit has no canonical SHA-256")
+    audit_sha256 = _verify_canonical_hash(
+        audit,
+        hash_field="audit_sha256",
+        mismatch_message="pool audit canonical SHA-256 mismatch",
+    )
 
     dataset_hashes: dict[str, str] = {}
     selected_references: dict[str, Any] = {}
     for dataset_id in normalized_ids:
         record = datasets.get(dataset_id)
-        if not isinstance(record, Mapping) or not record.get("eligible"):
+        if not isinstance(record, Mapping):
+            raise ValueError(f"audit has no dataset record: {dataset_id}")
+        record_hash = _verify_canonical_hash(
+            record,
+            hash_field="audit_sha256",
+            mismatch_message=(
+                f"dataset audit canonical SHA-256 mismatch: {dataset_id}"
+            ),
+        )
+        if not record.get("eligible"):
             raise ValueError(f"cohort dataset is not eligible: {dataset_id}")
-        record_hash = record.get("audit_sha256")
-        if not isinstance(record_hash, str) or len(record_hash) != 64:
-            raise ValueError(f"dataset audit has no canonical SHA-256: {dataset_id}")
         if dataset_id not in b0_validation_references:
             raise ValueError(f"missing B0 validation reference: {dataset_id}")
         dataset_hashes[dataset_id] = record_hash

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts.unified_cohort import freeze_cohort
-from scripts.unified_dataset_audit import DATASET_LAYOUTS, audit_pool
+from scripts.unified_dataset_audit import (
+    DATASET_LAYOUTS,
+    audit_pool,
+    canonical_sha256,
+)
 
 
 class DatasetFixtureMixin:
@@ -85,6 +92,11 @@ class UnifiedDatasetAuditTests(DatasetFixtureMixin, unittest.TestCase):
         self.assertEqual(nips["standard"]["exact_zero_validation_rows"], 0)
         self.assertEqual(nips["holdout"]["exact_zero_validation_rows"], 0)
         self.assertEqual(nips["standard"]["rows_with_unseen_target_concepts"], 1)
+        self.assertEqual(nips["standard"]["partial_unseen_validation_rows"], 1)
+        assist = audit["datasets"]["ASSIST09"]["standard"]
+        self.assertEqual(assist["exact_zero_validation_rows"], 1)
+        self.assertEqual(assist["rows_with_unseen_target_concepts"], 1)
+        self.assertEqual(assist["partial_unseen_validation_rows"], 0)
         self.assertFalse(nips["eligible"])
 
     def test_junyi_and_ednet_remain_provisional_without_q_and_holdout(self):
@@ -130,6 +142,12 @@ class UnifiedCohortFreezeTests(DatasetFixtureMixin, unittest.TestCase):
             }
             for dataset_id in self.dataset_ids
         }
+
+    @staticmethod
+    def _rehash_pool(audit: dict[str, object]) -> None:
+        unhashed = dict(audit)
+        unhashed.pop("audit_sha256")
+        audit["audit_sha256"] = canonical_sha256(unhashed)
 
     def test_cohort_requires_at_least_three_datasets(self):
         with self.assertRaisesRegex(ValueError, "at least three datasets"):
@@ -195,3 +213,83 @@ class UnifiedCohortFreezeTests(DatasetFixtureMixin, unittest.TestCase):
                 audit=self.audit,
                 b0_validation_references=replacement_references,
             )
+
+    def test_freeze_rejects_stale_pool_audit_hash(self):
+        tampered = copy.deepcopy(self.audit)
+        tampered["root"] = "/tampered/root"
+
+        with self.assertRaisesRegex(ValueError, "pool audit canonical SHA-256 mismatch"):
+            freeze_cohort(
+                self.cohort_path,
+                self.dataset_ids,
+                audit=tampered,
+                b0_validation_references=self.b0_references,
+            )
+
+    def test_freeze_rejects_fabricated_selected_dataset_hash(self):
+        tampered = copy.deepcopy(self.audit)
+        tampered["datasets"]["ASSIST09"]["audit_sha256"] = "0" * 64
+        self._rehash_pool(tampered)
+
+        with self.assertRaisesRegex(
+            ValueError, "dataset audit canonical SHA-256 mismatch: ASSIST09"
+        ):
+            freeze_cohort(
+                self.cohort_path,
+                self.dataset_ids,
+                audit=tampered,
+                b0_validation_references=self.b0_references,
+            )
+
+    def test_freeze_validates_record_hash_before_trusting_eligibility(self):
+        tampered = copy.deepcopy(self.audit)
+        tampered["datasets"]["ASSIST09"]["eligible"] = False
+        self._rehash_pool(tampered)
+
+        with self.assertRaisesRegex(
+            ValueError, "dataset audit canonical SHA-256 mismatch: ASSIST09"
+        ):
+            freeze_cohort(
+                self.cohort_path,
+                self.dataset_ids,
+                audit=tampered,
+                b0_validation_references=self.b0_references,
+            )
+
+    def test_exact_replay_rejects_b0_metadata_drift(self):
+        freeze_cohort(
+            self.cohort_path,
+            self.dataset_ids,
+            audit=self.audit,
+            b0_validation_references=self.b0_references,
+        )
+        changed_references = copy.deepcopy(self.b0_references)
+        changed_references["ASSIST09"]["standard"] = "b0/replaced-validation.json"
+
+        with self.assertRaisesRegex(ValueError, "frozen cohort metadata mismatch"):
+            freeze_cohort(
+                self.cohort_path,
+                self.dataset_ids,
+                audit=self.audit,
+                b0_validation_references=changed_references,
+            )
+
+    def test_first_freeze_uses_exclusive_create_and_fsyncs_file_and_parent(self):
+        with mock.patch(
+            "scripts.unified_cohort.os.open", wraps=os.open
+        ) as open_mock, mock.patch(
+            "scripts.unified_cohort.os.fsync", wraps=os.fsync
+        ) as fsync_mock:
+            freeze_cohort(
+                self.cohort_path,
+                self.dataset_ids,
+                audit=self.audit,
+                b0_validation_references=self.b0_references,
+            )
+
+        first_open = open_mock.call_args_list[0]
+        self.assertEqual(
+            first_open.args[1], os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        )
+        self.assertEqual(first_open.args[2], 0o644)
+        self.assertEqual(fsync_mock.call_count, 2)
