@@ -75,3 +75,25 @@ A1 相对 A0 的候选门失败，`test` 保持关闭。本登记只诊断 Task 
 `test state` -> `test 未打开`；external gate 未运行并保持关闭；没有 retry、batch 改动、外部 gate、push 或 reference repo 修改。
 
 `acceptance gate` -> 继续使用相同冻结 cohort、seed `42`、split seed `2024` 和五项相对门：三数据集 standard/holdout overall 均不回退，zero AUC 至少 2/3 严格提升且至少一项 delta `>=0.001`；通过后才能重建 external gate，随后才可能打开 test。
+
+## F-A2-R6-001（有效 A2，Evidence-Relation Graph Completer）
+
+`failure_id` -> `F-A2-R6-001`
+
+`architecture fingerprint` -> `270b7a8d456110f3c23b91df14b05d970569b46efb3fee57d974a79d9c91faa4`
+
+`campaign / proof` -> `unified-ergc-r6-20260712`；A2 replay proof `6c359b6b60ec7dd5e2cda089866c744814b41eeaeef7be99b2325efdbe58356e`；relative gate proof `ced71f0458e1477afddee7d94dd16187ca3d65672de581c170abfcd9a036e441`。
+
+`all exact deltas (A2 - A0v4)` -> ASSIST17 standard/holdout/zero/ordinary DOA/weighted DOA = `+0.0017449611570987678 / -0.000001826372766688955 / -0.0008467777400537058 / -0.00464286452904028 / -0.004158277880485173`；MOOCRadar = `-0.0004243465040141281 / +0.00012095297817782402 / -0.0004240349482135253 / +0.04884646857106317 / -0.00012775743122395156`；XES3G5M = `-0.00187074496124906 / +0.0021598078518532127 / +0.0005681385058069477 / +0.030303030303030276 / -0.009433962264150941`。
+
+`failure vector` -> `standard_nonregression=false`；`holdout_nonregression=false`；`overall_nonregression=false`；`zero_wins=1`；`zero_delta_at_least_0.001=false`；最终 `passed=false`。
+
+`protocol validity` -> graph hidden dim 严格绑定冻结 recipe `64/256/64`；completion/evidence weights `1.0/0.1`；唯一 smoke masked edge `1`、hard-assembly error `0.0`、reconstruction loss `0.851538896560669`、grad present/finite `23/23`、nonzero parameter count `2`、aggregate norm `0.7495275139808655`。r6 A0 对 r4/r5 的 15 项 delta 全为 `0`。
+
+`mechanism hypothesis` -> 正确容量的关系图 completer 能明显提高 MOO ordinary DOA 与 XES ordinary DOA，但 MOO/XES standard overall 回退、ASSIST17 holdout 微退，且 exact-zero 仅 XES 小幅提升。train-only observed-edge reconstruction 没有显式建模 concept exposure / attempt selection，missingness 的 MNAR 偏差仍可改变 overall 排序。
+
+`next independent mechanism` -> **MNAR / exposure-aware mastery completion**。显式联合建模 exposure propensity 与 mastery completion，不给 A2 添加 residual 小补丁或 dataset-specific 数值。
+
+`test state` -> `test 未打开`；external gate 未运行并保持关闭；没有 retry、batch/recipe 改动、push 或 reference repo 修改。
+
+`acceptance gate` -> 同一冻结 cohort、seed `42`、split seed `2024`：三数据集 standard/holdout overall 均不回退；zero AUC 至少 2/3 严格提升且至少一项 delta `>=0.001`；通过后才允许重建 external gate。
