@@ -13,6 +13,23 @@ from scripts.unified_dataset_audit import canonical_sha256
 
 
 class UnifiedBaselineAdapterTests(unittest.TestCase):
+    def test_adapter_direct_entrypoint_imports_from_project_root(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(root / "scripts" / "unified_baseline_adapter.py"),
+                "--help",
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("manifest", completed.stdout)
+        self.assertIn("finalize", completed.stdout)
+
     def test_manifest_binds_exact_model_configuration(self) -> None:
         from scripts.unified_baseline_adapter import main
 
