@@ -12,6 +12,7 @@ from .decoupled_cdm import DecoupledForwardOutput
 from .unified_v2_components import (
     ConditionalSimplexBehaviorModel,
     GlobalConceptPriorCompleter,
+    LowRankMasteryCompleter,
     MonotonicDiagnosisDecoder,
     ObservedMasteryEstimator,
     assemble_mastery,
@@ -42,10 +43,6 @@ class UnifiedDecoupledCDM(nn.Module):
         super().__init__()
         if type(completion_rank) is not int or completion_rank <= 0:
             raise ValueError("completion_rank must be a positive integer")
-        if architecture.completion == "lowrank":
-            raise NotImplementedError(
-                "unified v3 lowrank completion is not implemented until Task 8"
-            )
         self.num_students = num_students
         self.architecture = architecture
         self.register_buffer(
@@ -84,7 +81,14 @@ class UnifiedDecoupledCDM(nn.Module):
             initial_logits=initial_mastery_logits,
             evidence_cap=evidence_cap,
         )
-        self.completer = GlobalConceptPriorCompleter(num_concepts)
+        if architecture.completion == "prior":
+            self.completer = GlobalConceptPriorCompleter(num_concepts)
+        else:
+            self.completer = LowRankMasteryCompleter(
+                num_students=num_students,
+                num_concepts=num_concepts,
+                rank=completion_rank,
+            )
         self.decoder = MonotonicDiagnosisDecoder(
             num_exercises=num_exercises,
             num_concepts=num_concepts,
@@ -218,7 +222,10 @@ class UnifiedDecoupledCDM(nn.Module):
             student_concept_evidence,
             student_ids,
         )
-        missing = self.completer(observed.mastery.shape[0])
+        if self.architecture.completion == "prior":
+            missing = self.completer(observed.mastery.shape[0])
+        else:
+            missing = self.completer(student_ids)
         mastery = assemble_mastery(
             observed.mastery,
             missing,

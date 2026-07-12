@@ -11,6 +11,7 @@ from models.unified_decoupled_cdm import UnifiedDecoupledCDM
 from models.unified_v2_components import (
     ConditionalSimplexBehaviorModel,
     GlobalConceptPriorCompleter,
+    LowRankMasteryCompleter,
     ObservedMasteryEstimator,
     CoverageAwareStateComposer,
     MonotonicDiagnosisDecoder,
@@ -74,6 +75,16 @@ class UnifiedComponentTests(unittest.TestCase):
         torch.testing.assert_close(completed[0], initial_prior)
         for student in completed[1:]:
             torch.testing.assert_close(student, completed[0])
+
+    def test_low_rank_completer_has_student_concept_factorization(self):
+        module = LowRankMasteryCompleter(3, 4, rank=2)
+
+        result = module()
+
+        self.assertEqual(tuple(result.shape), (3, 4))
+        self.assertEqual(tuple(module.student_factors.shape), (3, 2))
+        self.assertEqual(tuple(module.concept_factors.shape), (4, 2))
+        self.assertTrue(torch.all((result > 0) & (result < 1)))
 
     def test_hard_assembly_has_no_learned_blending(self):
         observed = torch.tensor([[0.2, 0.8]])

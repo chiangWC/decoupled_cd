@@ -91,6 +91,30 @@ def observed_mastery_evidence_loss(
     )
 
 
+def masked_completion_loss(
+    output: DecoupledForwardOutput,
+    evidence: torch.Tensor,
+    student_ids: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if (
+        output.completion_predictions is None
+        or output.mastery_observed_mask is None
+    ):
+        raise ValueError("completion predictions are required")
+    selected = evidence if student_ids is None else evidence[student_ids]
+    attempts, correct = selected[..., :2].unbind(dim=-1)
+    target = (correct + 1.0) / (attempts + 2.0)
+    mask = output.mastery_observed_mask
+    if not bool(mask.any()):
+        raise ValueError(
+            "at least one observed completion target is required"
+        )
+    return F.binary_cross_entropy(
+        output.completion_predictions[mask],
+        target[mask],
+    )
+
+
 def _hash_interaction_rows(frame: pd.DataFrame) -> set[int]:
     if frame.empty:
         return set()
@@ -590,6 +614,9 @@ def train_model(
                     unified_evidence_loss_weight=(
                         unified_evidence_loss_weight
                     ),
+                    unified_completion_loss_weight=(
+                        unified_completion_loss_weight
+                    ),
                     history_dropout_frac=history_dropout_frac,
                     masked_response_weight=masked_response_weight,
                     masked_response_frac=masked_response_frac,
@@ -691,6 +718,9 @@ def train_model(
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
                     unified_evidence_loss_weight=(
                         unified_evidence_loss_weight
+                    ),
+                    unified_completion_loss_weight=(
+                        unified_completion_loss_weight
                     ),
                     contrastive_weight=contrastive_weight,
                     consistency_weight=consistency_weight,
@@ -973,6 +1003,7 @@ def _train_full_batch_epoch(
     ukc_consistency_drop_frac: float = 0.2,
     mastery_aux_bce_weight: float = 0.0,
     unified_evidence_loss_weight: float = 0.0,
+    unified_completion_loss_weight: float = 0.0,
     history_dropout_frac: float = 0.0,
     masked_response_weight: float = 0.0,
     masked_response_frac: float = 0.15,
@@ -1013,6 +1044,15 @@ def _train_full_batch_epoch(
             * observed_mastery_evidence_loss(
                 output,
                 tensors["student_concept_evidence"][..., :2],
+            )
+        )
+    if unified_completion_loss_weight > 0.0:
+        loss = (
+            loss
+            + unified_completion_loss_weight
+            * masked_completion_loss(
+                output,
+                tensors["student_concept_evidence"],
             )
         )
     if masked_response_weight > 0.0:
@@ -1240,6 +1280,7 @@ def _train_student_recompute_minibatch_epoch(
     dual_tower_branch_bce_weight: float = 0.0,
     mastery_aux_bce_weight: float = 0.0,
     unified_evidence_loss_weight: float = 0.0,
+    unified_completion_loss_weight: float = 0.0,
     contrastive_weight: float = 0.0,
     consistency_weight: float = 0.0,
     consistency_adaptive: bool = False,
@@ -1312,6 +1353,20 @@ def _train_student_recompute_minibatch_epoch(
                     output,
                     tensors["student_concept_evidence"][..., :2],
                     student_ids=mastery_student_ids,
+                )
+            )
+        if unified_completion_loss_weight > 0.0:
+            completion_student_ids = torch.unique(
+                tensors["interaction_student_ids"][batch_indices],
+                sorted=True,
+            )
+            loss = (
+                loss
+                + unified_completion_loss_weight
+                * masked_completion_loss(
+                    output,
+                    tensors["student_concept_evidence"],
+                    student_ids=completion_student_ids,
                 )
             )
         if consistency_weight > 0.0 or contrastive_weight > 0.0:

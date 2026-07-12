@@ -87,6 +87,42 @@ class GlobalConceptPriorCompleter(nn.Module):
         return self.logits.sigmoid().unsqueeze(0).expand(num_students, -1)
 
 
+class LowRankMasteryCompleter(nn.Module):
+    def __init__(
+        self,
+        num_students: int,
+        num_concepts: int,
+        rank: int,
+    ) -> None:
+        super().__init__()
+        if rank <= 0:
+            raise ValueError("rank must be positive")
+        self.student_factors = nn.Parameter(torch.empty(num_students, rank))
+        self.concept_factors = nn.Parameter(torch.empty(num_concepts, rank))
+        self.student_bias = nn.Parameter(torch.zeros(num_students, 1))
+        self.concept_bias = nn.Parameter(torch.zeros(1, num_concepts))
+        nn.init.normal_(self.student_factors, std=rank ** -0.5)
+        nn.init.normal_(self.concept_factors, std=rank ** -0.5)
+
+    def forward(
+        self,
+        student_ids: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        users = (
+            self.student_factors
+            if student_ids is None
+            else self.student_factors[student_ids]
+        )
+        bias = (
+            self.student_bias
+            if student_ids is None
+            else self.student_bias[student_ids]
+        )
+        return (
+            users @ self.concept_factors.T + bias + self.concept_bias
+        ).sigmoid()
+
+
 def assemble_mastery(
     observed: torch.Tensor,
     missing: torch.Tensor,

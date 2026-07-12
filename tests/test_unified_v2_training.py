@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import io
 import json
 import sys
@@ -12,7 +13,11 @@ from unittest import mock
 import torch
 
 from models import UnifiedArchitectureSpec, UnifiedDecoupledCDM
-from models.unified_v2_components import smoothed_evidence_logits
+from models.unified_v2_components import (
+    GlobalConceptPriorCompleter,
+    LowRankMasteryCompleter,
+    smoothed_evidence_logits,
+)
 from scripts import analyze_prediction_slices
 from scripts import evaluate_doa
 from scripts import evaluate_history_hiding_stress
@@ -20,6 +25,7 @@ from scripts import train as train_script
 from trainers.engine import (
     _train_full_batch_epoch,
     _train_student_recompute_minibatch_epoch,
+    masked_completion_loss,
     observed_mastery_evidence_loss,
     train_model,
 )
@@ -87,7 +93,11 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         )
 
     @staticmethod
-    def model(*, completion: str = "prior") -> UnifiedDecoupledCDM:
+    def model(
+        *,
+        completion: str = "prior",
+        completion_rank: int = 32,
+    ) -> UnifiedDecoupledCDM:
         evidence = UnifiedV2TrainingTests.tensors()[
             "student_concept_evidence"
         ]
@@ -98,6 +108,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             dim=4,
             architecture=UnifiedArchitectureSpec(completion=completion),
             initial_mastery_logits=smoothed_evidence_logits(evidence[..., :2]),
+            completion_rank=completion_rank,
         )
 
     @staticmethod
@@ -156,9 +167,75 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 "0",
             )
 
-    def test_lowrank_model_construction_fails_explicitly_until_task_8(self) -> None:
-        with self.assertRaisesRegex(NotImplementedError, "Task 8"):
-            self.model(completion="lowrank")
+    def test_a1_rank_is_numeric_and_a0_has_no_low_rank_parameters(self) -> None:
+        a1_rank_two = self.model(completion="lowrank", completion_rank=2)
+        a1_rank_three = self.model(completion="lowrank", completion_rank=3)
+        a0 = self.model(completion="prior")
+
+        self.assertEqual(
+            a1_rank_two.architecture.fingerprint(),
+            a1_rank_three.architecture.fingerprint(),
+        )
+        self.assertIsInstance(a1_rank_two.completer, LowRankMasteryCompleter)
+        self.assertIsInstance(a0.completer, GlobalConceptPriorCompleter)
+        self.assertFalse(
+            any(
+                "student_factors" in name or "concept_factors" in name
+                for name, _ in a0.named_parameters()
+            )
+        )
+
+    def test_completion_loss_uses_observed_cells_but_assembly_uses_a1_only_when_missing(self) -> None:
+        tensors = self.tensors()
+        evidence = tensors["student_concept_evidence"]
+        model = self.model(completion="lowrank", completion_rank=2)
+        output = self.forward(model, tensors)
+
+        self.assertEqual(
+            tuple(output.completion_predictions.shape),
+            tuple(output.mastery.shape),
+        )
+        mask = output.mastery_observed_mask
+        torch.testing.assert_close(
+            output.mastery[mask], output.observed_mastery[mask]
+        )
+        torch.testing.assert_close(
+            output.mastery[~mask], output.completion_predictions[~mask]
+        )
+        self.assertFalse(
+            torch.equal(
+                output.completion_predictions[mask], output.mastery[mask]
+            )
+        )
+
+        loss = masked_completion_loss(output, evidence)
+        loss.backward()
+        self.assertIsNotNone(model.completer.student_factors.grad)
+
+    def test_completion_supervision_runs_in_both_training_modes(self) -> None:
+        for mode in ("full_batch", "student_recompute_minibatch"):
+            with self.subTest(mode=mode):
+                torch.manual_seed(7)
+                model = self.model(completion="lowrank", completion_rank=2)
+                optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+                tensors = self.tensors()
+                kwargs = {
+                    "model": model,
+                    "tensors": tensors,
+                    "optimizer": optimizer,
+                    "unified_evidence_loss_weight": 0.5,
+                    "unified_completion_loss_weight": 0.5,
+                }
+                if mode == "full_batch":
+                    stats = _train_full_batch_epoch(**kwargs)
+                else:
+                    stats = _train_student_recompute_minibatch_epoch(
+                        **kwargs,
+                        student_batch_size=1,
+                    )
+                self.assertTrue(torch.isfinite(torch.tensor(stats.mean_loss)))
+                self.assertGreater(stats.optimizer_steps, 0)
+                self.assertIsNotNone(model.completer.student_factors.grad)
 
     def test_trainable_parameter_count_is_exact_and_excludes_frozen_parameters(self) -> None:
         model = torch.nn.Sequential(
@@ -504,6 +581,30 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 self.assertIsNotNone(model.mastery_estimator.logits.grad)
                 output = self.forward(model, tensors)
                 self.assertIsNone(output.mastery_aux_logits)
+
+    def test_a0_student_minibatch_keeps_registered_evidence_loss(self) -> None:
+        torch.manual_seed(13)
+        baseline_model = self.model()
+        supervised_model = copy.deepcopy(baseline_model)
+        tensors = self.tensors()
+
+        torch.manual_seed(21)
+        baseline = _train_student_recompute_minibatch_epoch(
+            model=baseline_model,
+            tensors=tensors,
+            optimizer=torch.optim.SGD(baseline_model.parameters(), lr=0.0),
+            student_batch_size=1,
+        )
+        torch.manual_seed(21)
+        supervised = _train_student_recompute_minibatch_epoch(
+            model=supervised_model,
+            tensors=tensors,
+            optimizer=torch.optim.SGD(supervised_model.parameters(), lr=0.0),
+            student_batch_size=1,
+            unified_evidence_loss_weight=0.5,
+        )
+
+        self.assertGreater(supervised.mean_loss, baseline.mean_loss)
 
     def test_saved_unified_checkpoint_reloads_with_identical_predictions(self) -> None:
         torch.manual_seed(11)
