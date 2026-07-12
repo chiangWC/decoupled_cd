@@ -103,13 +103,10 @@ def masked_graph_reconstruction_loss(
         output.completion_predictions is None
         or mask is None
         or target is None
-        or full_target_count is None
     ):
         raise ValueError("graph reconstruction outputs are required")
-    if full_target_count < 0:
-        raise ValueError("full graph reconstruction target count is invalid")
-    if full_target_count == 0:
-        return output.completion_predictions.sum() * 0.0
+    if type(full_target_count) is not int or full_target_count <= 0:
+        raise ValueError("at least one removed graph edge is required")
     return F.binary_cross_entropy(
         output.completion_predictions[mask],
         target[mask],

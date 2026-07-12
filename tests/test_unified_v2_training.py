@@ -317,6 +317,24 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             )
         )
 
+    def test_a2_global_empty_reconstruction_mask_is_rejected(self) -> None:
+        model = self.model(completion="evidence-relational-graph")
+        tensors = self.tensors()
+        sparse_evidence = tensors["student_concept_evidence"].clone()
+        sparse_evidence.zero_()
+        sparse_evidence[0, 0, :2] = torch.tensor([2.0, 1.0])
+        tensors["student_concept_evidence"] = sparse_evidence
+
+        output = self.forward(model, tensors, completion_epoch=0)
+
+        self.assertEqual(output.completion_full_target_count, 0)
+        self.assertFalse(bool(output.completion_target_mask.any()))
+        with self.assertRaisesRegex(
+            ValueError,
+            "at least one removed graph edge is required",
+        ):
+            masked_graph_reconstruction_loss(output)
+
     def test_a2_completion_loss_has_finite_nonzero_contribution_and_gradient(
         self,
     ) -> None:
