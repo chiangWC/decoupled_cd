@@ -53,3 +53,25 @@ A1 相对 A0 的候选门失败，`test` 保持关闭。本登记只诊断 Task 
 `replacement module input/output` -> 输入保持 train-only evidence、mask、student/concept identity 和预注册结构先验；输出保持完整 `[S,K]` mastery 概率及可审计置信度，不允许读取 validation target 或真实 test。整体替换 completer，接口不扩散到 estimator/decoder/behavior modules。
 
 `acceptance gate` -> 与 F-A1-001 相同的全局候选门；任何单个 standard 或 holdout overall 回退都失败。通过相对 A0 门后，才可从 Task 5 audited `strongest_comparators` 动态重建外部门，禁止手抄阈值。
+
+## F-A2-001（Evidence-Relation Graph Completer）
+
+`failure_id` -> `F-A2-001`
+
+`architecture fingerprint` -> `270b7a8d456110f3c23b91df14b05d970569b46efb3fee57d974a79d9c91faa4`
+
+`campaign / proof` -> `unified-ergc-r5-20260712`；A2 replay proof `b04958941f632ab41aa665f36eecf6058df590e33e3bae1b8e7c4ab29b400de7`；relative gate proof `300deb2cdd6e5d0d5313b0ef3fc781dc7f4048177cb892a5bcf8c1ec0aac084e`。
+
+`all exact deltas (A2 - A0v4)` -> ASSIST17 standard/holdout/zero/ordinary DOA/weighted DOA = `+0.0014313163188552913 / -0.001791471355351626 / -0.001219137427258432 / -0.004044384733056128 / -0.001563468596224582`；MOOCRadar = `+0.0009221217654461489 / +0.0005682702409960383 / -0.000002208094605493649 / +0.0064278145627227334 / -0.00021292905203984525`；XES3G5M = `+0.0003531456287206858 / +0.003821104390673624 / +0.003943417179277153 / -0.03030303030303033 / -0.009433962264150941`。
+
+`failure vector` -> `standard_nonregression=true`；`holdout_nonregression=false`；`overall_nonregression=false`；`zero_wins=1`（2/3 门失败）；`zero_delta_at_least_0.001=true`；最终 `passed=false`。
+
+`responsible module` -> A2 train-only evidence-relation graph missing-mastery completer，completion reconstruction loss weight 固定 `1.0`；A0v4/A2 共用 evidence estimator、NeuralCDM monotone decoder 与 conditional-simplex-floor-2m20 behavior module。
+
+`mechanism hypothesis` -> 同质 train-only evidence graph 能改善三个数据集的 standard overall 排序，也能改善 MOO/XES holdout overall，但对 ASSIST17 的 missing exposure 产生轻微系统性偏移；zero slice 仅 XES 显著受益，说明 missingness 不是可忽略的随机遮蔽，纯关系传播没有建模学生接触/作答选择机制。
+
+`next independent mechanism` -> **MNAR / exposure-aware mastery completion**。显式建模 concept exposure / attempt selection propensity 与 mastery 的联合缺失机制；不得给 A2 添加 residual 小补丁或 dataset-specific 数值。
+
+`test state` -> `test 未打开`；external gate 未运行并保持关闭；没有 retry、batch 改动、外部 gate、push 或 reference repo 修改。
+
+`acceptance gate` -> 继续使用相同冻结 cohort、seed `42`、split seed `2024` 和五项相对门：三数据集 standard/holdout overall 均不回退，zero AUC 至少 2/3 严格提升且至少一项 delta `>=0.001`；通过后才能重建 external gate，随后才可能打开 test。
