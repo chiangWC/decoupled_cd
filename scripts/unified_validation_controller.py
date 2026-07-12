@@ -12,6 +12,7 @@ import secrets
 import stat
 import subprocess
 import sys
+from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Mapping, Sequence
 
@@ -28,7 +29,7 @@ COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 NONCE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ARCHITECTURES = {
     "a0": ("prior", 0.0),
-    "a1": ("evidence-relational-graph", 1.0),
+    "a1": ("lowrank", 1.0),
 }
 CAMPAIGN_ID = "unified-mastery-20260712"
 CONTROLLER_SCHEMA_VERSION = 3
@@ -213,12 +214,42 @@ def _verify_normal_git_index(
                 )
 
 
-def _architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
+@dataclass(frozen=True)
+class LegacyArchitectureIdentity:
+    """Immutable v3 identity retained after the production spec moved to v4."""
+
+    completion: str
+
+    def manifest(self) -> dict[str, str | int]:
+        if self.completion not in {"prior", "lowrank"}:
+            raise ValueError("legacy completion must be prior or lowrank")
+        return {
+            "mastery_estimator": "evidence-parameter",
+            "completion": self.completion,
+            "cognitive_decoder": "neuralcdm-monotonic",
+            "behavior_model": "conditional-simplex",
+            "mastery_output": "student-concept",
+            "version": 3,
+            "modules": {
+                "prior": "m1-prior-m3-m4",
+                "lowrank": "m1-lowrank-m3-m4",
+            }[self.completion],
+        }
+
+    def fingerprint(self) -> str:
+        return canonical_sha256(self.manifest())
+
+
+def legacy_architecture_manifest(architecture: str) -> dict[str, str | int]:
+    return _architecture_spec(architecture).manifest()
+
+
+def _architecture_spec(architecture: str) -> LegacyArchitectureIdentity:
     try:
         completion, _ = ARCHITECTURES[architecture]
     except KeyError as error:
         raise ValueError(f"unknown unified architecture: {architecture}") from error
-    return UnifiedArchitectureSpec(completion=completion)
+    return LegacyArchitectureIdentity(completion=completion)
 
 
 def _load_json(path: Path, *, label: str) -> dict[str, Any]:

@@ -25,6 +25,7 @@ from scripts.unified_validation_controller import (
     consume_split_capability,
     initialize_controller,
     run_registered_pair,
+    LegacyArchitectureIdentity,
 )
 
 
@@ -37,8 +38,13 @@ ELIGIBLE_DATASET_IDS = (
 ASSET_READY_WITHOUT_EXACT_ZERO = ("NIPS34",)
 ARCHITECTURES = {
     "a0": ("prior", 0.0),
-    "a1": ("evidence-relational-graph", 1.0),
+    "a1": ("lowrank", 1.0),
 }
+STABLE_ARCHITECTURES = {
+    "a0v4": ("prior", 0.0),
+    "a2": ("evidence-relational-graph", 1.0),
+}
+RUNNER_ARCHITECTURES = {**ARCHITECTURES, **STABLE_ARCHITECTURES}
 
 
 @dataclass(frozen=True)
@@ -92,27 +98,46 @@ class GpuSnapshot:
         return self.utilization_percent == 0 and self.memory_fraction <= 0.01
 
 
-def architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
+def architecture_spec(architecture: str) -> LegacyArchitectureIdentity | UnifiedArchitectureSpec:
+    if architecture in STABLE_ARCHITECTURES:
+        return UnifiedArchitectureSpec(completion=STABLE_ARCHITECTURES[architecture][0])
     try:
         completion, _ = ARCHITECTURES[architecture]
     except KeyError as error:
         raise ValueError(f"unknown unified architecture: {architecture}") from error
-    return UnifiedArchitectureSpec(completion=completion)
+    return LegacyArchitectureIdentity(completion=completion)
 
 
 def architecture_fingerprint(architecture: str) -> str:
     return architecture_spec(architecture).fingerprint()
 
 
+def _validate_legacy_manifest(manifest: object, fingerprint: object) -> None:
+    if not isinstance(manifest, dict):
+        raise ValueError("architecture_manifest must be a JSON object")
+    if manifest.get("version") == 4:
+        UnifiedArchitectureSpec.from_manifest(
+            manifest, architecture_fingerprint=fingerprint
+        )
+        return
+    architecture = str(manifest.get("completion"))
+    if architecture not in {"prior", "lowrank"}:
+        raise ValueError("invalid architecture_manifest: version 3 is required")
+    expected = LegacyArchitectureIdentity(architecture)
+    if manifest != expected.manifest() or fingerprint != expected.fingerprint():
+        raise ValueError("architecture manifest/fingerprint mismatch")
+
+
 def _unified_training_flags(
-    spec: UnifiedArchitectureSpec,
+    spec: LegacyArchitectureIdentity | UnifiedArchitectureSpec,
     *,
     evidence_loss_weight: float,
     completion_rank: int = 32,
 ) -> list[str]:
     completion_loss_weight = evidence_loss_weight * {
-        "prior": ARCHITECTURES["a0"][1],
-        "evidence-relational-graph": ARCHITECTURES["a1"][1],
+        "prior": 0.0,
+        "lowrank": 1.0,
+        "evidence-relational-graph": 1.0,
     }[spec.completion]
     return [
         "--unified-completion",
@@ -337,10 +362,7 @@ def validate_smoke_summary(
 ) -> None:
     if summary.get("architecture_fingerprint") != expected_fingerprint:
         raise ValueError("smoke architecture fingerprint mismatch")
-    UnifiedArchitectureSpec.from_manifest(
-        summary.get("architecture_manifest"),
-        architecture_fingerprint=expected_fingerprint,
-    )
+    _validate_legacy_manifest(summary.get("architecture_manifest"), expected_fingerprint)
     shape = summary.get("mastery_shape")
     if (
         not isinstance(shape, list)
@@ -371,10 +393,7 @@ def _validate_split_summary(
         raise ValueError("validation split identity mismatch")
     if summary.get("architecture_fingerprint") != fingerprint:
         raise ValueError("validation architecture fingerprint mismatch")
-    UnifiedArchitectureSpec.from_manifest(
-        summary.get("architecture_manifest"),
-        architecture_fingerprint=fingerprint,
-    )
+    _validate_legacy_manifest(summary.get("architecture_manifest"), fingerprint)
     if summary.get("cohort_sha256") != cohort_sha256:
         raise ValueError("validation summary cohort SHA-256 mismatch")
     if summary.get("seed") != 42:
@@ -705,11 +724,9 @@ def _run_split(args: argparse.Namespace) -> None:
 
         train_summary = _load_json(train_summary_path)
         fingerprint = architecture_fingerprint(args.architecture)
-        UnifiedArchitectureSpec.from_manifest(
+        _validate_legacy_manifest(
             train_summary.get("architecture_manifest"),
-            architecture_fingerprint=train_summary.get(
-                "architecture_fingerprint"
-            ),
+            train_summary.get("architecture_fingerprint"),
         )
         if train_summary.get("architecture_fingerprint") != fingerprint:
             raise ValueError("training summary architecture fingerprint mismatch")
@@ -931,6 +948,101 @@ def _required_attempt_dir() -> Path:
     return Path(attempt_dir)
 
 
+def _run_stable_validation(args: argparse.Namespace) -> None:
+    """Run both validation protocols under the stable controller's issuance."""
+    output_path = _output_path(args.output).resolve()
+    work_root = output_path.parent / "stable-validation-work"
+    work_root.mkdir(parents=True, exist_ok=True)
+    recipe = RECIPES[args.dataset][args.recipe_index]
+    expected_fingerprint = architecture_fingerprint(args.architecture)
+    if expected_fingerprint != args.architecture_fingerprint:
+        raise ValueError("stable command architecture fingerprint mismatch")
+    split_metrics: dict[str, tuple[float, float, float, float]] = {}
+    peaks: list[float] = []
+    gpu_uuid: str | None = None
+    with locked_gpu() as (gpu_index, snapshots, lock_path):
+        child_env = dict(os.environ)
+        child_env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+        for split_id in ("standard", "holdout"):
+            split_root = work_root / split_id
+            split_root.mkdir(parents=True, exist_ok=True)
+            train_summary_path = split_root / "train-summary.json"
+            coverage_path = split_root / "coverage-valid.json"
+            doa_path = split_root / "doa-valid.json"
+            train_path, valid_path, q_matrix_path, assignments = _split_paths(
+                dataset_id=args.dataset,
+                split_id=split_id,
+                data_root=args.data_root,
+            )
+            required = [train_path, valid_path, q_matrix_path]
+            if assignments is not None:
+                required.append(assignments)
+            for path in required:
+                if not path.is_file():
+                    raise FileNotFoundError(path)
+            command = build_train_command(
+                dataset_id=args.dataset,
+                split_id=split_id,
+                architecture=args.architecture,
+                data_root=args.data_root,
+                output=train_summary_path,
+                device="cuda:0",
+                recipe=recipe,
+            )
+            _run_checked(command, env=child_env)
+            coverage_command, doa_command = build_evaluation_commands(
+                dataset_id=args.dataset,
+                split_id=split_id,
+                architecture=args.architecture,
+                data_root=args.data_root,
+                train_summary_path=train_summary_path,
+                coverage_path=coverage_path,
+                doa_path=doa_path,
+                device="cuda:0",
+            )
+            _run_checked(coverage_command, env=child_env)
+            _run_checked(doa_command, env=child_env)
+            train_summary = _load_json(train_summary_path)
+            _validate_legacy_manifest(
+                train_summary.get("architecture_manifest"),
+                train_summary.get("architecture_fingerprint"),
+            )
+            if train_summary.get("architecture_fingerprint") != expected_fingerprint:
+                raise ValueError("stable training fingerprint mismatch")
+            peak = _finite_float(
+                train_summary.get("max_cuda_memory_allocated_gb"),
+                field="max_cuda_memory_allocated_gb",
+            )
+            if peak <= 0.0:
+                raise ValueError("stable GPU validation must record positive peak memory")
+            peaks.append(peak)
+            split_metrics[split_id] = _extract_split_metrics(
+                coverage_path=coverage_path,
+                doa_path=doa_path,
+            )
+        gpu_uuid = _gpu_uuid(gpu_index)
+    standard = split_metrics["standard"]
+    holdout = split_metrics["holdout"]
+    _write_json(output_path, {
+        "schema_version": 4,
+        "architecture": args.architecture,
+        "architecture_manifest": architecture_spec(args.architecture).manifest(),
+        "architecture_fingerprint": expected_fingerprint,
+        "dataset_id": args.dataset,
+        "recipe_index": args.recipe_index,
+        "seed": 42,
+        "split_seed": 2024,
+        "cohort_sha256": args.cohort_sha256,
+        "gpu_uuid": gpu_uuid,
+        "peak_gpu_memory_gb": max(peaks),
+        "standard_overall_auc": standard[0],
+        "holdout_overall_auc": holdout[0],
+        "zero_auc": holdout[1],
+        "ordinary_doa": standard[2],
+        "weighted_doa": standard[3],
+    })
+
+
 def _controller_init(args: argparse.Namespace) -> None:
     initialize_controller(
         state_dir=args.controller_state_dir,
@@ -965,7 +1077,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     manifest.set_defaults(handler=_manifest)
 
     smoke = subparsers.add_parser("smoke")
-    smoke.add_argument("--architecture", choices=ARCHITECTURES, required=True)
+    smoke.add_argument("--architecture", choices=RUNNER_ARCHITECTURES, required=True)
     smoke.add_argument("--devices", choices=("cpu", "gpu", "both"), default="both")
     smoke.add_argument("--seed", type=int, choices=(42,), default=42)
     smoke.add_argument("--epochs", type=int, choices=(1,), default=1)
@@ -973,6 +1085,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     smoke_output.add_argument("--output", type=Path)
     smoke_output.add_argument("--output-root", type=Path)
     smoke.set_defaults(handler=_run_smoke)
+
+    stable_validation = subparsers.add_parser("stable-validation")
+    stable_validation.add_argument("--architecture", choices=STABLE_ARCHITECTURES, required=True)
+    stable_validation.add_argument("--dataset", choices=RECIPES, required=True)
+    stable_validation.add_argument("--recipe-index", type=int, required=True)
+    stable_validation.add_argument("--seed", type=int, choices=(42,), default=42)
+    stable_validation.add_argument("--split-seed", type=int, choices=(2024,), default=2024)
+    stable_validation.add_argument("--cohort-sha256", required=True)
+    stable_validation.add_argument("--architecture-fingerprint", required=True)
+    stable_validation.add_argument("--data-root", type=Path, default=PROJECT_ROOT / "data")
+    stable_validation.add_argument("--output", type=Path, required=True)
+    stable_validation.set_defaults(handler=_run_stable_validation)
 
     authorize = subparsers.add_parser("authorize")
     authorize.add_argument("--controller-state-dir", type=Path, required=True)
