@@ -587,6 +587,9 @@ def build_evaluation_commands(
     coverage_path: Path,
     doa_path: Path,
     device: str,
+    coverage_slice_csv: Path | None = None,
+    coverage_summary_csv: Path | None = None,
+    doa_summary_csv: Path | None = None,
 ) -> tuple[list[str], list[str]]:
     train_path, valid_path, q_matrix_path, assignments = _split_paths(
         dataset_id=dataset_id,
@@ -620,6 +623,10 @@ def build_evaluation_commands(
         "--output",
         str(coverage_path),
     ]
+    if coverage_slice_csv is not None:
+        coverage_command.extend(["--slice-csv", str(coverage_slice_csv)])
+    if coverage_summary_csv is not None:
+        coverage_command.extend(["--summary-csv", str(coverage_summary_csv)])
     doa_command = [
         sys.executable,
         "scripts/evaluate_doa.py",
@@ -631,6 +638,8 @@ def build_evaluation_commands(
         "--output",
         str(doa_path),
     ]
+    if doa_summary_csv is not None:
+        doa_command.extend(["--summary-csv", str(doa_summary_csv)])
     if assignments is not None:
         doa_command.extend(["--holdout-assignments", str(assignments)])
     return coverage_command, doa_command
@@ -949,6 +958,14 @@ def _required_attempt_dir() -> Path:
     return Path(attempt_dir)
 
 
+def _publish_authoritative_json(source: Path, destination: Path) -> None:
+    """Atomically move a completed generated JSON into its fixed source slot."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        raise FileExistsError(destination)
+    os.replace(source, destination)
+
+
 def _run_stable_validation(args: argparse.Namespace) -> None:
     """Run both validation protocols under the stable controller's issuance."""
     output_path = _output_path(args.output).resolve()
@@ -967,9 +984,11 @@ def _run_stable_validation(args: argparse.Namespace) -> None:
         for split_id in ("standard", "holdout"):
             split_root = work_root / split_id
             split_root.mkdir(parents=True, exist_ok=True)
-            train_summary_path = split_root / "train-summary.json"
-            coverage_path = split_root / "coverage-valid.json"
-            doa_path = split_root / "doa-valid.json"
+            aux_root = work_root / "aux" / split_id
+            aux_root.mkdir(parents=True, exist_ok=True)
+            train_summary_path = aux_root / "train-summary.json"
+            coverage_path = aux_root / "coverage-valid.json"
+            doa_path = aux_root / "doa-valid.json"
             train_path, valid_path, q_matrix_path, assignments = _split_paths(
                 dataset_id=args.dataset,
                 split_id=split_id,
@@ -1000,6 +1019,9 @@ def _run_stable_validation(args: argparse.Namespace) -> None:
                 coverage_path=coverage_path,
                 doa_path=doa_path,
                 device="cuda:0",
+                coverage_slice_csv=aux_root / "coverage-valid_slices.csv",
+                coverage_summary_csv=aux_root / "coverage-valid_summary.csv",
+                doa_summary_csv=aux_root / "doa-valid_summary.csv",
             )
             _run_checked(coverage_command, env=child_env)
             _run_checked(doa_command, env=child_env)
@@ -1021,6 +1043,12 @@ def _run_stable_validation(args: argparse.Namespace) -> None:
                 coverage_path=coverage_path,
                 doa_path=doa_path,
             )
+            for source, name in (
+                (train_summary_path, "train-summary.json"),
+                (coverage_path, "coverage-valid.json"),
+                (doa_path, "doa-valid.json"),
+            ):
+                _publish_authoritative_json(source, split_root / name)
         gpu_uuid = _gpu_uuid(gpu_index)
     standard = split_metrics["standard"]
     holdout = split_metrics["holdout"]
@@ -1060,9 +1088,11 @@ def _run_stable_test(args: argparse.Namespace) -> None:
         for dataset, recipe_index in STABLE_FROZEN_RECIPES.items():
             dataset_root = work_root / dataset
             dataset_root.mkdir(parents=True, exist_ok=True)
-            train_summary_path = dataset_root / "train-summary.json"
-            coverage_path = dataset_root / "coverage-test.json"
-            doa_path = dataset_root / "doa-test.json"
+            aux_root = work_root / "aux" / dataset
+            aux_root.mkdir(parents=True, exist_ok=True)
+            train_summary_path = aux_root / "train-summary.json"
+            coverage_path = aux_root / "coverage-test.json"
+            doa_path = aux_root / "doa-test.json"
             standard_dir = args.data_root / DATASET_DIRECTORIES[dataset][0]
             train_path = standard_dir / "train.csv"
             valid_path = standard_dir / "valid.csv"
@@ -1096,11 +1126,14 @@ def _run_stable_test(args: argparse.Namespace) -> None:
             _run_checked([
                 sys.executable, "scripts/evaluate_coverage_slice.py", *common,
                 "--output", str(coverage_path),
+                "--slice-csv", str(aux_root / "coverage-test_slices.csv"),
+                "--summary-csv", str(aux_root / "coverage-test_summary.csv"),
             ], env=child_env)
             _run_checked([
                 sys.executable, "scripts/evaluate_doa.py", *common,
                 "--min-responses", "3", "--doa-seed", "42",
                 "--output", str(doa_path),
+                "--summary-csv", str(aux_root / "doa-test_summary.csv"),
             ], env=child_env)
             train_summary = _load_json(train_summary_path)
             _validate_legacy_manifest(
@@ -1127,6 +1160,12 @@ def _run_stable_test(args: argparse.Namespace) -> None:
                 "ordinary_doa": ordinary,
                 "weighted_doa": weighted,
             }
+            for source, name in (
+                (train_summary_path, "train-summary.json"),
+                (coverage_path, "coverage-test.json"),
+                (doa_path, "doa-test.json"),
+            ):
+                _publish_authoritative_json(source, dataset_root / name)
         gpu_uuid = _gpu_uuid(gpu_index)
     _write_json(output_path, {
         "schema_version": 4,

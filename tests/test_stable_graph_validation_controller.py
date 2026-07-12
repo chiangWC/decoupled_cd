@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import subprocess
 import tempfile
@@ -358,6 +359,219 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                     ["run-validation", "--architecture", "a2", "--dataset", "ASSIST17"],
                     dependencies=deps,
                 )
+
+    def test_real_stable_commands_isolate_and_discover_auxiliary_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / controller.CAMPAIGN_ID
+            attempt = root / "attempts" / "attempt-001"
+            attempt.mkdir(parents=True)
+            data_paths = [Path(temporary) / name for name in ("train.csv", "valid.csv", "Q.csv")]
+            for path in data_paths:
+                path.write_text("placeholder")
+
+            @contextmanager
+            def allocation():
+                yield 0, [], None
+
+            commands: list[list[str]] = []
+
+            def run_checked(command, *, env):
+                command = list(command)
+                commands.append(command)
+                output = Path(command[command.index("--output") + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                if command[1].endswith("train.py"):
+                    output.write_text(json.dumps({
+                        "architecture_manifest": controller.architecture_spec("a2").manifest(),
+                        "architecture_fingerprint": controller.architecture_fingerprint("a2"),
+                        "max_cuda_memory_allocated_gb": 0.25,
+                    }))
+                    output.with_name(f"{output.stem}_best.pt").write_bytes(b"checkpoint")
+                    output.with_name(f"{output.stem}_history.csv").write_text("loss\n")
+                elif command[1].endswith("evaluate_coverage_slice.py"):
+                    output.write_text(json.dumps({
+                        "slices": [
+                            {"scope": "overall", "auc": 0.5},
+                            {"scope": "bucket:zero", "auc": 0.5},
+                        ]
+                    }))
+                    slice_csv = (
+                        Path(command[command.index("--slice-csv") + 1])
+                        if "--slice-csv" in command
+                        else output.with_name(f"{output.stem}_slices.csv")
+                    )
+                    summary_csv = (
+                        Path(command[command.index("--summary-csv") + 1])
+                        if "--summary-csv" in command
+                        else output.with_name(f"{output.stem}_summary.csv")
+                    )
+                    slice_csv.write_text("scope,auc\n")
+                    summary_csv.write_text("overall_auc\n")
+                else:
+                    output.write_text(json.dumps({
+                        "rows": [{"doa": 0.5, "doa_weighted": 0.5}]
+                    }))
+                    summary_csv = Path(command[command.index("--summary-csv") + 1])
+                    summary_csv.write_text("doa,doa_weighted\n")
+
+            args = mock.Mock(
+                output=attempt / "runner-result.json",
+                dataset="ASSIST17",
+                recipe_index=controller.FROZEN_RECIPES["ASSIST17"],
+                architecture="a2",
+                architecture_fingerprint=controller.architecture_fingerprint("a2"),
+                data_root=Path(temporary),
+                cohort_sha256=controller.FROZEN_COHORT_SHA256,
+            )
+            with (
+                mock.patch.object(outer_runner, "locked_gpu", allocation),
+                mock.patch.object(
+                    outer_runner,
+                    "_split_paths",
+                    return_value=(*data_paths, None),
+                ),
+                mock.patch.object(outer_runner, "_run_checked", run_checked),
+                mock.patch.object(outer_runner, "_gpu_uuid", return_value="GPU-fake"),
+            ):
+                outer_runner._run_stable_validation(args)
+
+            for split in ("standard", "holdout"):
+                authoritative = attempt / "stable-validation-work" / split
+                self.assertEqual(
+                    {path.name for path in authoritative.iterdir()},
+                    {"train-summary.json", "coverage-valid.json", "doa-valid.json"},
+                )
+                auxiliary = attempt / "stable-validation-work" / "aux" / split
+                self.assertEqual(
+                    {path.name for path in auxiliary.iterdir()},
+                    {
+                        "train-summary_best.pt",
+                        "train-summary_history.csv",
+                        "coverage-valid_slices.csv",
+                        "coverage-valid_summary.csv",
+                        "doa-valid_summary.csv",
+                    },
+                )
+            self.assertTrue(any("--slice-csv" in command for command in commands))
+            deps = self.dependencies(
+                root,
+                self.validation_runner(),
+                source_policy="production-layout-fixture",
+            )
+            sources = controller._discover_source_artifacts(
+                deps, "attempts/attempt-001", "validation"
+            )
+            auxiliary = controller._discover_aux_artifacts(
+                deps, "attempts/attempt-001", "validation"
+            )
+            self.assertEqual(len(sources), 6)
+            self.assertEqual(len(auxiliary), 2)
+            unexpected = (
+                attempt
+                / "stable-validation-work"
+                / "standard"
+                / "unexpected.json"
+            )
+            unexpected.write_text("{}")
+            with self.assertRaisesRegex(ValueError, "missing or extra"):
+                controller._discover_source_artifacts(
+                    deps, "attempts/attempt-001", "validation"
+                )
+            unexpected.unlink()
+
+            test_attempt = root / "attempts" / "test-once"
+            test_attempt.mkdir()
+            for dataset in controller.FROZEN_RECIPES:
+                standard_dir = (
+                    Path(temporary)
+                    / outer_runner.DATASET_DIRECTORIES[dataset][0]
+                )
+                standard_dir.mkdir(parents=True, exist_ok=True)
+                for name in ("train.csv", "valid.csv", "test.csv", "Q_matrix.csv"):
+                    (standard_dir / name).write_text("placeholder")
+            args = mock.Mock(
+                output=test_attempt / "runner-result.json",
+                architecture="a2",
+                data_root=Path(temporary),
+            )
+            with (
+                mock.patch.object(outer_runner, "locked_gpu", allocation),
+                mock.patch.object(outer_runner, "_run_checked", run_checked),
+                mock.patch.object(outer_runner, "_gpu_uuid", return_value="GPU-fake"),
+            ):
+                outer_runner._run_stable_test(args)
+            for dataset in controller.FROZEN_RECIPES:
+                authoritative = test_attempt / "stable-test-work" / dataset
+                self.assertEqual(
+                    {path.name for path in authoritative.iterdir()},
+                    {"train-summary.json", "coverage-test.json", "doa-test.json"},
+                )
+                auxiliary = (
+                    test_attempt / "stable-test-work" / "aux" / dataset
+                )
+                self.assertEqual(
+                    {path.name for path in auxiliary.iterdir()},
+                    {
+                        "train-summary_best.pt",
+                        "train-summary_history.csv",
+                        "coverage-test_slices.csv",
+                        "coverage-test_summary.csv",
+                        "doa-test_summary.csv",
+                    },
+                )
+            sources = controller._discover_source_artifacts(
+                deps, "attempts/test-once", "test"
+            )
+            auxiliary = controller._discover_aux_artifacts(
+                deps, "attempts/test-once", "test"
+            )
+            self.assertEqual(len(sources), 9)
+            self.assertEqual(len(auxiliary), 3)
+
+    def test_test_sources_reject_duplicate_required_coverage_scope(self) -> None:
+        for duplicate_scope in ("overall", "bucket:zero"):
+            with (
+                self.subTest(scope=duplicate_scope),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary) / controller.CAMPAIGN_ID
+                root.mkdir()
+                deps = self.dependencies(
+                    root,
+                    self.validation_runner(),
+                    source_policy="test-fixed-sources",
+                )
+                result = controller.fake_test_result()
+                for dataset in controller.FROZEN_RECIPES:
+                    work = (
+                        root
+                        / "attempts"
+                        / "test-once"
+                        / "stable-test-work"
+                        / dataset
+                    )
+                    work.mkdir(parents=True)
+                    slices = [
+                        {"scope": "overall", "auc": 0.5},
+                        {"scope": "bucket:zero", "auc": 0.5},
+                    ]
+                    if dataset == "ASSIST17":
+                        slices.append({"scope": duplicate_scope, "auc": 0.5})
+                    (work / "coverage-test.json").write_text(
+                        json.dumps({"slices": slices})
+                    )
+                    (work / "doa-test.json").write_text(json.dumps({
+                        "rows": [{"doa": 0.5, "doa_weighted": 0.5}]
+                    }))
+                    (work / "train-summary.json").write_text(json.dumps({
+                        "architecture_manifest": controller.architecture_spec("a2").manifest(),
+                        "architecture_fingerprint": controller.architecture_fingerprint("a2"),
+                    }))
+                artifacts = controller._discover_source_artifacts(
+                    deps, "attempts/test-once", "test"
+                )
+                with self.assertRaisesRegex(ValueError, "coverage source"):
+                    controller._validate_test_sources(deps, result, artifacts)
 
     def test_valid_forged_aggregate_cannot_omit_fixed_production_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

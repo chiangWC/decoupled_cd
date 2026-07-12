@@ -102,9 +102,20 @@ TEST_SOURCE_SUFFIXES = tuple(
 )
 TEST_SOURCE_POLICIES = {
     "aggregate-only", "validation-fixed-sources", "test-fixed-sources",
-    "all-fixed-sources"
+    "all-fixed-sources", "production-layout-fixture"
 }
 PRODUCTION_SOURCE_POLICY = "production-fixed-sources"
+
+
+def _aux_names(kind: str) -> tuple[str, ...]:
+    suffix = "valid" if kind == "validation" else "test"
+    return (
+        "train-summary_best.pt",
+        "train-summary_history.csv",
+        f"coverage-{suffix}_slices.csv",
+        f"coverage-{suffix}_summary.csv",
+        f"doa-{suffix}_summary.csv",
+    )
 
 
 class CampaignStore:
@@ -765,12 +776,19 @@ def _canonical_attempt_proof(
     normalized = _validate_runner_result(str(kind), str(architecture), dataset if isinstance(dataset, str) else None, result)
     if not artifacts or set(artifacts[0]) != ARTIFACT_FIELDS or artifacts[0].get("path") != f"{attempt_dir}/runner-result.json":
         raise ValueError("canonical attempt artifact field/path mismatch")
+    source_count = len(_required_source_suffixes(dependencies, str(kind)))
     _validate_metric_sources(
         dependencies,
         attempt_dir=attempt_dir,
         kind=str(kind),
         result=normalized,
-        artifacts=artifacts[1:],
+        artifacts=artifacts[1:1 + source_count],
+    )
+    _validate_aux_artifacts(
+        dependencies,
+        attempt_dir=attempt_dir,
+        kind=str(kind),
+        artifacts=artifacts[1 + source_count:],
     )
     argv = _runner_argv(
         str(kind), str(architecture),
@@ -805,11 +823,13 @@ def _required_source_suffixes(
 ) -> tuple[str, ...]:
     policy = dependencies.source_policy
     if kind == "validation" and policy in {
-        PRODUCTION_SOURCE_POLICY, "validation-fixed-sources", "all-fixed-sources"
+        PRODUCTION_SOURCE_POLICY, "validation-fixed-sources", "all-fixed-sources",
+        "production-layout-fixture",
     }:
         return VALIDATION_SOURCE_SUFFIXES
     if kind == "test" and policy in {
-        PRODUCTION_SOURCE_POLICY, "test-fixed-sources", "all-fixed-sources"
+        PRODUCTION_SOURCE_POLICY, "test-fixed-sources", "all-fixed-sources",
+        "production-layout-fixture",
     }:
         return TEST_SOURCE_SUFFIXES
     return ()
@@ -838,6 +858,8 @@ def _discover_source_artifacts(
         if kind == "validation"
         else set(FROZEN_RECIPES)
     )
+    if _requires_aux_layout(dependencies):
+        expected_children.add("aux")
     if set(dependencies.store.listdir(fixed_root)) != expected_children:
         raise ValueError("fixed source root has missing or extra entries")
     expected_by_parent: dict[str, set[str]] = {}
@@ -851,6 +873,76 @@ def _discover_source_artifacts(
         dependencies.store.read_regular(path, label=f"{kind} source artifact")[1]
         for path in paths
     ]
+
+
+def _requires_aux_layout(dependencies: CampaignDependencies) -> bool:
+    return dependencies.source_policy in {
+        PRODUCTION_SOURCE_POLICY,
+        "production-layout-fixture",
+    }
+
+
+def _aux_identities(kind: str) -> tuple[str, ...]:
+    return (
+        ("standard", "holdout")
+        if kind == "validation"
+        else tuple(sorted(FROZEN_RECIPES))
+    )
+
+
+def _discover_aux_artifacts(
+    dependencies: CampaignDependencies, attempt_dir: str, kind: str
+) -> list[dict[str, object]]:
+    if kind not in {"validation", "test"}:
+        return []
+    aux_root = f"{attempt_dir}/stable-{kind}-work/aux"
+    if not _requires_aux_layout(dependencies):
+        if dependencies.store.exists(aux_root):
+            raise ValueError("fixture policy forbids an auxiliary output layout")
+        return []
+    identities = _aux_identities(kind)
+    if set(dependencies.store.listdir(aux_root)) != set(identities):
+        raise ValueError("fixed auxiliary root has missing or extra entries")
+    names = set(_aux_names(kind))
+    checkpoints: list[dict[str, object]] = []
+    for identity in identities:
+        parent = f"{aux_root}/{identity}"
+        if set(dependencies.store.listdir(parent)) != names:
+            raise ValueError("fixed auxiliary directory has missing or extra artifacts")
+        checkpoint = f"{parent}/train-summary_best.pt"
+        checkpoints.append(
+            dependencies.store.read_regular(
+                checkpoint, label=f"{kind} checkpoint artifact"
+            )[1]
+        )
+    return checkpoints
+
+
+def _validate_aux_artifacts(
+    dependencies: CampaignDependencies,
+    *,
+    attempt_dir: str,
+    kind: str,
+    artifacts: Sequence[Mapping[str, object]],
+) -> None:
+    expected = (
+        [
+            f"{attempt_dir}/stable-{kind}-work/aux/{identity}/train-summary_best.pt"
+            for identity in _aux_identities(kind)
+        ]
+        if kind in {"validation", "test"} and _requires_aux_layout(dependencies)
+        else []
+    )
+    if [artifact.get("path") for artifact in artifacts] != expected:
+        raise ValueError("checkpoint artifact registry mismatch")
+    for artifact, path in zip(artifacts, expected, strict=True):
+        if set(artifact) != ARTIFACT_FIELDS:
+            raise ValueError("checkpoint artifact field set mismatch")
+        _, current = dependencies.store.read_regular(
+            path, label=f"{kind} checkpoint artifact"
+        )
+        if current != artifact:
+            raise ValueError("checkpoint artifact identity/SHA mismatch")
 
 
 def _validate_metric_sources(
@@ -945,10 +1037,18 @@ def _validate_test_sources(
         slices = coverage.get("slices")
         if type(slices) is not list:
             raise ValueError("test coverage source is invalid")
-        by_scope = {
-            row.get("scope"): row.get("auc")
-            for row in slices if type(row) is dict
-        }
+        by_scope: dict[str, float] = {}
+        for scope in ("overall", "bucket:zero"):
+            selected = [
+                row
+                for row in slices
+                if type(row) is dict and row.get("scope") == scope
+            ]
+            if len(selected) != 1:
+                raise ValueError(
+                    "test coverage source requires exactly one row per required scope"
+                )
+            by_scope[scope] = selected[0].get("auc")
         doa = dependencies.store.read_json(
             f"{base}/doa-test.json", label="test DOA source"
         )
@@ -1009,6 +1109,9 @@ def _run_registered(dependencies: CampaignDependencies, *, kind: str, architectu
         source_artifacts = _discover_source_artifacts(
             dependencies, attempt_relative, kind
         )
+        aux_artifacts = _discover_aux_artifacts(
+            dependencies, attempt_relative, kind
+        )
         store.exclusive_json(f"{attempt_relative}/runner-result.json", result)
         _, artifact = store.read_regular(f"{attempt_relative}/runner-result.json", label="runner result")
         complete_entry = {**entry, "status": "complete", "proof_file_sha256": "0" * 64}
@@ -1017,7 +1120,7 @@ def _run_registered(dependencies: CampaignDependencies, *, kind: str, architectu
             ledger,
             complete_entry,
             result,
-            [artifact, *source_artifacts],
+            [artifact, *source_artifacts, *aux_artifacts],
         )
         store.exclusive_json(f"{attempt_relative}/proof.json", proof)
     except BaseException:
@@ -1065,7 +1168,10 @@ def _verify_attempts(dependencies: CampaignDependencies) -> tuple[dict[str, Any]
         sources = _discover_source_artifacts(
             dependencies, attempt_relative, str(entry["kind"])
         )
-        current_artifacts = [aggregate, *sources]
+        auxiliary = _discover_aux_artifacts(
+            dependencies, attempt_relative, str(entry["kind"])
+        )
+        current_artifacts = [aggregate, *sources, *auxiliary]
         if artifacts != current_artifacts:
             raise ValueError(
                 "proof artifact registry mismatch with fixed discovered artifacts"
@@ -1447,11 +1553,14 @@ def _command_test(args: argparse.Namespace, deps: CampaignDependencies) -> int:
         source_artifacts = _discover_source_artifacts(
             deps, "attempts/test-once", "test"
         )
+        aux_artifacts = _discover_aux_artifacts(
+            deps, "attempts/test-once", "test"
+        )
         deps.store.exclusive_json("attempts/test-once/runner-result.json", result)
         _, aggregate_artifact = deps.store.read_regular(
             "attempts/test-once/runner-result.json", label="test runner result"
         )
-        artifacts = [aggregate_artifact, *source_artifacts]
+        artifacts = [aggregate_artifact, *source_artifacts, *aux_artifacts]
         _validate_test_sources(deps, result, source_artifacts)
         state = "succeeded"
     except BaseException as error:
@@ -1573,7 +1682,8 @@ def _verified_test_record(deps: CampaignDependencies) -> dict[str, Any]:
     aggregate_path = "attempts/test-once/runner-result.json"
     _, aggregate = deps.store.read_regular(aggregate_path, label="test result artifact")
     sources = _discover_source_artifacts(deps, "attempts/test-once", "test")
-    current_artifacts = [aggregate, *sources]
+    auxiliary = _discover_aux_artifacts(deps, "attempts/test-once", "test")
+    current_artifacts = [aggregate, *sources, *auxiliary]
     if registered != current_artifacts:
         raise ValueError("test proof artifacts differ from fixed discovered artifacts")
     result = deps.store.read_json(aggregate_path, label="test result artifact")
