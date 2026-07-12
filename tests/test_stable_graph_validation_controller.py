@@ -139,6 +139,11 @@ class StableGraphValidationControllerTests(unittest.TestCase):
             "--output", "/tmp/validation.json",
         ])
         self.assertEqual(validation.dataset, "ASSIST17")
+        test_once = outer_runner.parse_args([
+            "stable-test", "--architecture", "a2", "--seed", "42",
+            "--split-seed", "2024", "--output", "/tmp/test.json",
+        ])
+        self.assertEqual(test_once.architecture, "a2")
 
     def test_concurrent_issuance_is_contiguous_and_unique(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

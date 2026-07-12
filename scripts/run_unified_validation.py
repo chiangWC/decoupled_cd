@@ -45,6 +45,7 @@ STABLE_ARCHITECTURES = {
     "a2": ("evidence-relational-graph", 1.0),
 }
 RUNNER_ARCHITECTURES = {**ARCHITECTURES, **STABLE_ARCHITECTURES}
+STABLE_FROZEN_RECIPES = {"MOOCRadar": 2, "ASSIST17": 1, "XES3G5M": 0}
 
 
 @dataclass(frozen=True)
@@ -1043,6 +1044,102 @@ def _run_stable_validation(args: argparse.Namespace) -> None:
     })
 
 
+def _run_stable_test(args: argparse.Namespace) -> None:
+    """Evaluate the exact frozen A2 cohort on test, after controller consumption."""
+    if args.architecture != "a2":
+        raise ValueError("stable test runner accepts only a2")
+    output_path = _output_path(args.output).resolve()
+    work_root = output_path.parent / "stable-test-work"
+    work_root.mkdir(parents=True, exist_ok=True)
+    fingerprint = architecture_fingerprint("a2")
+    rows: dict[str, dict[str, float]] = {}
+    peaks: list[float] = []
+    with locked_gpu() as (gpu_index, snapshots, lock_path):
+        child_env = dict(os.environ)
+        child_env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+        for dataset, recipe_index in STABLE_FROZEN_RECIPES.items():
+            dataset_root = work_root / dataset
+            dataset_root.mkdir(parents=True, exist_ok=True)
+            train_summary_path = dataset_root / "train-summary.json"
+            coverage_path = dataset_root / "coverage-test.json"
+            doa_path = dataset_root / "doa-test.json"
+            standard_dir = args.data_root / DATASET_DIRECTORIES[dataset][0]
+            train_path = standard_dir / "train.csv"
+            valid_path = standard_dir / "valid.csv"
+            test_path = standard_dir / "test.csv"
+            q_matrix_path = standard_dir / "Q_matrix.csv"
+            for path in (train_path, valid_path, test_path, q_matrix_path):
+                if not path.is_file():
+                    raise FileNotFoundError(path)
+            recipe = RECIPES[dataset][recipe_index]
+            train_command = build_train_command(
+                dataset_id=dataset,
+                split_id="standard",
+                architecture="a2",
+                data_root=args.data_root,
+                output=train_summary_path,
+                device="cuda:0",
+                recipe=recipe,
+            )
+            _run_checked(train_command, env=child_env)
+            common = [
+                "--dataset-name", dataset,
+                "--summary", str(train_summary_path),
+                "--model-name", "a2",
+                "--split", "test",
+                "--train-interactions", str(train_path),
+                "--valid-interactions", str(valid_path),
+                "--test-interactions", str(test_path),
+                "--q-matrix", str(q_matrix_path),
+                "--device", "cuda:0",
+            ]
+            _run_checked([
+                sys.executable, "scripts/evaluate_coverage_slice.py", *common,
+                "--output", str(coverage_path),
+            ], env=child_env)
+            _run_checked([
+                sys.executable, "scripts/evaluate_doa.py", *common,
+                "--min-responses", "3", "--doa-seed", "42",
+                "--output", str(doa_path),
+            ], env=child_env)
+            train_summary = _load_json(train_summary_path)
+            _validate_legacy_manifest(
+                train_summary.get("architecture_manifest"),
+                train_summary.get("architecture_fingerprint"),
+            )
+            if train_summary.get("architecture_fingerprint") != fingerprint:
+                raise ValueError("stable test fingerprint mismatch")
+            peak = _finite_float(
+                train_summary.get("max_cuda_memory_allocated_gb"),
+                field="max_cuda_memory_allocated_gb",
+            )
+            if peak <= 0.0:
+                raise ValueError("stable GPU test must record positive peak memory")
+            peaks.append(peak)
+            overall, zero, ordinary, weighted = _extract_split_metrics(
+                coverage_path=coverage_path,
+                doa_path=doa_path,
+            )
+            rows[dataset] = {
+                "overall_auc": overall,
+                "zero_auc": zero,
+                "ordinary_doa": ordinary,
+                "weighted_doa": weighted,
+            }
+        gpu_uuid = _gpu_uuid(gpu_index)
+    _write_json(output_path, {
+        "schema_version": 4,
+        "architecture": "a2",
+        "architecture_manifest": architecture_spec("a2").manifest(),
+        "architecture_fingerprint": fingerprint,
+        "seed": 42,
+        "split_seed": 2024,
+        "gpu_uuid": gpu_uuid,
+        "peak_gpu_memory_gb": max(peaks),
+        "rows": rows,
+    })
+
+
 def _controller_init(args: argparse.Namespace) -> None:
     initialize_controller(
         state_dir=args.controller_state_dir,
@@ -1097,6 +1194,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     stable_validation.add_argument("--data-root", type=Path, default=PROJECT_ROOT / "data")
     stable_validation.add_argument("--output", type=Path, required=True)
     stable_validation.set_defaults(handler=_run_stable_validation)
+
+    stable_test = subparsers.add_parser("stable-test")
+    stable_test.add_argument("--architecture", choices=("a2",), required=True)
+    stable_test.add_argument("--seed", type=int, choices=(42,), default=42)
+    stable_test.add_argument("--split-seed", type=int, choices=(2024,), default=2024)
+    stable_test.add_argument("--data-root", type=Path, default=PROJECT_ROOT / "data")
+    stable_test.add_argument("--output", type=Path, required=True)
+    stable_test.set_defaults(handler=_run_stable_test)
 
     authorize = subparsers.add_parser("authorize")
     authorize.add_argument("--controller-state-dir", type=Path, required=True)
