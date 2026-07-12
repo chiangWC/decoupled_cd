@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -116,6 +118,21 @@ def _exclusive_json(path: Path, payload: object) -> None:
         handle.write("\n")
 
 
+def _atomic_json(path: Path, payload: object) -> None:
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with temporary.open("x", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def _init(args: argparse.Namespace) -> None:
     if args.campaign_id != CAMPAIGN_ID or args.architecture != "a0":
         raise ValueError("A0 exploration requires the registered campaign and architecture")
@@ -161,21 +178,73 @@ def _init(args: argparse.Namespace) -> None:
     })
 
 
-def _assemble_rows(controller_dir: Path) -> list[dict[str, Any]]:
+def _validated_ranked_proofs(
+    controller_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Mapping[str, Any]], list[dict[str, Any]]]:
     state = _read_json(controller_dir / "state.json")
-    if not isinstance(state, Mapping) or not state.get("complete"):
+    if not isinstance(state, dict) or not state.get("complete"):
         raise ValueError("exploration controller is not complete")
+    if state.get("mode") != "a0_exploration" or state.get("active_pair") is not None:
+        raise ValueError("controller is not in finalizable A0 exploration state")
+    dataset_ids = state.get("dataset_ids")
+    issuance_counter = state.get("issuance_counter")
+    if not isinstance(dataset_ids, list) or type(issuance_counter) is not int:
+        raise ValueError("exploration controller registry is invalid")
     grouped: dict[str, list[Mapping[str, Any]]] = {}
+    proof_registry: list[dict[str, Any]] = []
     for path in sorted((controller_dir / "proofs").glob("*.json")):
         proof = _read_json(path)
-        if isinstance(proof, Mapping):
-            grouped.setdefault(str(proof["dataset_id"]), []).append(proof)
-    rows: list[dict[str, Any]] = []
-    for dataset_id in state["dataset_ids"]:
+        if not isinstance(proof, Mapping):
+            raise ValueError(f"exploration proof is not an object: {path}")
+        dataset_id = proof.get("dataset_id")
+        counter = proof.get("counter")
+        if (
+            dataset_id not in dataset_ids
+            or type(counter) is not int
+            or path.name != f"{counter:06d}-{dataset_id}.json"
+        ):
+            raise ValueError(f"exploration proof filename/counter mismatch: {path}")
+        for field in ("controller_id", "route_commit", "baseline_sha256"):
+            if proof.get(field) != state.get(field):
+                raise ValueError(f"exploration proof {field} mismatch: {path}")
+        split_proofs = proof.get("split_proofs")
+        if not isinstance(split_proofs, Mapping):
+            raise ValueError(f"exploration split proofs are invalid: {path}")
+        standard = split_proofs.get("standard")
+        holdout = split_proofs.get("holdout")
+        if not isinstance(standard, Mapping) or not isinstance(holdout, Mapping):
+            raise ValueError(f"exploration split proof pair is incomplete: {path}")
+        recipe_index = standard.get("recipe_index")
+        numerical_recipe = standard.get("numerical_recipe")
+        if (
+            type(recipe_index) is not int
+            or holdout.get("recipe_index") != recipe_index
+            or holdout.get("numerical_recipe") != numerical_recipe
+            or recipe_index < 0
+            or recipe_index >= len(RECIPES[str(dataset_id)])
+            or numerical_recipe != RECIPES[str(dataset_id)][recipe_index].__dict__
+        ):
+            raise ValueError(f"exploration proof recipe mismatch: {path}")
+        proof_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        proof_registry.append({
+            "counter": counter,
+            "dataset_id": dataset_id,
+            "proof_sha256": proof_sha256,
+        })
+        grouped.setdefault(str(dataset_id), []).append(proof)
+    counters = [entry["counter"] for entry in proof_registry]
+    if counters != list(range(1, issuance_counter + 1)):
+        raise ValueError("exploration proof counters are not complete and contiguous")
+    proof_registry_sha256 = canonical_sha256(proof_registry)
+    registered_sha256 = state.get("finalized_proof_registry_sha256")
+    if registered_sha256 is not None and registered_sha256 != proof_registry_sha256:
+        raise ValueError("finalized exploration proof registry SHA-256 mismatch")
+    selected_proofs: dict[str, Mapping[str, Any]] = {}
+    for dataset_id in dataset_ids:
         proofs = grouped.get(dataset_id, [])
         if not proofs:
             raise ValueError(f"missing exploration proof: {dataset_id}")
-        selected = max(
+        selected_proofs[dataset_id] = max(
             proofs,
             key=lambda proof: (
                 min(
@@ -186,6 +255,24 @@ def _assemble_rows(controller_dir: Path) -> list[dict[str, Any]]:
                 -int(proof["counter"]),
             ),
         )
+    return state, selected_proofs, proof_registry
+
+
+def _rows_from_selected(
+    state: Mapping[str, Any],
+    selected_proofs: Mapping[str, Mapping[str, Any]],
+    proof_registry: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    proof_hashes = {
+        int(entry["counter"]): str(entry["proof_sha256"])
+        for entry in proof_registry
+    }
+    rows: list[dict[str, Any]] = []
+    for dataset_id in state["dataset_ids"]:
+        selected = selected_proofs[dataset_id]
+        failed_attempt_count = sum(
+            entry["dataset_id"] == dataset_id for entry in proof_registry
+        ) - 1
         standard = selected["split_proofs"]["standard"]
         holdout = selected["split_proofs"]["holdout"]
         rows.append({
@@ -199,11 +286,35 @@ def _assemble_rows(controller_dir: Path) -> list[dict[str, Any]]:
             "recipe_index": int(standard["recipe_index"]),
             "numerical_recipe": standard["numerical_recipe"],
             "recipe_sha256": canonical_sha256(standard["numerical_recipe"]),
-            "failed_attempt_count": len(proofs) - 1,
+            "failed_attempt_count": failed_attempt_count,
             "proof_counter": int(selected["counter"]),
+            "proof_sha256": proof_hashes[int(selected["counter"])],
             "provisional_registry_sha256": state["cohort_sha256"],
         })
     return rows
+
+
+def finalize_exploration(controller_dir: Path) -> list[dict[str, Any]]:
+    state, selected_proofs, proof_registry = _validated_ranked_proofs(controller_dir)
+    rows = _rows_from_selected(state, selected_proofs, proof_registry)
+    selected_recipes: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        selected_recipes[str(row["dataset_id"])] = {
+            "recipe_index": int(row["recipe_index"]),
+            "numerical_recipe": row["numerical_recipe"],
+            "recipe_sha256": str(row["recipe_sha256"]),
+            "proof_counter": int(row["proof_counter"]),
+            "proof_sha256": str(row["proof_sha256"]),
+        }
+    state["selected_recipes"] = selected_recipes
+    state["finalized_proof_registry"] = proof_registry
+    state["finalized_proof_registry_sha256"] = canonical_sha256(proof_registry)
+    _atomic_json(controller_dir / "state.json", state)
+    return rows
+
+
+def _assemble_rows(controller_dir: Path) -> list[dict[str, Any]]:
+    return finalize_exploration(controller_dir)
 
 
 def _run_validation(args: argparse.Namespace) -> None:
@@ -226,7 +337,31 @@ def _run_validation(args: argparse.Namespace) -> None:
             output_path=token_path,
         )
         run_registered_pair(state_dir=controller_dir, repo_root=repo_root)
-    _exclusive_json(Path(str(wrapper["rows_output"])), {"rows": _assemble_rows(controller_dir)})
+    _exclusive_json(
+        Path(str(wrapper["rows_output"])),
+        {"rows": finalize_exploration(controller_dir)},
+    )
+
+
+def _finalize(args: argparse.Namespace) -> None:
+    wrapper = _read_json(args.state.resolve())
+    if not isinstance(wrapper, Mapping):
+        raise ValueError("exploration state must be a JSON object")
+    rows_payload = {
+        "rows": finalize_exploration(Path(str(wrapper["controller_state_dir"])))
+    }
+    rows_path = Path(str(wrapper["rows_output"]))
+    if rows_path.exists():
+        existing = _read_json(rows_path)
+        legacy_payload = json.loads(json.dumps(rows_payload))
+        for row in legacy_payload["rows"]:
+            row.pop("proof_sha256")
+        if existing not in (rows_payload, legacy_payload):
+            raise ValueError("existing A0 rows do not match replayed immutable proofs")
+        if existing != rows_payload:
+            _atomic_json(rows_path, rows_payload)
+    else:
+        _exclusive_json(rows_path, rows_payload)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -244,6 +379,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--state", type=Path, required=True)
     run.add_argument("--parallel-gpus", action="store_true")
     run.set_defaults(handler=_run_validation)
+    finalize = subparsers.add_parser("finalize")
+    finalize.add_argument("--state", type=Path, required=True)
+    finalize.set_defaults(handler=_finalize)
     return parser
 
 

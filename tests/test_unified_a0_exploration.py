@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -123,6 +124,88 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("init", completed.stdout)
         self.assertIn("run-validation", completed.stdout)
+
+    def test_finalization_replays_proofs_and_selects_xes_r0_over_failed_r1(self) -> None:
+        from scripts.run_unified_validation import RECIPES
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory)
+            proofs_dir = state_dir / "proofs"
+            proofs_dir.mkdir()
+            state = {
+                "schema_version": 3,
+                "mode": "a0_exploration",
+                "complete": True,
+                "active_pair": None,
+                "dataset_ids": ["XES3G5M"],
+                "issuance_counter": 2,
+                "architecture_fingerprint": "a" * 64,
+                "cohort_sha256": "b" * 64,
+                "controller_id": "c" * 64,
+                "route_commit": "d" * 40,
+                "baseline_sha256": "e" * 64,
+                "selected_recipes": {
+                    "XES3G5M": {
+                        "recipe_index": 1,
+                        "numerical_recipe": RECIPES["XES3G5M"][1].__dict__,
+                    }
+                },
+            }
+            (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+            for counter, recipe_index, aucs in (
+                (1, 0, (0.78, 0.77, 0.76)),
+                (2, 1, (0.58, 0.54, 0.50)),
+            ):
+                standard_auc, holdout_auc, zero_auc = aucs
+                recipe = RECIPES["XES3G5M"][recipe_index].__dict__
+                proof = {
+                    "schema_version": 3,
+                    "controller_id": state["controller_id"],
+                    "route_commit": state["route_commit"],
+                    "counter": counter,
+                    "dataset_id": "XES3G5M",
+                    "baseline_sha256": state["baseline_sha256"],
+                    "deltas": {
+                        "standard_overall_auc": standard_auc - 0.79,
+                        "holdout_overall_auc": holdout_auc - 0.78,
+                        "zero_auc": zero_auc - 0.77,
+                    },
+                    "split_proofs": {
+                        "standard": {
+                            "recipe_index": recipe_index,
+                            "numerical_recipe": recipe,
+                            "metrics": {
+                                "overall_auc": standard_auc,
+                                "ordinary_doa": 0.5,
+                                "weighted_doa": 0.6,
+                            },
+                        },
+                        "holdout": {
+                            "recipe_index": recipe_index,
+                            "numerical_recipe": recipe,
+                            "metrics": {
+                                "overall_auc": holdout_auc,
+                                "zero_auc": zero_auc,
+                            },
+                        },
+                    },
+                }
+                (proofs_dir / f"{counter:06d}-XES3G5M.json").write_text(
+                    json.dumps(proof), encoding="utf-8"
+                )
+
+            rows = finalize_exploration(state_dir)
+            finalized = json.loads((state_dir / "state.json").read_text())
+            selected = finalized["selected_recipes"]["XES3G5M"]
+
+            self.assertEqual(selected["recipe_index"], 0)
+            self.assertEqual(rows[0]["recipe_index"], 0)
+            self.assertEqual(selected["recipe_sha256"], rows[0]["recipe_sha256"])
+            self.assertEqual(selected["proof_counter"], 1)
+            proof_bytes = (proofs_dir / "000001-XES3G5M.json").read_bytes()
+            self.assertEqual(selected["proof_sha256"], hashlib.sha256(proof_bytes).hexdigest())
 
 
 if __name__ == "__main__":
