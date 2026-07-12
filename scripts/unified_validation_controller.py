@@ -15,6 +15,10 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Mapping, Sequence
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from models.unified_v2_spec import UnifiedArchitectureSpec
 from scripts.unified_cohort import load_verified_cohort
 from scripts.unified_dataset_audit import canonical_sha256
@@ -657,6 +661,48 @@ def _validate_baseline_rows(
     return normalized
 
 
+def _validate_exploration_guards(
+    payload: Mapping[str, Any],
+    *,
+    dataset_ids: Sequence[str],
+    cohort_sha256: str,
+) -> list[dict[str, object]]:
+    if _contains_test_reference(payload):
+        raise ValueError("test metric/path is forbidden in exploration guards")
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        raise ValueError("exploration guards must be a JSON row list")
+    actual_ids = [row.get("dataset_id") for row in rows if isinstance(row, dict)]
+    if actual_ids != list(dataset_ids) or len(actual_ids) != len(rows):
+        raise ValueError("exploration guard order must match the provisional registry")
+    required_sources = {
+        "standard_overall_auc", "holdout_overall_auc", "zero_auc"
+    }
+    normalized: list[dict[str, object]] = []
+    for row in rows:
+        assert isinstance(row, dict)
+        dataset_id = str(row["dataset_id"])
+        if row.get("cohort_sha256") != cohort_sha256:
+            raise ValueError(f"exploration registry mismatch: {dataset_id}")
+        for field in required_sources:
+            value = row.get(field)
+            if (
+                type(value) is not float
+                or not math.isfinite(value)
+                or not 0.0 <= value <= 1.0
+            ):
+                raise ValueError(f"exploration guard {dataset_id}.{field} is invalid")
+        sources = row.get("comparator_sources")
+        if (
+            not isinstance(sources, Mapping)
+            or set(sources) != required_sources
+            or not all(isinstance(value, str) and value for value in sources.values())
+        ):
+            raise ValueError(f"exploration comparator sources are invalid: {dataset_id}")
+        normalized.append(dict(row))
+    return normalized
+
+
 def initialize_controller(
     *,
     state_dir: Path,
@@ -667,6 +713,7 @@ def initialize_controller(
     baseline_rows_path: Path,
     data_root: Path,
     artifact_root: Path,
+    exploration: bool = False,
 ) -> dict[str, object]:
     state_dir = state_dir.resolve()
     repo_root = repo_root.resolve()
@@ -686,10 +733,11 @@ def initialize_controller(
         raise ValueError("architecture manifest does not match architecture")
 
     baseline_payload = _load_json(baseline_rows_path, label="baseline rows")
-    baseline_rows = _validate_baseline_rows(
-        baseline_payload,
-        dataset_ids=dataset_ids,
-        cohort_sha256=cohort_hash,
+    validator = (
+        _validate_exploration_guards if exploration else _validate_baseline_rows
+    )
+    baseline_rows = validator(
+        baseline_payload, dataset_ids=dataset_ids, cohort_sha256=cohort_hash
     )
     registered_baseline = {"rows": baseline_rows}
     recipe_indices: dict[str, int] = {}
@@ -747,6 +795,7 @@ def initialize_controller(
         state: dict[str, object] = {
             "schema_version": CONTROLLER_SCHEMA_VERSION,
             "campaign_id": CAMPAIGN_ID,
+            "mode": "a0_exploration" if exploration else "candidate_gate",
             "controller_id": secrets.token_hex(32),
             "route_commit": route_commit,
             "cohort_sha256": cohort_hash,
@@ -766,6 +815,7 @@ def initialize_controller(
             "recipe_indices": recipe_indices,
             "registered_recipes": registered_recipes,
             "selected_recipes": {},
+            "exploration_overall_passed": {},
             "zero_delta_threshold_seen": False,
             "split_seed": 2024,
             "issuance_counter": 0,
@@ -1103,10 +1153,14 @@ def _advance_active_pair(
         - baseline["standard_overall_auc"],
         "holdout_overall_auc": holdout["overall_auc"]
         - baseline["holdout_overall_auc"],
-        "weighted_doa": standard["weighted_doa"] - baseline["weighted_doa"],
         "zero_auc": holdout["zero_auc"] - baseline["zero_auc"],
-        "ordinary_doa": standard["ordinary_doa"] - baseline["ordinary_doa"],
     }
+    exploration = state.get("mode") == "a0_exploration"
+    if not exploration:
+        deltas.update({
+            "weighted_doa": standard["weighted_doa"] - baseline["weighted_doa"],
+            "ordinary_doa": standard["ordinary_doa"] - baseline["ordinary_doa"],
+        })
     joint_success = _joint_gate_success(deltas)
     overall_success = (
         deltas["standard_overall_auc"] >= 0.0
@@ -1154,18 +1208,42 @@ def _advance_active_pair(
     recipe_index = recipe_indices.get(dataset_id)
     if type(recipe_index) is not int:
         raise ValueError("controller recipe index is invalid")
+    overall_passed = state.get("exploration_overall_passed")
+    if exploration:
+        if not isinstance(overall_passed, dict):
+            raise ValueError("controller exploration pass registry is invalid")
+        if overall_success:
+            overall_passed[dataset_id] = True
+        eligible_candidates = len(overall_passed)
+    else:
+        eligible_candidates = int(state.get("successes", 0)) + int(joint_success)
     next_recipe_index = _next_a0_recipe_index(
         dataset_id=dataset_id,
         recipe_index=recipe_index,
         overall_guard_passed=overall_success,
-        eligible_candidates=(
-            int(state.get("successes", 0)) + int(joint_success)
-        ),
+        eligible_candidates=eligible_candidates,
     )
     if state.get("architecture") == "a0" and next_recipe_index is not None:
         state["cursor"] = cursor
         recipe_indices[dataset_id] = next_recipe_index
         state["active_pair"] = None
+        _atomic_json(state_dir / "state.json", state)
+        return state
+    if exploration:
+        state["successes"] = len(overall_passed)
+        selected_recipes = state.get("selected_recipes")
+        if not isinstance(selected_recipes, dict):
+            raise ValueError("controller selected recipe registry is invalid")
+        selected_recipes[dataset_id] = {
+            "recipe_index": recipe_index,
+            "numerical_recipe": split_proofs["standard"]["numerical_recipe"],
+        }
+        state["active_pair"] = None
+        dataset_ids = state.get("dataset_ids")
+        assert isinstance(dataset_ids, list)
+        if int(state["cursor"]) == len(dataset_ids):
+            state["complete"] = True
+            state["global_pass"] = None
         _atomic_json(state_dir / "state.json", state)
         return state
     if joint_success:
@@ -1834,3 +1912,9 @@ def consume_split_capability(
         _atomic_json(consumed_path, consumption)
         _unlink_fsync(issued_path)
         return consumption
+
+
+if __name__ == "__main__":
+    from scripts.unified_a0_exploration import main as exploration_main
+
+    raise SystemExit(exploration_main())

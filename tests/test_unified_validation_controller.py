@@ -2213,6 +2213,79 @@ controller.authorize_next(
         self.assertEqual(state["cursor"], 0)
         self.assertIsNone(state["active_pair"])
 
+    def test_exploration_progress_uses_only_external_auc_guards(self) -> None:
+        external_rows = [
+            {
+                "dataset_id": row["dataset_id"],
+                "cohort_sha256": row["cohort_sha256"],
+                "standard_overall_auc": row["standard_overall_auc"],
+                "holdout_overall_auc": row["holdout_overall_auc"],
+                "zero_auc": row["zero_auc"],
+                "comparator_sources": {
+                    "standard_overall_auc": "/audited/standard.json",
+                    "holdout_overall_auc": "/audited/holdout.json",
+                    "zero_auc": "/audited/zero.json",
+                },
+            }
+            for row in self.baseline_rows
+        ]
+        self.baseline_path.write_text(
+            json.dumps({"rows": external_rows}), encoding="utf-8"
+        )
+        self.manifest = UnifiedArchitectureSpec(completion="prior").manifest()
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        initialize_controller(
+            state_dir=self.state_dir,
+            repo_root=self.repo_root,
+            cohort_path=self.cohort_path,
+            manifest_path=self.manifest_path,
+            architecture="a0",
+            baseline_rows_path=self.baseline_path,
+            data_root=self.data_root,
+            artifact_root=self.artifact_root,
+            exploration=True,
+        )
+        token_path, token = self.issue()
+        self._prepare_pair_artifacts(
+            token_path, token, dataset_id="ASSIST09", architecture="a0"
+        )
+        state = self._advance_unit_launch()
+        proof = json.loads(next((self.state_dir / "proofs").glob("*.json")).read_text())
+
+        self.assertEqual(state["mode"], "a0_exploration")
+        self.assertFalse(state["blocked"])
+        self.assertEqual(
+            set(proof["deltas"]),
+            {"standard_overall_auc", "holdout_overall_auc", "zero_auc"},
+        )
+        self.assertNotIn("weighted_doa", proof["deltas"])
+        while not state["complete"]:
+            dataset_id = state["dataset_ids"][state["cursor"]]
+            token_path = self.root / f"exploration-{state['issuance_counter'] + 1}.json"
+            token = authorize_next(
+                state_dir=self.state_dir,
+                repo_root=self.repo_root,
+                output_path=token_path,
+            )
+            self._prepare_pair_artifacts(
+                token_path,
+                token,
+                dataset_id=dataset_id,
+                architecture="a0",
+            )
+            state = self._advance_unit_launch()
+
+        from scripts.unified_a0_exploration import _assemble_rows
+
+        rows = _assemble_rows(self.state_dir)
+        self.assertTrue(state["complete"])
+        self.assertFalse(state["blocked"])
+        self.assertEqual([row["dataset_id"] for row in rows], list(DATASET_IDS))
+        expected_fingerprint = controller_module._architecture_spec("a0").fingerprint()
+        self.assertTrue(
+            all(row["a0_fingerprint"] == expected_fingerprint for row in rows)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
