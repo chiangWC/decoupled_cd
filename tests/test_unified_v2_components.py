@@ -8,10 +8,14 @@ import torch.nn as nn
 
 from models.unified_decoupled_cdm import UnifiedDecoupledCDM
 from models.unified_v2_components import (
+    GlobalConceptPriorCompleter,
+    ObservedMasteryEstimator,
     CoverageAwareStateComposer,
     MonotonicDiagnosisDecoder,
     TestedKnowledgeEvidenceEncoder,
     UntestedKnowledgeInferenceNetwork,
+    assemble_mastery,
+    smoothed_evidence_logits,
 )
 from models.unified_v2_spec import UnifiedArchitectureSpec
 
@@ -26,6 +30,74 @@ def set_effective_weight(layer: nn.Module, value: float) -> None:
 
 
 class UnifiedComponentTests(unittest.TestCase):
+    def test_observed_estimator_uses_train_only_initial_logits(self):
+        evidence = torch.tensor(
+            [[[4.0, 3.0], [0.0, 0.0]], [[2.0, 0.0], [5.0, 4.0]]]
+        )
+        initial = smoothed_evidence_logits(evidence, alpha=1.0)
+        module = ObservedMasteryEstimator(2, 2, initial_logits=initial)
+        state = module(evidence)
+        self.assertTrue(
+            torch.equal(state.observed_mask, evidence[..., 0] > 0)
+        )
+        torch.testing.assert_close(state.mastery, initial.sigmoid())
+
+    def test_zero_attempt_cells_are_marked_missing(self):
+        evidence = torch.tensor([[[0.0, 0.0], [1.0, 1.0]]])
+        state = ObservedMasteryEstimator(1, 2)(evidence)
+
+        self.assertTrue(
+            torch.equal(state.observed_mask, torch.tensor([[False, True]]))
+        )
+
+    def test_observed_reliability_is_capped_attempt_fraction(self):
+        evidence = torch.tensor(
+            [[[0.0, 0.0], [5.0, 3.0], [20.0, 10.0], [30.0, 20.0]]]
+        )
+        state = ObservedMasteryEstimator(1, 4)(evidence)
+
+        torch.testing.assert_close(
+            state.reliability,
+            torch.tensor([[0.0, 0.25, 1.0, 1.0]]),
+        )
+
+    def test_prior_completer_broadcasts_learnable_concept_vector(self):
+        initial_prior = torch.tensor([0.2, 0.7, 0.9])
+        module = GlobalConceptPriorCompleter(3, initial_prior=initial_prior)
+
+        completed = module(num_students=4)
+
+        self.assertIsInstance(module.logits, nn.Parameter)
+        self.assertEqual(tuple(completed.shape), (4, 3))
+        torch.testing.assert_close(completed[0], initial_prior)
+        for student in completed[1:]:
+            torch.testing.assert_close(student, completed[0])
+
+    def test_hard_assembly_has_no_learned_blending(self):
+        observed = torch.tensor([[0.2, 0.8]])
+        missing = torch.tensor([[0.9, 0.1]])
+        mask = torch.tensor([[True, False]])
+        torch.testing.assert_close(
+            assemble_mastery(observed, missing, mask),
+            torch.tensor([[0.2, 0.1]]),
+        )
+
+    def test_observed_output_gradient_never_reaches_missing_completer(self):
+        completer = GlobalConceptPriorCompleter(2)
+        observed = torch.tensor([[0.2, 0.8]], requires_grad=True)
+        mastery = assemble_mastery(
+            observed,
+            completer(num_students=1),
+            torch.tensor([[True, False]]),
+        )
+
+        mastery[0, 0].backward()
+
+        torch.testing.assert_close(
+            completer.logits.grad,
+            torch.zeros_like(completer.logits),
+        )
+
     def test_m3_prefers_direct_state_at_full_reliability(self):
         composer = CoverageAwareStateComposer(dim=4)
         tkc = torch.tensor(

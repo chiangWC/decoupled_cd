@@ -9,6 +9,95 @@ import torch.nn.functional as F
 
 
 @dataclass(frozen=True)
+class ObservedMasteryState:
+    mastery: torch.Tensor
+    reliability: torch.Tensor
+    observed_mask: torch.Tensor
+
+
+def smoothed_evidence_logits(
+    evidence: torch.Tensor,
+    alpha: float = 1.0,
+) -> torch.Tensor:
+    if evidence.ndim != 3 or evidence.shape[-1] != 2:
+        raise ValueError(
+            "evidence must have shape [students, concepts, 2]"
+        )
+    attempts, correct = evidence.unbind(dim=-1)
+    rate = (correct + alpha) / (attempts + 2.0 * alpha)
+    return torch.logit(rate.clamp(1e-6, 1.0 - 1e-6))
+
+
+class ObservedMasteryEstimator(nn.Module):
+    def __init__(
+        self,
+        num_students: int,
+        num_concepts: int,
+        initial_logits: torch.Tensor | None = None,
+        evidence_cap: float = 20.0,
+    ) -> None:
+        super().__init__()
+        if evidence_cap <= 0.0:
+            raise ValueError("evidence_cap must be positive")
+        shape = (num_students, num_concepts)
+        values = (
+            torch.zeros(shape)
+            if initial_logits is None
+            else initial_logits.detach().clone()
+        )
+        if tuple(values.shape) != shape:
+            raise ValueError(f"initial_logits must have shape {shape}")
+        self.logits = nn.Parameter(values)
+        self.evidence_cap = float(evidence_cap)
+
+    def forward(
+        self,
+        evidence: torch.Tensor,
+        student_ids: torch.Tensor | None = None,
+    ) -> ObservedMasteryState:
+        selected = evidence if student_ids is None else evidence[student_ids]
+        logits = self.logits if student_ids is None else self.logits[student_ids]
+        attempts = selected[..., 0]
+        return ObservedMasteryState(
+            mastery=logits.sigmoid(),
+            reliability=(
+                attempts.clamp(max=self.evidence_cap) / self.evidence_cap
+            ),
+            observed_mask=attempts > 0,
+        )
+
+
+class GlobalConceptPriorCompleter(nn.Module):
+    def __init__(
+        self,
+        num_concepts: int,
+        initial_prior: torch.Tensor | None = None,
+    ) -> None:
+        super().__init__()
+        prior = (
+            torch.zeros(num_concepts)
+            if initial_prior is None
+            else torch.logit(
+                initial_prior.detach().clone().clamp(1e-6, 1.0 - 1e-6)
+            )
+        )
+        self.logits = nn.Parameter(prior)
+
+    def forward(self, num_students: int) -> torch.Tensor:
+        return self.logits.sigmoid().unsqueeze(0).expand(num_students, -1)
+
+
+def assemble_mastery(
+    observed: torch.Tensor,
+    missing: torch.Tensor,
+    observed_mask: torch.Tensor,
+) -> torch.Tensor:
+    if observed.shape != missing.shape or observed.shape != observed_mask.shape:
+        raise ValueError("observed, missing, and observed_mask shapes must match")
+    return torch.where(observed_mask, observed, missing)
+
+
+@dataclass(frozen=True)
 class TestedKnowledgeState:
     tkc_states: torch.Tensor
     direct_reliability: torch.Tensor
