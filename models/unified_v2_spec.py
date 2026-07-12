@@ -11,37 +11,39 @@ _FINGERPRINT_NOT_PROVIDED = object()
 
 @dataclass(frozen=True)
 class UnifiedArchitectureSpec:
-    inference: Literal["prior", "graph"] = "prior"
-    composer: Literal["mask", "coverage"] = "mask"
-    decoder: Literal["neuralcdm-monotonic"] = "neuralcdm-monotonic"
+    mastery_estimator: Literal["evidence-parameter"] = "evidence-parameter"
+    completion: Literal["prior", "lowrank"] = "prior"
+    cognitive_decoder: Literal["neuralcdm-monotonic"] = "neuralcdm-monotonic"
+    behavior_model: Literal["conditional-simplex"] = "conditional-simplex"
     mastery_output: Literal["student-concept"] = "student-concept"
-    version: int = 2
+    version: int = 3
 
     def __post_init__(self) -> None:
-        if type(self.inference) is not str or self.inference not in {
+        expected = {
+            "mastery_estimator": (
+                self.mastery_estimator,
+                "evidence-parameter",
+            ),
+            "cognitive_decoder": (
+                self.cognitive_decoder,
+                "neuralcdm-monotonic",
+            ),
+            "behavior_model": (
+                self.behavior_model,
+                "conditional-simplex",
+            ),
+            "mastery_output": (self.mastery_output, "student-concept"),
+        }
+        for name, (actual, required) in expected.items():
+            if type(actual) is not str or actual != required:
+                raise ValueError(f"{name} must be {required!r}")
+        if type(self.completion) is not str or self.completion not in {
             "prior",
-            "graph",
+            "lowrank",
         }:
-            raise ValueError("inference must be 'prior' or 'graph'")
-        if type(self.composer) is not str or self.composer not in {
-            "mask",
-            "coverage",
-        }:
-            raise ValueError("composer must be 'mask' or 'coverage'")
-        if (
-            type(self.decoder) is not str
-            or self.decoder != "neuralcdm-monotonic"
-        ):
-            raise ValueError("decoder must be 'neuralcdm-monotonic'")
-        if (
-            type(self.mastery_output) is not str
-            or self.mastery_output != "student-concept"
-        ):
-            raise ValueError("mastery_output must be 'student-concept'")
-        if type(self.version) is not int or self.version != 2:
-            raise ValueError("version must be integer 2")
-        if self.composer == "coverage" and self.inference != "graph":
-            raise ValueError("coverage composer requires graph inference")
+            raise ValueError("completion must be 'prior' or 'lowrank'")
+        if type(self.version) is not int or self.version != 3:
+            raise ValueError("version must be integer 3")
 
     @classmethod
     def from_manifest(
@@ -52,10 +54,15 @@ class UnifiedArchitectureSpec:
     ) -> UnifiedArchitectureSpec:
         if type(manifest) is not dict:
             raise ValueError("architecture_manifest must be a JSON object")
+        if manifest.get("version") != 3:
+            raise ValueError(
+                "invalid architecture_manifest: version 3 is required"
+            )
         expected_keys = {
-            "inference",
-            "composer",
-            "decoder",
+            "mastery_estimator",
+            "completion",
+            "cognitive_decoder",
+            "behavior_model",
             "mastery_output",
             "version",
             "modules",
@@ -69,9 +76,10 @@ class UnifiedArchitectureSpec:
                 f"missing={missing}, extra={extra}"
             )
         for key in (
-            "inference",
-            "composer",
-            "decoder",
+            "mastery_estimator",
+            "completion",
+            "cognitive_decoder",
+            "behavior_model",
             "mastery_output",
             "modules",
         ):
@@ -85,9 +93,10 @@ class UnifiedArchitectureSpec:
             )
         try:
             architecture = cls(
-                inference=manifest["inference"],
-                composer=manifest["composer"],
-                decoder=manifest["decoder"],
+                mastery_estimator=manifest["mastery_estimator"],
+                completion=manifest["completion"],
+                cognitive_decoder=manifest["cognitive_decoder"],
+                behavior_model=manifest["behavior_model"],
                 mastery_output=manifest["mastery_output"],
                 version=manifest["version"],
             )
@@ -96,7 +105,7 @@ class UnifiedArchitectureSpec:
         if manifest != architecture.manifest():
             raise ValueError(
                 "architecture_manifest modules do not match the selected "
-                "inference and composer"
+                "completion"
             )
         if architecture_fingerprint is not _FINGERPRINT_NOT_PROVIDED:
             if type(architecture_fingerprint) is not str:
@@ -111,10 +120,9 @@ class UnifiedArchitectureSpec:
     def manifest(self) -> dict[str, str | int]:
         payload = asdict(self)
         payload["modules"] = {
-            ("prior", "mask"): "m1-m4-neuralcdm",
-            ("graph", "mask"): "m1-m2-m4-neuralcdm",
-            ("graph", "coverage"): "m1-m2-m3-m4-neuralcdm",
-        }[(self.inference, self.composer)]
+            "prior": "m1-prior-m3-m4",
+            "lowrank": "m1-lowrank-m3-m4",
+        }[self.completion]
         return payload
 
     def fingerprint(self) -> str:

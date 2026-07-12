@@ -36,9 +36,9 @@ ELIGIBLE_DATASET_IDS = (
 )
 ASSET_READY_WITHOUT_EXACT_ZERO = ("NIPS34",)
 ARCHITECTURES = {
-    "b0": ("prior", "mask"),
-    "m2": ("graph", "mask"),
-    "m2-m3": ("graph", "coverage"),
+    "b0": "prior",
+    "m2": "lowrank",
+    "m2-m3": "lowrank",
 }
 
 
@@ -99,10 +99,10 @@ class GpuSnapshot:
 
 def architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
     try:
-        inference, composer = ARCHITECTURES[architecture]
+        completion = ARCHITECTURES[architecture]
     except KeyError as error:
         raise ValueError(f"unknown unified architecture: {architecture}") from error
-    return UnifiedArchitectureSpec(inference=inference, composer=composer)
+    return UnifiedArchitectureSpec(completion=completion)
 
 
 def architecture_fingerprint(architecture: str) -> str:
@@ -225,10 +225,8 @@ def build_train_command(
         "scripts/train.py",
         "--model",
         "unified_v2",
-        "--unified-inference",
-        spec.inference,
-        "--unified-composer",
-        spec.composer,
+        "--unified-completion",
+        spec.completion,
         "--unified-mastery-loss-weight",
         str(selected_recipe.mastery_loss_weight),
         "--train-interactions",
@@ -281,6 +279,10 @@ def validate_smoke_summary(
 ) -> None:
     if summary.get("architecture_fingerprint") != expected_fingerprint:
         raise ValueError("smoke architecture fingerprint mismatch")
+    UnifiedArchitectureSpec.from_manifest(
+        summary.get("architecture_manifest"),
+        architecture_fingerprint=expected_fingerprint,
+    )
     shape = summary.get("mastery_shape")
     if (
         not isinstance(shape, list)
@@ -618,6 +620,12 @@ def _run_split(args: argparse.Namespace) -> None:
 
         train_summary = _load_json(train_summary_path)
         fingerprint = architecture_fingerprint(args.architecture)
+        UnifiedArchitectureSpec.from_manifest(
+            train_summary.get("architecture_manifest"),
+            architecture_fingerprint=train_summary.get(
+                "architecture_fingerprint"
+            ),
+        )
         if train_summary.get("architecture_fingerprint") != fingerprint:
             raise ValueError("training summary architecture fingerprint mismatch")
         final_loss = _finite_float(train_summary.get("final_loss"), field="final_loss")
@@ -739,10 +747,8 @@ def _run_smoke(args: argparse.Namespace) -> None:
                     "scripts/train.py",
                     "--model",
                     "unified_v2",
-                    "--unified-inference",
-                    spec.inference,
-                    "--unified-composer",
-                    spec.composer,
+                    "--unified-completion",
+                    spec.completion,
                     "--unified-mastery-loss-weight",
                     "0.1",
                     "--train-interactions",
@@ -773,6 +779,7 @@ def _run_smoke(args: argparse.Namespace) -> None:
                 record = {
                     "architecture": architecture,
                     "device_kind": device_kind,
+                    "architecture_manifest": raw["architecture_manifest"],
                     "architecture_fingerprint": raw["architecture_fingerprint"],
                     "mastery_shape": [raw["num_students"], raw["num_concepts"]],
                     "final_loss": raw["final_loss"],

@@ -4,36 +4,53 @@ from models.unified_v2_spec import UnifiedArchitectureSpec
 
 
 class UnifiedArchitectureSpecTests(unittest.TestCase):
-    def test_neuralcdm_decoder_has_new_canonical_identity(self):
-        manifest = UnifiedArchitectureSpec(
-            inference="graph", composer="coverage"
-        ).manifest()
-        self.assertEqual(manifest["decoder"], "neuralcdm-monotonic")
-        self.assertEqual(manifest["version"], 2)
-        self.assertEqual(manifest["modules"], "m1-m2-m3-m4-neuralcdm")
+    def test_a0_and_a1_have_canonical_distinct_version_3_fingerprints(self):
+        a0 = UnifiedArchitectureSpec(completion="prior")
+        a1 = UnifiedArchitectureSpec(completion="lowrank")
+        self.assertEqual(a0.manifest()["modules"], "m1-prior-m3-m4")
+        self.assertEqual(a1.manifest()["modules"], "m1-lowrank-m3-m4")
+        self.assertEqual(a0.manifest()["version"], 3)
+        self.assertNotEqual(a0.fingerprint(), a1.fingerprint())
 
-    def test_old_linear_m4_manifest_is_rejected(self):
+    def test_version_2_manifest_is_rejected(self):
         old = {
-            "inference": "graph",
-            "composer": "mask",
-            "decoder": "monotonic",
-            "mastery_output": "student-concept",
-            "version": 1,
-            "modules": "m1-m2-m4",
+            "inference": "prior", "composer": "mask",
+            "decoder": "neuralcdm-monotonic",
+            "mastery_output": "student-concept", "version": 2,
+            "modules": "m1-m4-neuralcdm",
         }
-        with self.assertRaisesRegex(ValueError, "decoder|version"):
+        with self.assertRaisesRegex(ValueError, "version 3"):
             UnifiedArchitectureSpec.from_manifest(old)
 
     def test_numeric_training_hyperparameters_do_not_change_fingerprint(self):
-        left = UnifiedArchitectureSpec(inference="graph", composer="coverage")
-        right = UnifiedArchitectureSpec(inference="graph", composer="coverage")
+        left = UnifiedArchitectureSpec(completion="lowrank")
+        right = UnifiedArchitectureSpec(completion="lowrank")
         self.assertEqual(left.fingerprint(), right.fingerprint())
+        self.assertNotIn("rank", left.manifest())
+        self.assertNotIn("learning_rate", left.manifest())
 
     def test_module_change_changes_fingerprint(self):
-        base = UnifiedArchitectureSpec(inference="prior", composer="mask")
-        graph = UnifiedArchitectureSpec(inference="graph", composer="mask")
-        self.assertNotEqual(base.fingerprint(), graph.fingerprint())
+        prior = UnifiedArchitectureSpec(completion="prior")
+        lowrank = UnifiedArchitectureSpec(completion="lowrank")
+        self.assertNotEqual(prior.fingerprint(), lowrank.fingerprint())
 
     def test_invalid_combination_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "coverage composer requires graph inference"):
-            UnifiedArchitectureSpec(inference="prior", composer="coverage")
+        with self.assertRaisesRegex(ValueError, "completion"):
+            UnifiedArchitectureSpec(completion="graph")
+
+    def test_manifest_fingerprint_mismatch_is_rejected(self):
+        architecture = UnifiedArchitectureSpec(completion="prior")
+        with self.assertRaisesRegex(ValueError, "fingerprint"):
+            UnifiedArchitectureSpec.from_manifest(
+                architecture.manifest(),
+                architecture_fingerprint="0" * 64,
+            )
+
+    def test_manifest_schema_and_modules_must_be_canonical(self):
+        architecture = UnifiedArchitectureSpec(completion="prior")
+        extra = {**architecture.manifest(), "rank": 32}
+        with self.assertRaisesRegex(ValueError, "canonical schema"):
+            UnifiedArchitectureSpec.from_manifest(extra)
+        tampered = {**architecture.manifest(), "modules": "m1-lowrank-m3-m4"}
+        with self.assertRaisesRegex(ValueError, "modules"):
+            UnifiedArchitectureSpec.from_manifest(tampered)

@@ -16,6 +16,7 @@ from scripts.run_unified_validation import (
     _split_paths,
     _write_json,
     architecture_fingerprint,
+    architecture_spec,
     assemble_candidate_rows,
     build_evaluation_commands,
     build_train_command,
@@ -109,6 +110,11 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         self.assertNotIn("test.csv", command)
         self.assertIn("--seed", command)
         self.assertEqual(command[command.index("--seed") + 1], "42")
+        self.assertEqual(
+            command[command.index("--unified-completion") + 1], "prior"
+        )
+        self.assertNotIn("--unified-inference", command)
+        self.assertNotIn("--unified-composer", command)
 
     def test_gpu_selection_prefers_idle_then_allows_under_half_memory(self):
         snapshots = parse_gpu_inventory(
@@ -125,6 +131,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
     def test_smoke_summary_requires_mastery_loss_fingerprint_and_gpu_peak(self):
         fingerprint = architecture_fingerprint("m2-m3")
         summary = {
+            "architecture_manifest": architecture_spec("m2-m3").manifest(),
             "architecture_fingerprint": fingerprint,
             "mastery_shape": [3, 4],
             "final_loss": 0.4,
@@ -153,6 +160,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
     def test_candidate_rows_require_every_frozen_dataset_and_both_splits(self):
         cohort_hash = "a" * 64
         fingerprint = architecture_fingerprint("m2")
+        manifest = architecture_spec("m2").manifest()
         summaries = []
         for dataset_id in ("ASSIST09", "ASSIST17", "MOOCRadar"):
             for split_id, overall_auc in (
@@ -164,14 +172,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
                         "dataset_id": dataset_id,
                         "split_id": split_id,
                         "architecture_fingerprint": fingerprint,
-                        "architecture_manifest": {
-                            "composer": "mask",
-                            "decoder": "neuralcdm-monotonic",
-                            "inference": "graph",
-                            "mastery_output": "student-concept",
-                            "modules": "m1-m2-m4-neuralcdm",
-                            "version": 2,
-                        },
+                        "architecture_manifest": manifest,
                         "cohort_sha256": cohort_hash,
                         "seed": 42,
                         "overall_auc": overall_auc,
@@ -204,6 +205,36 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
                 summaries[:-1],
                 cohort_dataset_ids=["ASSIST09", "ASSIST17", "MOOCRadar"],
                 cohort_sha256=cohort_hash,
+            )
+
+    def test_candidate_rows_reject_version_2_summary(self):
+        old = {
+            "inference": "graph",
+            "composer": "mask",
+            "decoder": "neuralcdm-monotonic",
+            "mastery_output": "student-concept",
+            "modules": "m1-m2-m4-neuralcdm",
+            "version": 2,
+        }
+        summary = {
+            "dataset_id": "ASSIST09",
+            "split_id": "standard",
+            "architecture_fingerprint": architecture_fingerprint("m2"),
+            "architecture_manifest": old,
+            "cohort_sha256": "a" * 64,
+            "seed": 42,
+            "overall_auc": 0.7,
+            "zero_auc": 0.6,
+            "ordinary_doa": 0.6,
+            "weighted_doa": 0.6,
+            "mastery_shape": [2, 3],
+            "final_loss": 0.4,
+        }
+        with self.assertRaisesRegex(ValueError, "version 3"):
+            assemble_candidate_rows(
+                [summary, {**summary, "split_id": "holdout"}],
+                cohort_dataset_ids=["ASSIST09"],
+                cohort_sha256="a" * 64,
             )
 
     def test_candidate_stops_when_three_successes_are_unreachable(self):

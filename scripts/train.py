@@ -62,16 +62,10 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--unified-inference",
-        choices=["prior", "graph"],
+        "--unified-completion",
+        choices=["prior", "lowrank"],
         default="prior",
-        help="Unified V2 UKC inference module.",
-    )
-    parser.add_argument(
-        "--unified-composer",
-        choices=["mask", "coverage"],
-        default="mask",
-        help="Unified V2 state composer.",
+        help="Unified V3 missing-mastery completion module.",
     )
     parser.add_argument(
         "--unified-mastery-loss-weight",
@@ -775,8 +769,7 @@ def _explicit_unified_forbidden_options(args: argparse.Namespace) -> list[str]:
 def validate_model_args(args: argparse.Namespace) -> None:
     if args.model == "unified_v2":
         UnifiedArchitectureSpec(
-            inference=args.unified_inference,
-            composer=args.unified_composer,
+            completion=args.unified_completion,
         )
         if (
             not math.isfinite(args.unified_mastery_loss_weight)
@@ -1040,8 +1033,7 @@ def main() -> None:
     )
     if args.model == "unified_v2":
         architecture = UnifiedArchitectureSpec(
-            inference=args.unified_inference,
-            composer=args.unified_composer,
+            completion=args.unified_completion,
         )
         model = UnifiedDecoupledCDM(
             num_students=train_bundle.num_students,
