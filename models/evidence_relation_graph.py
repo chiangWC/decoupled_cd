@@ -23,6 +23,7 @@ class GraphCompletionState:
     target: torch.Tensor
     student_state: torch.Tensor
     concept_state: torch.Tensor
+    full_target_count: int
 
 
 class RelationMessageLayer(nn.Module):
@@ -210,8 +211,12 @@ class EvidenceRelationGraphCompleter(nn.Module):
             epoch=epoch,
             training=training,
         )
+        summary_evidence = evidence.masked_fill(
+            graph.reconstruction_mask.unsqueeze(-1),
+            0,
+        )
         student_features, concept_features = node_summary_features(
-            evidence,
+            summary_evidence,
             q_matrix,
         )
         students = self.student_encoder(student_features)
@@ -245,4 +250,5 @@ class EvidenceRelationGraphCompleter(nn.Module):
             target=graph.target[selected],
             student_state=students[selected],
             concept_state=concepts,
+            full_target_count=int(graph.reconstruction_mask.sum().item()),
         )

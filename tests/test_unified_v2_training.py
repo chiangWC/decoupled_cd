@@ -240,6 +240,120 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         self.assertIsNotNone(output.completion_student_state)
         self.assertIsNotNone(output.completion_concept_state)
 
+    def test_a2_subset_losses_sum_to_full_graph_mean(self) -> None:
+        model = self.model(completion="evidence-relational-graph")
+        tensors = self.tensors()
+        full = self.forward(model, tensors, completion_epoch=0)
+        subsets = []
+        for student_id in (0, 1):
+            subsets.append(
+                model(
+                    q_matrix=tensors["q_matrix"],
+                    concept_graph=tensors["concept_graph"],
+                    student_exercise_mask=tensors["student_exercise_mask"],
+                    response_matrix=tensors["response_matrix"],
+                    student_tkc_mask=tensors["student_tkc_mask"],
+                    student_ukc_mask=tensors["student_ukc_mask"],
+                    student_concept_evidence=tensors[
+                        "student_concept_evidence"
+                    ],
+                    target_student_ids=torch.tensor([student_id]),
+                    target_exercise_ids=torch.tensor([student_id]),
+                    use_student_subset=True,
+                    completion_epoch=0,
+                )
+            )
+
+        self.assertEqual(full.completion_full_target_count, 1)
+        self.assertTrue(
+            all(
+                output.completion_full_target_count
+                == full.completion_full_target_count
+                for output in subsets
+            )
+        )
+        torch.testing.assert_close(
+            torch.cat(
+                [output.completion_target_mask for output in subsets], dim=0
+            ),
+            full.completion_target_mask,
+        )
+        torch.testing.assert_close(
+            sum(masked_graph_reconstruction_loss(output) for output in subsets),
+            masked_graph_reconstruction_loss(full),
+        )
+
+    def test_a2_empty_subset_reconstruction_loss_is_differentiable_zero(
+        self,
+    ) -> None:
+        model = self.model(completion="evidence-relational-graph")
+        tensors = self.tensors()
+        full = self.forward(model, tensors, completion_epoch=0)
+        empty_student = int(
+            (~full.completion_target_mask.any(dim=1)).nonzero()[0]
+        )
+        output = model(
+            q_matrix=tensors["q_matrix"],
+            concept_graph=tensors["concept_graph"],
+            student_exercise_mask=tensors["student_exercise_mask"],
+            response_matrix=tensors["response_matrix"],
+            student_tkc_mask=tensors["student_tkc_mask"],
+            student_ukc_mask=tensors["student_ukc_mask"],
+            student_concept_evidence=tensors["student_concept_evidence"],
+            target_student_ids=torch.tensor([empty_student]),
+            target_exercise_ids=torch.tensor([0]),
+            use_student_subset=True,
+            completion_epoch=0,
+        )
+
+        loss = masked_graph_reconstruction_loss(output)
+        self.assertEqual(float(loss), 0.0)
+        self.assertTrue(loss.requires_grad)
+        loss.backward()
+        self.assertTrue(
+            all(
+                parameter.grad is not None
+                for parameter in model.completer.parameters()
+            )
+        )
+
+    def test_a2_completion_loss_has_finite_nonzero_contribution_and_gradient(
+        self,
+    ) -> None:
+        torch.manual_seed(23)
+        baseline_model = self.model(completion="evidence-relational-graph")
+        supervised_model = copy.deepcopy(baseline_model)
+        tensors = self.tensors()
+        baseline = _train_full_batch_epoch(
+            model=baseline_model,
+            tensors=tensors,
+            optimizer=torch.optim.SGD(baseline_model.parameters(), lr=0.0),
+            epoch_index=0,
+            unified_completion_loss_weight=0.0,
+        )
+        supervised = _train_full_batch_epoch(
+            model=supervised_model,
+            tensors=tensors,
+            optimizer=torch.optim.SGD(supervised_model.parameters(), lr=0.0),
+            epoch_index=0,
+            unified_completion_loss_weight=0.5,
+        )
+
+        contribution = supervised.mean_loss - baseline.mean_loss
+        self.assertTrue(torch.isfinite(torch.tensor(contribution)))
+        self.assertGreater(contribution, 0.0)
+        gradient_differences = []
+        for baseline_parameter, supervised_parameter in zip(
+            baseline_model.completer.parameters(),
+            supervised_model.completer.parameters(),
+        ):
+            self.assertIsNotNone(baseline_parameter.grad)
+            self.assertIsNotNone(supervised_parameter.grad)
+            difference = supervised_parameter.grad - baseline_parameter.grad
+            self.assertTrue(bool(torch.isfinite(difference).all()))
+            gradient_differences.append(float(difference.abs().sum()))
+        self.assertGreater(max(gradient_differences), 0.0)
+
     def test_v3_checkpoint_is_rejected(self) -> None:
         model = self.model(completion="prior")
         state = copy.deepcopy(model.state_dict())
@@ -250,6 +364,61 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             ValueError, "architecture manifest mismatch"
         ):
             model.load_state_dict(state)
+
+    def test_a2_checkpoint_round_trip_and_metadata_mismatches(self) -> None:
+        model = self.model(
+            completion="evidence-relational-graph",
+            graph_hidden_dim=2,
+        )
+        model.set_checkpoint_loss_weights(
+            evidence_loss_weight=1.0,
+            completion_loss_weight=0.5,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "a2.pt"
+            torch.save(model.state_dict(), path)
+            state = torch.load(path, weights_only=True)
+
+        restored = self.model(
+            completion="evidence-relational-graph",
+            graph_hidden_dim=2,
+        )
+        restored.set_checkpoint_loss_weights(
+            evidence_loss_weight=1.0,
+            completion_loss_weight=0.5,
+        )
+        restored.load_state_dict(state)
+        before = self.forward(model, self.tensors(), completion_epoch=0)
+        after = self.forward(restored, self.tensors(), completion_epoch=0)
+        torch.testing.assert_close(after.probs, before.probs)
+        torch.testing.assert_close(
+            after.completion_predictions,
+            before.completion_predictions,
+        )
+
+        mismatches = (
+            (
+                "_checkpoint_unified_completion",
+                model._text_tensor("prior"),
+                "unified completion mismatch",
+            ),
+            (
+                "_checkpoint_unified_graph_hidden_dim",
+                torch.tensor(3, dtype=torch.int64),
+                "graph_hidden_dim mismatch",
+            ),
+            (
+                "_checkpoint_unified_completion_loss_weight",
+                torch.tensor(0.75, dtype=torch.float64),
+                "completion_loss_weight mismatch",
+            ),
+        )
+        for field, value, message in mismatches:
+            with self.subTest(message=message):
+                mismatched_state = copy.deepcopy(state)
+                mismatched_state[field] = value
+                with self.assertRaisesRegex(ValueError, message):
+                    restored.load_state_dict(mismatched_state)
 
     def test_completion_supervision_runs_in_both_training_modes(self) -> None:
         for mode in ("full_batch", "student_recompute_minibatch"):

@@ -229,6 +229,7 @@ class UnifiedDecoupledCDM(nn.Module):
             completion_targets = None
             completion_student_state = None
             completion_concept_state = None
+            completion_full_target_count = None
         else:
             completion = self.completer(
                 student_concept_evidence,
@@ -242,6 +243,7 @@ class UnifiedDecoupledCDM(nn.Module):
             completion_targets = completion.target if self.training else None
             completion_student_state = completion.student_state
             completion_concept_state = completion.concept_state
+            completion_full_target_count = completion.full_target_count
         mastery = assemble_mastery(
             observed.mastery,
             missing,
@@ -291,4 +293,5 @@ class UnifiedDecoupledCDM(nn.Module):
             completion_targets=completion_targets,
             completion_student_state=completion_student_state,
             completion_concept_state=completion_concept_state,
+            completion_full_target_count=completion_full_target_count,
         )

@@ -35,6 +35,7 @@ class DecoupledForwardOutput:
     completion_targets: torch.Tensor | None = None
     completion_student_state: torch.Tensor | None = None
     completion_concept_state: torch.Tensor | None = None
+    completion_full_target_count: int | None = None
 
 
 @dataclass(frozen=True)

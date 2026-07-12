@@ -98,14 +98,23 @@ def masked_graph_reconstruction_loss(
 ) -> torch.Tensor:
     mask = output.completion_target_mask
     target = output.completion_targets
-    if output.completion_predictions is None or mask is None or target is None:
+    full_target_count = output.completion_full_target_count
+    if (
+        output.completion_predictions is None
+        or mask is None
+        or target is None
+        or full_target_count is None
+    ):
         raise ValueError("graph reconstruction outputs are required")
-    if not bool(mask.any()):
-        raise ValueError("at least one removed graph edge is required")
+    if full_target_count < 0:
+        raise ValueError("full graph reconstruction target count is invalid")
+    if full_target_count == 0:
+        return output.completion_predictions.sum() * 0.0
     return F.binary_cross_entropy(
         output.completion_predictions[mask],
         target[mask],
-    )
+        reduction="sum",
+    ) / full_target_count
 
 
 def _hash_interaction_rows(frame: pd.DataFrame) -> set[int]:
@@ -1354,13 +1363,11 @@ def _train_student_recompute_minibatch_epoch(
                 )
             )
         if unified_completion_loss_weight > 0.0:
-            completion_mask = output.completion_target_mask
-            if completion_mask is not None and bool(completion_mask.any()):
-                loss = (
-                    loss
-                    + unified_completion_loss_weight
-                    * masked_graph_reconstruction_loss(output)
-                )
+            loss = (
+                loss
+                + unified_completion_loss_weight
+                * masked_graph_reconstruction_loss(output)
+            )
         if consistency_weight > 0.0 or contrastive_weight > 0.0:
             if consistency_adaptive:
                 # Tr-2-adaptive: per-student drop scaled by coverage so

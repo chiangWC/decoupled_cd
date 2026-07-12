@@ -280,6 +280,81 @@ class EvidenceRelationGraphTests(unittest.TestCase):
                 self.assertTrue(bool(torch.isfinite(parameter.grad).all()))
                 self.assertGreater(float(parameter.grad.abs().sum()), 0.0)
 
+    def test_completer_summary_inputs_exclude_reconstruction_targets(
+        self,
+    ) -> None:
+        torch.manual_seed(17)
+        model = EvidenceRelationGraphCompleter(10, 5, hidden_dim=4)
+        captured: dict[str, torch.Tensor] = {}
+
+        def capture(name: str):
+            def hook(_module, inputs) -> None:
+                captured[name] = inputs[0].detach().clone()
+
+            return hook
+
+        student_handle = model.student_encoder.register_forward_pre_hook(
+            capture("student")
+        )
+        concept_handle = model.concept_encoder.register_forward_pre_hook(
+            capture("concept")
+        )
+        try:
+            state = model(
+                self.evidence,
+                self.q_matrix,
+                epoch=3,
+                training=True,
+            )
+        finally:
+            student_handle.remove()
+            concept_handle.remove()
+
+        summary_evidence = self.evidence.masked_fill(
+            state.reconstruction_mask.unsqueeze(-1),
+            0.0,
+        )
+        expected_students, expected_concepts = node_summary_features(
+            summary_evidence,
+            self.q_matrix,
+        )
+        torch.testing.assert_close(captured["student"], expected_students)
+        torch.testing.assert_close(captured["concept"], expected_concepts)
+
+    def test_masked_target_values_only_change_retained_targets(self) -> None:
+        torch.manual_seed(19)
+        model = EvidenceRelationGraphCompleter(10, 5, hidden_dim=4)
+        baseline = model(
+            self.evidence,
+            self.q_matrix,
+            epoch=5,
+            training=True,
+        )
+        varied_evidence = self.evidence.clone()
+        varied_evidence[..., 0][baseline.reconstruction_mask] = 12.0
+        varied_evidence[..., 1][baseline.reconstruction_mask] = 12.0
+
+        varied = model(
+            varied_evidence,
+            self.q_matrix,
+            epoch=5,
+            training=True,
+        )
+
+        torch.testing.assert_close(
+            varied.reconstruction_mask,
+            baseline.reconstruction_mask,
+        )
+        torch.testing.assert_close(varied.student_state, baseline.student_state)
+        torch.testing.assert_close(varied.concept_state, baseline.concept_state)
+        torch.testing.assert_close(varied.mastery, baseline.mastery)
+        self.assertFalse(
+            torch.equal(
+                varied.target[varied.reconstruction_mask],
+                baseline.target[baseline.reconstruction_mask],
+            )
+        )
+
     def test_positive_and_negative_relations_change_predictions(self) -> None:
         torch.manual_seed(11)
         model = EvidenceRelationGraphCompleter(3, 2, hidden_dim=4)
