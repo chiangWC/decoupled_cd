@@ -25,7 +25,7 @@ from scripts.unified_dataset_audit import canonical_sha256
 from scripts.unified_validation_controller import _route_head
 
 
-CAMPAIGN_ID = "unified-ergc-r5-20260712"
+CAMPAIGN_ID = "unified-ergc-r6-20260712"
 FROZEN_COHORT_SHA256 = (
     "6342dc8a5f73a4e03a1645780597b625c"
     "1480ba7a6513668b6766089cdd5b8a5"
@@ -55,6 +55,14 @@ VALIDATION_RESULT_FIELDS = {
 SMOKE_RESULT_FIELDS = {
     "architecture_fingerprint", "gpu_uuid", "peak_gpu_memory_gb",
     "mastery_shape", "final_loss", "parameter_count",
+    "a2_smoke_diagnostics",
+}
+A2_SMOKE_DIAGNOSTIC_FIELDS = {
+    "schema_version", "masked_edge_count",
+    "observed_hard_assembly_max_abs_error", "reconstruction_loss",
+    "gradient_parameter_count", "gradient_present_count",
+    "gradient_finite_count", "gradient_nonzero_parameter_count",
+    "aggregate_gradient_norm",
 }
 TEST_RESULT_FIELDS = {
     "schema_version", "architecture", "architecture_manifest",
@@ -451,6 +459,7 @@ def _subprocess_runner(argv: Sequence[str], attempt_dir: Path) -> Mapping[str, o
             "mastery_shape": record.get("mastery_shape"),
             "final_loss": record.get("final_loss"),
             "parameter_count": record.get("parameter_count"),
+            "a2_smoke_diagnostics": record.get("a2_smoke_diagnostics"),
         }
     return payload
 
@@ -651,6 +660,8 @@ def _runner_argv(kind: str, architecture: str, attempt_dir: Path, dataset: str |
     command = [sys.executable, str(RUNNER)]
     if kind == "smoke":
         command += ["smoke", "--architecture", architecture, "--devices", "gpu", "--seed", "42", "--epochs", "1"]
+        if architecture == "a2":
+            command.append("--a2-smoke-diagnostics")
     elif kind == "validation":
         assert dataset is not None
         command += [
@@ -708,6 +719,34 @@ def _validate_runner_result(kind: str, architecture: str, dataset: str | None, r
             raise ValueError("smoke final loss must be a finite float")
         if type(normalized.get("parameter_count")) is not int or normalized["parameter_count"] < 0:
             raise ValueError("smoke parameter count is invalid")
+        diagnostics = normalized.get("a2_smoke_diagnostics")
+        if architecture != "a2":
+            if diagnostics is not None:
+                raise ValueError("non-A2 smoke must not claim A2 diagnostics")
+        else:
+            if not isinstance(diagnostics, Mapping) or set(diagnostics) != A2_SMOKE_DIAGNOSTIC_FIELDS:
+                raise ValueError("A2 smoke diagnostic schema mismatch")
+            if diagnostics.get("schema_version") != 1:
+                raise ValueError("A2 smoke diagnostic version mismatch")
+            if type(diagnostics.get("masked_edge_count")) is not int or diagnostics["masked_edge_count"] <= 0:
+                raise ValueError("A2 smoke masked edge count must be positive")
+            if diagnostics.get("observed_hard_assembly_max_abs_error") != 0.0:
+                raise ValueError("A2 smoke observed hard assembly must be exact")
+            reconstruction_loss = diagnostics.get("reconstruction_loss")
+            if type(reconstruction_loss) not in {float, int} or not math.isfinite(float(reconstruction_loss)) or float(reconstruction_loss) <= 0.0:
+                raise ValueError("A2 smoke reconstruction loss must be finite and positive")
+            parameter_count = diagnostics.get("gradient_parameter_count")
+            if type(parameter_count) is not int or parameter_count <= 0:
+                raise ValueError("A2 smoke gradient parameter count must be positive")
+            for field in ("gradient_present_count", "gradient_finite_count"):
+                if diagnostics.get(field) != parameter_count:
+                    raise ValueError(f"A2 smoke {field} must cover every parameter")
+            nonzero_count = diagnostics.get("gradient_nonzero_parameter_count")
+            if type(nonzero_count) is not int or nonzero_count <= 0 or nonzero_count > parameter_count:
+                raise ValueError("A2 smoke must have a nonzero graph gradient")
+            aggregate_norm = diagnostics.get("aggregate_gradient_norm")
+            if type(aggregate_norm) not in {float, int} or not math.isfinite(float(aggregate_norm)) or float(aggregate_norm) <= 0.0:
+                raise ValueError("A2 smoke aggregate gradient norm must be finite and positive")
     elif kind == "test":
         if (
             normalized.get("schema_version") != 4

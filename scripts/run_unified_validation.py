@@ -46,6 +46,17 @@ STABLE_ARCHITECTURES = {
     "a0v4": ("prior", 0.0),
     "a2": ("evidence-relational-graph", 1.0),
 }
+A2_SMOKE_DIAGNOSTIC_FIELDS = {
+    "schema_version",
+    "masked_edge_count",
+    "observed_hard_assembly_max_abs_error",
+    "reconstruction_loss",
+    "gradient_parameter_count",
+    "gradient_present_count",
+    "gradient_finite_count",
+    "gradient_nonzero_parameter_count",
+    "aggregate_gradient_norm",
+}
 RUNNER_ARCHITECTURES = {**ARCHITECTURES, **STABLE_ARCHITECTURES}
 STABLE_FROZEN_RECIPES = {"MOOCRadar": 2, "ASSIST17": 1, "XES3G5M": 0}
 FROZEN_VALIDATION_DATA_ROOT = Path(
@@ -370,6 +381,32 @@ def _validate_generated_argv(command: Sequence[str]) -> None:
         raise ValueError(f"unregistered stable command parser: {script}")
 
 
+def _validate_stable_graph_training_argv(
+    command: Sequence[str],
+    *,
+    architecture: str,
+    expected_hidden_dim: int | None,
+    require_smoke_diagnostics: bool,
+) -> None:
+    hidden_flag = "--unified-graph-hidden-dim"
+    diagnostic_flag = "--unified-a2-smoke-diagnostics"
+    hidden_count = list(command).count(hidden_flag)
+    diagnostic_count = list(command).count(diagnostic_flag)
+    if architecture == "a2":
+        if type(expected_hidden_dim) is not int or expected_hidden_dim <= 0:
+            raise ValueError("A2 preflight hidden dimension is invalid")
+        if hidden_count != 1:
+            raise ValueError("A2 preflight must bind graph hidden dimension once")
+        index = list(command).index(hidden_flag)
+        if index + 1 >= len(command) or command[index + 1] != str(expected_hidden_dim):
+            raise ValueError("A2 graph hidden dimension differs from frozen recipe")
+        expected_diagnostic_count = 1 if require_smoke_diagnostics else 0
+        if diagnostic_count != expected_diagnostic_count:
+            raise ValueError("A2 smoke diagnostic flag binding mismatch")
+    elif hidden_count != 0 or diagnostic_count != 0:
+        raise ValueError("non-A2 command must not carry graph-only flags")
+
+
 def preflight_stable_smoke(*, architecture: str) -> dict[str, object]:
     root = Path("/preflight/stable-smoke")
     command = [
@@ -401,6 +438,20 @@ def preflight_stable_smoke(*, architecture: str) -> dict[str, object]:
         "--output",
         str(root / "summary.json"),
     ]
+    if architecture == "a2":
+        command.extend(
+            [
+                "--unified-graph-hidden-dim",
+                "4",
+                "--unified-a2-smoke-diagnostics",
+            ]
+        )
+    _validate_stable_graph_training_argv(
+        command,
+        architecture=architecture,
+        expected_hidden_dim=4 if architecture == "a2" else None,
+        require_smoke_diagnostics=architecture == "a2",
+    )
     _validate_generated_argv(command)
     return {"architecture": architecture, "command": command}
 
@@ -449,6 +500,14 @@ def preflight_stable_validation(
         )
         for command in (train_command, coverage_command, doa_command):
             _validate_generated_argv(command)
+        _validate_stable_graph_training_argv(
+            train_command,
+            architecture=architecture,
+            expected_hidden_dim=(
+                recipe.concept_dim if architecture == "a2" else None
+            ),
+            require_smoke_diagnostics=False,
+        )
         records.append(
             {
                 "dataset_id": dataset_id,
@@ -523,6 +582,13 @@ def build_train_command(
         command.extend(
             ["--student-batch-size", str(selected_recipe.student_batch_size)]
         )
+    if architecture == "a2":
+        command.extend(
+            [
+                "--unified-graph-hidden-dim",
+                str(selected_recipe.concept_dim),
+            ]
+        )
     return command
 
 
@@ -537,6 +603,7 @@ def validate_smoke_summary(
     *,
     expected_fingerprint: str,
     require_gpu_peak: bool,
+    require_a2_diagnostics: bool = False,
 ) -> None:
     if summary.get("architecture_fingerprint") != expected_fingerprint:
         raise ValueError("smoke architecture fingerprint mismatch")
@@ -555,6 +622,45 @@ def validate_smoke_summary(
     peak = summary.get("peak_gpu_memory_gb")
     if require_gpu_peak and _finite_float(peak, field="peak_gpu_memory_gb") <= 0.0:
         raise ValueError("GPU smoke must record positive peak memory")
+    diagnostics = summary.get("a2_smoke_diagnostics")
+    if not require_a2_diagnostics:
+        if diagnostics is not None:
+            raise ValueError("non-A2 smoke must not claim A2 diagnostics")
+        return
+    if not isinstance(diagnostics, Mapping) or set(diagnostics) != A2_SMOKE_DIAGNOSTIC_FIELDS:
+        raise ValueError("A2 smoke diagnostic schema mismatch")
+    if diagnostics.get("schema_version") != 1:
+        raise ValueError("A2 smoke diagnostic version mismatch")
+    masked_edge_count = diagnostics.get("masked_edge_count")
+    if type(masked_edge_count) is not int or masked_edge_count <= 0:
+        raise ValueError("A2 smoke masked edge count must be positive")
+    if diagnostics.get("observed_hard_assembly_max_abs_error") != 0.0:
+        raise ValueError("A2 smoke observed hard assembly must be exact")
+    reconstruction_loss = _finite_float(
+        diagnostics.get("reconstruction_loss"),
+        field="reconstruction_loss",
+    )
+    if reconstruction_loss <= 0.0:
+        raise ValueError("A2 smoke reconstruction loss must be positive")
+    parameter_count = diagnostics.get("gradient_parameter_count")
+    if type(parameter_count) is not int or parameter_count <= 0:
+        raise ValueError("A2 smoke gradient parameter count must be positive")
+    for field in ("gradient_present_count", "gradient_finite_count"):
+        if diagnostics.get(field) != parameter_count:
+            raise ValueError(f"A2 smoke {field} must cover every parameter")
+    nonzero_count = diagnostics.get("gradient_nonzero_parameter_count")
+    if (
+        type(nonzero_count) is not int
+        or nonzero_count <= 0
+        or nonzero_count > parameter_count
+    ):
+        raise ValueError("A2 smoke must have a nonzero graph gradient")
+    aggregate_norm = _finite_float(
+        diagnostics.get("aggregate_gradient_norm"),
+        field="aggregate_gradient_norm",
+    )
+    if aggregate_norm <= 0.0:
+        raise ValueError("A2 smoke aggregate gradient norm must be positive")
 
 
 def _validate_split_summary(
@@ -1011,6 +1117,10 @@ def _write_synthetic_fixture(root: Path) -> tuple[Path, Path, Path]:
 
 
 def _run_smoke(args: argparse.Namespace) -> None:
+    if args.architecture == "a2" and not args.a2_smoke_diagnostics:
+        raise ValueError("A2 smoke requires --a2-smoke-diagnostics")
+    if args.architecture != "a2" and args.a2_smoke_diagnostics:
+        raise ValueError("A2 smoke diagnostics are graph-only")
     raw_output = (
         args.output
         if args.output is not None
@@ -1073,6 +1183,20 @@ def _run_smoke(args: argparse.Namespace) -> None:
                     "--output",
                     str(summary_path),
                 ]
+                if architecture == "a2":
+                    command.extend(
+                        [
+                            "--unified-graph-hidden-dim",
+                            "4",
+                            "--unified-a2-smoke-diagnostics",
+                        ]
+                    )
+                _validate_stable_graph_training_argv(
+                    command,
+                    architecture=architecture,
+                    expected_hidden_dim=(4 if architecture == "a2" else None),
+                    require_smoke_diagnostics=architecture == "a2",
+                )
                 _run_checked(command, env=env)
                 raw = _load_json(summary_path)
                 record = {
@@ -1083,6 +1207,9 @@ def _run_smoke(args: argparse.Namespace) -> None:
                     "mastery_shape": [raw["num_students"], raw["num_concepts"]],
                     "final_loss": raw["final_loss"],
                     "parameter_count": raw["parameter_count"],
+                    "a2_smoke_diagnostics": raw.get(
+                        "a2_smoke_diagnostics"
+                    ),
                     "peak_gpu_memory_gb": raw["max_cuda_memory_allocated_gb"],
                     "physical_gpu_index": gpu_index,
                     "physical_gpu_uuid": (
@@ -1095,6 +1222,7 @@ def _run_smoke(args: argparse.Namespace) -> None:
                     record,
                     expected_fingerprint=architecture_fingerprint(architecture),
                     require_gpu_peak=device_kind == "gpu",
+                    require_a2_diagnostics=architecture == "a2",
                 )
                 records.append(record)
     _write_json(
@@ -1511,6 +1639,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     smoke.add_argument("--devices", choices=("cpu", "gpu", "both"), default="both")
     smoke.add_argument("--seed", type=int, choices=(42,), default=42)
     smoke.add_argument("--epochs", type=int, choices=(1,), default=1)
+    smoke.add_argument("--a2-smoke-diagnostics", action="store_true")
     smoke_output = smoke.add_mutually_exclusive_group(required=True)
     smoke_output.add_argument("--output", type=Path)
     smoke_output.add_argument("--output-root", type=Path)

@@ -334,6 +334,62 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
                     require_gpu_peak=True,
                 )
 
+    def test_a2_smoke_summary_requires_exact_graph_diagnostics(self):
+        fingerprint = architecture_fingerprint("a2")
+        diagnostics = {
+            "schema_version": 1,
+            "masked_edge_count": 2,
+            "observed_hard_assembly_max_abs_error": 0.0,
+            "reconstruction_loss": 0.4,
+            "gradient_parameter_count": 5,
+            "gradient_present_count": 5,
+            "gradient_finite_count": 5,
+            "gradient_nonzero_parameter_count": 3,
+            "aggregate_gradient_norm": 0.2,
+        }
+        summary = {
+            "architecture_manifest": architecture_spec("a2").manifest(),
+            "architecture_fingerprint": fingerprint,
+            "mastery_shape": [3, 4],
+            "final_loss": 0.4,
+            "peak_gpu_memory_gb": 0.2,
+            "parameter_count": 123,
+            "a2_smoke_diagnostics": diagnostics,
+        }
+        validate_smoke_summary(
+            summary,
+            expected_fingerprint=fingerprint,
+            require_gpu_peak=True,
+            require_a2_diagnostics=True,
+        )
+        for field, value in (
+            ("masked_edge_count", 0),
+            ("observed_hard_assembly_max_abs_error", 1e-9),
+            ("reconstruction_loss", float("nan")),
+            ("gradient_present_count", 4),
+            ("gradient_finite_count", 4),
+            ("gradient_nonzero_parameter_count", 0),
+            ("aggregate_gradient_norm", 0.0),
+        ):
+            broken = json.loads(json.dumps(summary))
+            broken["a2_smoke_diagnostics"][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_smoke_summary(
+                    broken,
+                    expected_fingerprint=fingerprint,
+                    require_gpu_peak=True,
+                    require_a2_diagnostics=True,
+                )
+        missing = dict(summary)
+        missing.pop("a2_smoke_diagnostics")
+        with self.assertRaises(ValueError):
+            validate_smoke_summary(
+                missing,
+                expected_fingerprint=fingerprint,
+                require_gpu_peak=True,
+                require_a2_diagnostics=True,
+            )
+
     def test_gpu_smoke_runs_only_the_explicit_architecture(self) -> None:
         args = parse_args([
             "smoke", "--architecture", "a0", "--devices", "gpu",

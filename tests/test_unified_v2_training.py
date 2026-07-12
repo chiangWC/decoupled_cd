@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import math
 import sys
 import tempfile
 import unittest
@@ -229,6 +230,57 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         self.assertTrue(
             any(parameter.grad is not None for parameter in model.completer.parameters())
         )
+
+    def test_a2_smoke_diagnostics_cover_mask_assembly_and_every_graph_gradient(self) -> None:
+        from scripts import train as train_script
+
+        self.assertTrue(hasattr(train_script, "run_a2_smoke_diagnostics"))
+        tensors = self.tensors()
+        model = self.model(
+            completion="evidence-relational-graph", graph_hidden_dim=4
+        )
+        diagnostic = train_script.run_a2_smoke_diagnostics(
+            model=model,
+            train_bundle=self.bundle(),
+            device="cpu",
+        )
+        self.assertEqual(
+            set(diagnostic),
+            {
+                "schema_version",
+                "masked_edge_count",
+                "observed_hard_assembly_max_abs_error",
+                "reconstruction_loss",
+                "gradient_parameter_count",
+                "gradient_present_count",
+                "gradient_finite_count",
+                "gradient_nonzero_parameter_count",
+                "aggregate_gradient_norm",
+            },
+        )
+        self.assertGreater(diagnostic["masked_edge_count"], 0)
+        self.assertEqual(
+            diagnostic["observed_hard_assembly_max_abs_error"], 0.0
+        )
+        self.assertTrue(math.isfinite(diagnostic["reconstruction_loss"]))
+        self.assertGreater(diagnostic["gradient_parameter_count"], 0)
+        self.assertEqual(
+            diagnostic["gradient_present_count"],
+            diagnostic["gradient_parameter_count"],
+        )
+        self.assertEqual(
+            diagnostic["gradient_finite_count"],
+            diagnostic["gradient_parameter_count"],
+        )
+        self.assertGreater(
+            diagnostic["gradient_nonzero_parameter_count"], 0
+        )
+        self.assertLessEqual(
+            diagnostic["gradient_nonzero_parameter_count"],
+            diagnostic["gradient_parameter_count"],
+        )
+        self.assertTrue(math.isfinite(diagnostic["aggregate_gradient_norm"]))
+        self.assertGreater(diagnostic["aggregate_gradient_norm"], 0.0)
 
     def test_a2_evaluation_uses_all_edges_without_reconstruction_target(self) -> None:
         model = self.model(completion="evidence-relational-graph")

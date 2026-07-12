@@ -109,7 +109,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
         return audit
 
     def test_identity_recipes_and_fingerprints(self) -> None:
-        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r5-20260712")
+        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r6-20260712")
         self.assertEqual(
             controller.DEFAULT_CAMPAIGN_ROOT.name,
             controller.CAMPAIGN_ID,
@@ -139,6 +139,111 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                     expected_completion_weight,
                 )
 
+    def test_a2_preflight_binds_frozen_graph_dimensions_and_smoke_diagnostics(self) -> None:
+        expected_dimensions = {
+            "ASSIST17": "64",
+            "MOOCRadar": "256",
+            "XES3G5M": "64",
+        }
+        for dataset, expected_dimension in expected_dimensions.items():
+            with self.subTest(dataset=dataset):
+                records = outer_runner.preflight_stable_validation(
+                    architecture="a2",
+                    dataset_id=dataset,
+                    recipe_index=controller.FROZEN_RECIPES[dataset],
+                )
+                for record in records:
+                    command = record["commands"]["train"]
+                    self.assertIn("--unified-graph-hidden-dim", command)
+                    self.assertEqual(
+                        command[command.index("--unified-graph-hidden-dim") + 1],
+                        expected_dimension,
+                    )
+                a0_records = outer_runner.preflight_stable_validation(
+                    architecture="a0v4",
+                    dataset_id=dataset,
+                    recipe_index=controller.FROZEN_RECIPES[dataset],
+                )
+                self.assertTrue(
+                    all(
+                        "--unified-graph-hidden-dim"
+                        not in record["commands"]["train"]
+                        for record in a0_records
+                    )
+                )
+
+        a2_smoke = outer_runner.preflight_stable_smoke(architecture="a2")
+        self.assertIn("--unified-a2-smoke-diagnostics", a2_smoke["command"])
+        a0_smoke = outer_runner.preflight_stable_smoke(architecture="a0v4")
+        self.assertNotIn("--unified-a2-smoke-diagnostics", a0_smoke["command"])
+        self.assertTrue(
+            hasattr(outer_runner, "_validate_stable_graph_training_argv")
+        )
+        valid = outer_runner.preflight_stable_validation(
+            architecture="a2",
+            dataset_id="ASSIST17",
+            recipe_index=controller.FROZEN_RECIPES["ASSIST17"],
+        )[0]["commands"]["train"]
+        flag_index = valid.index("--unified-graph-hidden-dim")
+        for mutation in ("omission", "mismatch"):
+            broken = list(valid)
+            if mutation == "omission":
+                del broken[flag_index : flag_index + 2]
+            else:
+                broken[flag_index + 1] = "32"
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                outer_runner._validate_stable_graph_training_argv(
+                    broken,
+                    architecture="a2",
+                    expected_hidden_dim=64,
+                    require_smoke_diagnostics=False,
+                )
+
+    def test_controller_requires_exact_a2_smoke_diagnostics(self) -> None:
+        self.assertTrue(hasattr(controller, "A2_SMOKE_DIAGNOSTIC_FIELDS"))
+        diagnostic = {
+            "schema_version": 1,
+            "masked_edge_count": 2,
+            "observed_hard_assembly_max_abs_error": 0.0,
+            "reconstruction_loss": 0.5,
+            "gradient_parameter_count": 3,
+            "gradient_present_count": 3,
+            "gradient_finite_count": 3,
+            "gradient_nonzero_parameter_count": 2,
+            "aggregate_gradient_norm": 0.25,
+        }
+        result = {
+            "architecture_fingerprint": controller.architecture_fingerprint("a2"),
+            "gpu_uuid": "GPU-unit",
+            "peak_gpu_memory_gb": 0.1,
+            "mastery_shape": [3, 3],
+            "final_loss": 0.5,
+            "parameter_count": 10,
+            "a2_smoke_diagnostics": diagnostic,
+        }
+        controller._validate_runner_result("smoke", "a2", None, result)
+        for mutation in (
+            "missing", "masked", "assembly", "present", "finite",
+            "nonzero", "norm",
+        ):
+            broken = json.loads(json.dumps(result))
+            if mutation == "missing":
+                broken.pop("a2_smoke_diagnostics")
+            elif mutation == "masked":
+                broken["a2_smoke_diagnostics"]["masked_edge_count"] = 0
+            elif mutation == "assembly":
+                broken["a2_smoke_diagnostics"]["observed_hard_assembly_max_abs_error"] = 1e-9
+            elif mutation == "present":
+                broken["a2_smoke_diagnostics"]["gradient_present_count"] = 2
+            elif mutation == "finite":
+                broken["a2_smoke_diagnostics"]["gradient_finite_count"] = 2
+            elif mutation == "nonzero":
+                broken["a2_smoke_diagnostics"]["gradient_nonzero_parameter_count"] = 0
+            else:
+                broken["a2_smoke_diagnostics"]["aggregate_gradient_norm"] = 0.0
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                controller._validate_runner_result("smoke", "a2", None, broken)
+
     def test_cli_has_plan_shape_and_no_caller_proofs_or_deltas(self) -> None:
         parser = controller.build_parser()
         commands = next(action.choices for action in parser._actions if getattr(action, "choices", None))
@@ -167,6 +272,17 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                     "mastery_shape": [3, 4],
                     "final_loss": 0.5,
                     "parameter_count": 12,
+                    "a2_smoke_diagnostics": {
+                        "schema_version": 1,
+                        "masked_edge_count": 2,
+                        "observed_hard_assembly_max_abs_error": 0.0,
+                        "reconstruction_loss": 0.5,
+                        "gradient_parameter_count": 1,
+                        "gradient_present_count": 1,
+                        "gradient_finite_count": 1,
+                        "gradient_nonzero_parameter_count": 1,
+                        "aggregate_gradient_norm": 0.5,
+                    },
                 }
 
             deps = self.dependencies(

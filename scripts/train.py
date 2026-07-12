@@ -28,6 +28,7 @@ from models import (
 )
 from models.unified_v2_components import smoothed_evidence_logits
 from trainers import evaluate_model, train_model
+from trainers.engine import masked_graph_reconstruction_loss
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
 
@@ -51,6 +52,119 @@ def _max_cuda_memory_allocated_gb(device: str) -> float | None:
         return None
     torch.cuda.set_device(torch.device(device))
     return torch.cuda.max_memory_allocated() / (1024**3)
+
+
+def run_a2_smoke_diagnostics(
+    *,
+    model: UnifiedDecoupledCDM,
+    train_bundle,
+    device: str,
+) -> dict[str, int | float]:
+    if model.architecture.completion != "evidence-relational-graph":
+        raise ValueError("A2 smoke diagnostics require the graph completer")
+    torch_device = torch.device(device)
+    was_training = model.training
+    model.train()
+    try:
+        output = model(
+            q_matrix=train_bundle.q_matrix_tensor.to(torch_device),
+            concept_graph=train_bundle.concept_graph.to(torch_device),
+            student_exercise_mask=train_bundle.student_exercise_mask.to(
+                torch_device
+            ),
+            response_matrix=train_bundle.response_matrix_tensor.to(
+                torch_device
+            ),
+            student_tkc_mask=train_bundle.student_tkc_mask.to(torch_device),
+            student_ukc_mask=train_bundle.student_ukc_mask.to(torch_device),
+            student_concept_evidence=train_bundle.student_concept_evidence_tensor.to(
+                torch_device
+            ),
+            target_student_ids=train_bundle.interaction_student_ids.to(
+                torch_device
+            ),
+            target_exercise_ids=train_bundle.interaction_exercise_ids.to(
+                torch_device
+            ),
+            completion_epoch=0,
+        )
+        loss = masked_graph_reconstruction_loss(output)
+        parameters = [
+            parameter
+            for parameter in model.completer.parameters()
+            if parameter.requires_grad
+        ]
+        gradients = torch.autograd.grad(
+            loss,
+            parameters,
+            allow_unused=True,
+        )
+        mask = output.completion_target_mask
+        observed_mask = output.mastery_observed_mask
+        if mask is None or observed_mask is None or output.observed_mastery is None:
+            raise ValueError("A2 smoke diagnostic outputs are incomplete")
+        masked_edge_count = int(mask.sum().item())
+        if masked_edge_count <= 0:
+            raise ValueError("A2 smoke must mask at least one graph edge")
+        observed_error = float(
+            (
+                output.mastery[observed_mask]
+                - output.observed_mastery[observed_mask]
+            )
+            .abs()
+            .max()
+            .item()
+        )
+        reconstruction_loss = float(loss.detach().item())
+        present_count = sum(gradient is not None for gradient in gradients)
+        finite_count = sum(
+            gradient is not None and bool(torch.isfinite(gradient).all())
+            for gradient in gradients
+        )
+        nonzero_count = sum(
+            gradient is not None and bool((gradient != 0).any())
+            for gradient in gradients
+        )
+        aggregate_gradient_norm = float(
+            torch.sqrt(
+                sum(
+                    (gradient.detach() ** 2).sum()
+                    for gradient in gradients
+                    if gradient is not None
+                )
+            ).item()
+        )
+        parameter_count = len(parameters)
+        if observed_error != 0.0:
+            raise ValueError("A2 observed mastery hard assembly changed")
+        if not math.isfinite(reconstruction_loss) or reconstruction_loss <= 0.0:
+            raise ValueError("A2 reconstruction loss must be finite and positive")
+        if (
+            parameter_count <= 0
+            or present_count != parameter_count
+            or finite_count != parameter_count
+            or nonzero_count <= 0
+            or nonzero_count > parameter_count
+            or not math.isfinite(aggregate_gradient_norm)
+            or aggregate_gradient_norm <= 0.0
+        ):
+            raise ValueError(
+                "all A2 graph gradients must be present and finite with "
+                "a positive aggregate norm"
+            )
+        return {
+            "schema_version": 1,
+            "masked_edge_count": masked_edge_count,
+            "observed_hard_assembly_max_abs_error": observed_error,
+            "reconstruction_loss": reconstruction_loss,
+            "gradient_parameter_count": parameter_count,
+            "gradient_present_count": present_count,
+            "gradient_finite_count": finite_count,
+            "gradient_nonzero_parameter_count": nonzero_count,
+            "aggregate_gradient_norm": aggregate_gradient_norm,
+        }
+    finally:
+        model.train(was_training)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -94,6 +208,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Missing-cell completion supervision weight.",
+    )
+    parser.add_argument(
+        "--unified-a2-smoke-diagnostics",
+        action="store_true",
+        help=(
+            "Run the deterministic A2 graph diagnostic after training without "
+            "an optimizer step or checkpoint mutation. Smoke-only."
+        ),
     )
     parser.add_argument(
         "--kancd-latent-dim",
@@ -827,6 +949,14 @@ def validate_model_args(args: argparse.Namespace) -> None:
                 "--unified-completion-loss-weight must be positive for "
                 "evidence-relational-graph completion."
             )
+        if (
+            args.unified_a2_smoke_diagnostics
+            and args.unified_completion != "evidence-relational-graph"
+        ):
+            raise ValueError(
+                "--unified-a2-smoke-diagnostics requires "
+                "evidence-relational-graph completion."
+            )
         if args.training_mode not in {
             "full_batch",
             "student_recompute_minibatch",
@@ -841,6 +971,10 @@ def validate_model_args(args: argparse.Namespace) -> None:
                 "--model unified_v2 does not accept explicitly supplied "
                 "legacy model flags/options: " + ", ".join(forbidden_options)
             )
+    elif args.unified_a2_smoke_diagnostics:
+        raise ValueError(
+            "--unified-a2-smoke-diagnostics requires unified_v2."
+        )
     if args.model != "v1":
         enabled_v1_flags = [name for name in V1_ONLY_FLAG_ATTRS if getattr(args, name)]
         if enabled_v1_flags:
@@ -1227,6 +1361,15 @@ def main() -> None:
         if valid_bundle is not None
         else None
     )
+    a2_smoke_diagnostics = (
+        run_a2_smoke_diagnostics(
+            model=model,
+            train_bundle=train_bundle,
+            device=resolved_device,
+        )
+        if args.unified_a2_smoke_diagnostics
+        else None
+    )
     max_cuda_memory_allocated_gb = _max_cuda_memory_allocated_gb(resolved_device)
 
     architecture_manifest = (
@@ -1315,6 +1458,7 @@ def main() -> None:
         "num_exercises": train_bundle.num_exercises,
         "num_concepts": train_bundle.num_concepts,
         "parameter_count": trainable_parameter_count(model),
+        "a2_smoke_diagnostics": a2_smoke_diagnostics,
         "concept_dim": args.concept_dim,
         "dual_cdm_ensemble": args.dual_cdm_ensemble,
         "dual_cdm_secondary_concept_dim": args.dual_cdm_secondary_concept_dim,

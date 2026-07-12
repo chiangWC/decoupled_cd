@@ -2,9 +2,9 @@
 
 ## 结论
 
-A2 相对 A0v4 的冻结 relative gate **FAIL**；`test` 未打开，external gate 也保持关闭。A2 没有进行数值调参、dataset-specific 修改、retry、batch 改动或残差补丁。下一独立机制登记为 **MNAR / exposure-aware mastery completion**。
+A2 r5 是 **protocol-invalid diagnostic**，不是已注册 A2 的冻结 relative gate。三个 A2 validation 实际使用 train CLI 默认 graph hidden dim `32`，违反冻结 recipe `64/256/64`；r5 smoke 也没有生成可验证的 masked-edge、hard-assembly 与 graph-gradient diagnostic schema。因此 r5 `relative-gate.json` 不具权威性，不能判定注册 A2。`test` 与 external gate 仍关闭；MNAR / exposure-aware mastery completion 的下一机制登记撤回，等待有效重跑。
 
-本次权威 campaign 为 `/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r5-20260712`，seed `42`、split seed `2024`、cohort SHA-256 `6342dc8a5f73a4e03a1645780597b625c1480ba7a6513668b6766089cdd5b8a5`。A2 fingerprint 为 `270b7a8d456110f3c23b91df14b05d970569b46efb3fee57d974a79d9c91faa4`。
+本次只读诊断 campaign 为 `/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r5-20260712`，seed `42`、split seed `2024`、cohort SHA-256 `6342dc8a5f73a4e03a1645780597b625c1480ba7a6513668b6766089cdd5b8a5`。A2 fingerprint 为 `270b7a8d456110f3c23b91df14b05d970569b46efb3fee57d974a79d9c91faa4`。
 
 ## 签发前修复与 r5 独立复现
 
@@ -16,11 +16,11 @@ r5 A0v4 仅运行一次 smoke 和三个冻结 validation，随后 replay/freeze�
 
 ## 唯一 A2 smoke
 
-A2 smoke 为 r5 `attempt-005`，只运行一次：GPU `GPU-8b057858-863a-bb19-1102-4c7ee3d1afe0`，final loss `2.5158112049102783`，mastery shape `[3,3]`，parameter count `143520`，peak GPU memory `0.01954507827758789 GiB`。runner 内部 masked-edge、有限 graph gradient 与 observed mastery hard assembly 检查均未报错；无 OOM。
+A2 smoke 为 r5 `attempt-005`，只运行一次：GPU `GPU-8b057858-863a-bb19-1102-4c7ee3d1afe0`，final loss `2.5158112049102783`，mastery shape `[3,3]`，parameter count `143520`，peak GPU memory `0.01954507827758789 GiB`。旧 runner没有记录 masked-edge、hard-assembly error、逐参数 gradient present/finite count 或 aggregate gradient norm；不能声称 runtime diagnostics 已通过。无 OOM 只是一项资源事实。
 
 ## 冻结 A2 validation 指标
 
-三个任务使用 A0v4 的相同 recipe、seed、split seed、training mode、epoch、optimizer budget、student batch 与 concept dim；唯一模块变化是 A2 evidence-relational-graph completer，completion loss weight 固定 `1.0`。任务在三张不同物理 GPU 上并行首次完成，均 exit 0。
+三个任务继承相同 seed、split、epoch、optimizer budget 与 student batch，completion loss weight 为 `1.0`，但 graph hidden dim 错误地统一为默认 `32`，没有继承冻结 concept dim `64/256/64`。任务虽首次 exit 0，以下指标只能作为 protocol-invalid diagnostic。
 
 | Dataset | standard AUC | holdout AUC | zero AUC | ordinary DOA | weighted DOA | GPU / peak GiB | proof SHA-256 |
 |---|---:|---:|---:|---:|---:|---|---|
@@ -30,7 +30,7 @@ A2 smoke 为 r5 `attempt-005`，只运行一次：GPU `GPU-8b057858-863a-bb19-11
 
 A2 replay proof SHA-256 为 `b04958941f632ab41aa665f36eecf6058df590e33e3bae1b8e7c4ab29b400de7`；replay 文件 SHA-256 为 `b640bc6f87e7dd5217c967283f949478120f27b117924024c8de2e54eda6ca13`。
 
-## A2 − A0v4 精确 delta 与五项门
+## Protocol-invalid A2 − A0v4 诊断 delta
 
 | Dataset | Δ standard | Δ holdout | Δ zero | Δ ordinary DOA | Δ weighted DOA |
 |---|---:|---:|---:|---:|---:|
@@ -46,8 +46,8 @@ A2 replay proof SHA-256 为 `b04958941f632ab41aa665f36eecf6058df590e33e3bae1b8e7
 - `zero_wins=1`，因此 2/3 zero wins 门为 `false`；
 - `zero_delta_at_least_0.001=true`。
 
-最终 `passed=false`。relative gate proof SHA-256 为 `300deb2cdd6e5d0d5313b0ef3fc781dc7f4048177cb892a5bcf8c1ec0aac084e`；`relative-gate.json` 文件 SHA-256 为 `530ca021f2b0096dea07e1ce83d9ce09b7f01d3e77592a263b671d8ac5a6cd48`。失败主因是 ASSIST17 holdout overall 回退以及 zero AUC 仅 XES3G5M 严格提升，不能用外部较弱基线掩盖同架构回退。
+旧 r5 文件写出 `passed=false`，但该结果不是有效五项门 verdict。relative gate proof SHA-256 为 `300deb2cdd6e5d0d5313b0ef3fc781dc7f4048177cb892a5bcf8c1ec0aac084e`；`relative-gate.json` 文件 SHA-256 为 `530ca021f2b0096dea07e1ce83d9ce09b7f01d3e77592a263b671d8ac5a6cd48`，两者仅作为 immutable invalid-run evidence。
 
 ## 协议边界
 
-relative gate FAIL；external gate remains closed。没有运行 `external-gate`、`run-test-once`、reference repo、push 或第二次 attempt。`test` 未打开。A2 不再做 residual patch；下一独立机制是 **MNAR / exposure-aware mastery completion**。
+relative gate **未被有效执行**；external gate remains closed。没有运行 `external-gate`、`run-test-once`、reference repo 或 push。`test` 未打开。没有对 A2 做 residual patch。下一机制暂不登记；先在新独立 campaign 以正确 hidden dim 和强制 runtime diagnostics 重跑注册 A2。
