@@ -541,6 +541,83 @@ print(attempt_dir)
         with self.assertRaisesRegex(ValueError, "raw proof|recipe"):
             finalize_exploration(self.state_dir)
 
+    def test_replay_rejects_unanchored_legacy_completed_state(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        state_path = self.state_dir / "state.json"
+        state = json.loads(state_path.read_text())
+        state.pop("proof_sha256_by_counter")
+        state.pop("finalized_proof_registry", None)
+        state.pop("finalized_proof_registry_sha256", None)
+        state_path.write_text(json.dumps(state))
+        before = state_path.read_bytes()
+
+        with self.assertRaisesRegex(ValueError, "legacy.*anchor|proof.*anchor"):
+            finalize_exploration(self.state_dir)
+
+        self.assertEqual(state_path.read_bytes(), before)
+
+    def test_replay_rejects_mismatched_finalized_registry_without_state_write(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        finalize_exploration(self.state_dir)
+        state_path = self.state_dir / "state.json"
+        state = json.loads(state_path.read_text())
+        state.pop("proof_sha256_by_counter")
+        state["finalized_proof_registry"][0]["proof_sha256"] = "0" * 64
+        state_path.write_text(json.dumps(state))
+        before = state_path.read_bytes()
+
+        with self.assertRaisesRegex(ValueError, "finalized.*registry"):
+            finalize_exploration(self.state_dir)
+
+        self.assertEqual(state_path.read_bytes(), before)
+
+    def test_replay_rejects_missing_or_extra_registered_proof_counter(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        state_path = self.state_dir / "state.json"
+        original = json.loads(state_path.read_text())
+        for mutation in ("missing", "extra"):
+            with self.subTest(mutation=mutation):
+                state = json.loads(json.dumps(original))
+                if mutation == "missing":
+                    state["proof_sha256_by_counter"].pop("1")
+                else:
+                    state["proof_sha256_by_counter"][
+                        str(state["issuance_counter"] + 1)
+                    ] = "0" * 64
+                state_path.write_text(json.dumps(state))
+                before = state_path.read_bytes()
+
+                with self.assertRaisesRegex(ValueError, "counter registry"):
+                    finalize_exploration(self.state_dir)
+
+                self.assertEqual(state_path.read_bytes(), before)
+
+    def test_replay_registers_valid_anchored_legacy_state(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        expected_rows = finalize_exploration(self.state_dir)
+        state_path = self.state_dir / "state.json"
+        state = json.loads(state_path.read_text())
+        expected_registry = {
+            str(entry["counter"]): entry["proof_sha256"]
+            for entry in state["finalized_proof_registry"]
+        }
+        state.pop("proof_sha256_by_counter")
+        state_path.write_text(json.dumps(state))
+
+        replayed_rows = finalize_exploration(self.state_dir)
+        migrated = json.loads(state_path.read_text())
+
+        self.assertEqual(replayed_rows, expected_rows)
+        self.assertEqual(migrated["proof_sha256_by_counter"], expected_registry)
+
     def test_initialization_copies_and_binds_registered_inputs(self) -> None:
         state = self.initialize()
 

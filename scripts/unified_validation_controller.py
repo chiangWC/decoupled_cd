@@ -1211,6 +1211,50 @@ def _registered_replay_pairs(
     return grouped
 
 
+def _registered_replay_proof_anchor(
+    state: Mapping[str, Any], *, issuance_counter: int
+) -> tuple[Mapping[str, str], list[Mapping[str, Any]] | None]:
+    expected_keys = {str(counter) for counter in range(1, issuance_counter + 1)}
+    if "proof_sha256_by_counter" in state:
+        registered = state.get("proof_sha256_by_counter")
+        if (
+            not isinstance(registered, Mapping)
+            or set(registered) != expected_keys
+            or any(
+                not isinstance(value, str)
+                or NONCE_PATTERN.fullmatch(value) is None
+                for value in registered.values()
+            )
+        ):
+            raise ValueError("registered raw proof counter registry is incomplete")
+        return registered, None
+
+    legacy = state.get("finalized_proof_registry")
+    legacy_sha256 = state.get("finalized_proof_registry_sha256")
+    if not isinstance(legacy, list) or not isinstance(legacy_sha256, str):
+        raise ValueError("completed legacy replay has no trusted proof registry anchor")
+    if canonical_sha256(legacy) != legacy_sha256:
+        raise ValueError("finalized legacy proof registry anchor mismatch")
+    counters = [entry.get("counter") for entry in legacy if isinstance(entry, Mapping)]
+    if (
+        len(counters) != len(legacy)
+        or counters != list(range(1, issuance_counter + 1))
+        or any(
+            set(entry) != {"counter", "dataset_id", "proof_sha256"}
+            or not isinstance(entry.get("dataset_id"), str)
+            or not isinstance(entry.get("proof_sha256"), str)
+            or NONCE_PATTERN.fullmatch(str(entry["proof_sha256"])) is None
+            for entry in legacy
+            if isinstance(entry, Mapping)
+        )
+    ):
+        raise ValueError("finalized legacy proof registry counter registry is invalid")
+    return {
+        str(entry["counter"]): str(entry["proof_sha256"])
+        for entry in legacy
+    }, legacy
+
+
 def replay_registered_exploration_proofs(
     state_dir: Path,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -1222,9 +1266,9 @@ def replay_registered_exploration_proofs(
     grouped = _registered_replay_pairs(state_dir, state)
     issuance_counter = state.get("issuance_counter")
     assert isinstance(issuance_counter, int)
-    registered_hashes = state.get("proof_sha256_by_counter")
-    if not isinstance(registered_hashes, Mapping):
-        registered_hashes = {}
+    registered_hashes, legacy_anchor = _registered_replay_proof_anchor(
+        state, issuance_counter=issuance_counter
+    )
     replayed: list[dict[str, Any]] = []
     raw_registry: dict[str, str] = {}
     for counter in range(1, issuance_counter + 1):
@@ -1296,7 +1340,7 @@ def replay_registered_exploration_proofs(
         ):
             raise ValueError("raw proof does not match controller-owned replay")
         raw_sha = hashlib.sha256(proof_path.read_bytes()).hexdigest()
-        if registered_hashes and registered_hashes.get(str(counter)) != raw_sha:
+        if registered_hashes.get(str(counter)) != raw_sha:
             raise ValueError("registered raw proof SHA-256 mismatch")
         raw_registry[str(counter)] = raw_sha
         replayed.append({
@@ -1306,7 +1350,17 @@ def replay_registered_exploration_proofs(
             "deltas": deltas,
             "proof_sha256": raw_sha,
         })
-    if not registered_hashes:
+    if legacy_anchor is not None:
+        replayed_registry = [
+            {
+                "counter": entry["counter"],
+                "dataset_id": entry["dataset_id"],
+                "proof_sha256": entry["proof_sha256"],
+            }
+            for entry in replayed
+        ]
+        if replayed_registry != legacy_anchor:
+            raise ValueError("finalized legacy proof registry does not match replay")
         state["proof_sha256_by_counter"] = raw_registry
         _atomic_json(state_dir / "state.json", state)
     return state, replayed
