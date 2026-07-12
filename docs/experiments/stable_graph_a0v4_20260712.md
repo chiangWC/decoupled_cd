@@ -9,7 +9,8 @@ A0v4 已在 `unified-ergc-r4-20260712` 冻结。唯一 smoke 与 MOOCRadar、ASS
 - 冻结代码 commit：`32714c54237dee430ca7a99e896f79e9b32d4faf`（作者 `chiangWC <215551297+chiangWC@users.noreply.github.com>`）。
 - implementation code SHA-256：`5bb8a12dc0bf4969d61313b672a08dc201bf08a4d65cff4d7365a06bfc84058f`。
 - 权威数据根：`/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-mastery-20260712/controllers/a0-controller/data`。21 个 standard/holdout train、valid、Q、holdout-assignment 文件的 size/SHA 继承自已验证 v3 A0 proof，并在每次 issuance 前重新校验。
-- r4 正式 preflight：3 数据集、6 split、21 文件、18 条 train/coverage/DOA argv；`test.csv` 引用数为 0。preflight log SHA-256：`03aed53a18273d6c6059d5136edab0f6d445265219e51a45a057f804569a3ed1`；CPU 双 split rehearsal manifest SHA-256：`70bec25b48064ce0faf1aa8faeff47c44545271c4832cfd8378d2ba48788cfc9`，source/aux-manifest 收集数为 6/1。
+- r4 正式 preflight：3 数据集、6 split、21 文件、18 条 train/coverage/DOA argv；`test.csv` 引用数为 0。preflight stdout/payload SHA-256：`03aed53a18273d6c6059d5136edab0f6d445265219e51a45a057f804569a3ed1`；CPU 双 split rehearsal manifest SHA-256：`70bec25b48064ce0faf1aa8faeff47c44545271c4832cfd8378d2ba48788cfc9`，source/aux-manifest 收集数为 6/1。
+- freeze 后仅为审计归档了仍可恢复的原始 stdout：`audit/preflight/preflight-stdout.log`，55,339 bytes、mode `0444`，SHA-256 仍为 `03aed53a18273d6c6059d5136edab0f6d445265219e51a45a057f804569a3ed1`。receipt 为 `audit/preflight/receipt.json`，SHA-256 `c750b347823fb67e82bcb20ee400562bc85acbdbe96396968f2789554756f59d`。原 rehearsal manifest 位于已清理的 `TemporaryDirectory`，原字节不可恢复，因此未合成替代文件；receipt 只记录其原路径和已报告 SHA。
 - ledger SHA-256：`3b17720f97f972b56f0c86c3e1711a5d1b676d0f2d8d82a48cede401bb23d953`；replay 文件 SHA-256：`d01059685dd0e2461a1e1885d1f415686ce4e7bf546e5703a761053a3633ee31`；freeze 文件 SHA-256：`4fef4ae01ec7eebfff4a8dd1c7f37fdb03d556a2a42e079ff5fc659a05a5aff3`。
 
 ## Smoke
@@ -48,4 +49,13 @@ v3 对照来源为 `unified-mastery-20260712/controllers/a0-primary-validation-r
 
 ## 测试与 test-closed 证明
 
-提交前完整 CPU suite 共 354 tests；唯一失败是已知 SIGTERM 时序测试，随后隔离复跑 1/1 通过。`compileall` 与 `git diff --check` 通过。r4 campaign 只含 smoke 与 validation counters 1–4，以及 replay/freeze decisions；对 attempts/decisions 搜索 `test.csv`、`stable-test`、test split 无匹配，未执行 `run-test-once`。
+本任务实际采用的 CPU gate 是窄 flaky policy：full discovery 必须全绿；或者唯一失败精确为 `test_sigterm_to_runner_forwards_to_nested_child_process_group`，且同一 checkout 上立即隔离复跑通过。任何其他失败都阻断 GPU。本轮不声称 full suite 全绿。
+
+应用 gate 的证据如下：
+
+- 初始 checkout：full discovery `Ran 351 tests in 67.350s`，唯一失败为上述 SIGTERM 测试；隔离复跑 `Ran 1 test in 3.861s`，`OK`。
+- r2 修复 checkout：full discovery `Ran 352 tests in 71.156s`，唯一失败仍为上述测试；隔离复跑 `Ran 1 test in 4.295s`，`OK`。
+- r3 preflight checkout：full discovery `Ran 354 tests in 71.198s`，唯一失败仍为上述测试；隔离复跑 `Ran 1 test in 4.110s`，`OK`。
+- r4 manifest checkout：full discovery `Ran 354 tests in 70.403s`，唯一失败仍为上述测试；隔离复跑 `Ran 1 test in 4.201s`，`OK`。
+
+因此每次 GPU 放行都满足“唯一允许失败 + 立即隔离通过”，而不是把 full discovery 记为绿色。`compileall` 与 `git diff --check` 通过。r4 campaign 只含 smoke 与 validation counters 1–4，以及 replay/freeze decisions；对 attempts/decisions 搜索 `test.csv`、`stable-test`、test split 无匹配，未执行 `run-test-once`。

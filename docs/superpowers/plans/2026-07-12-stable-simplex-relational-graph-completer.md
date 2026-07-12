@@ -491,7 +491,12 @@ conda run -n decoupled_cd python -m unittest discover -s tests -v
 git status --short
 ```
 
-Expected: all tests PASS，worktree clean。失败时先用 `systematic-debugging`，不得先跑 GPU。
+CPU gate 仅允许以下两种结果之一：
+
+1. full discovery 全绿；或
+2. full discovery 的唯一失败精确为 `test_sigterm_to_runner_forwards_to_nested_child_process_group`，并且同一 checkout 上立即隔离复跑该测试通过。
+
+任何其他失败、多个失败或隔离复跑失败都阻断 GPU。该窄 flaky policy 是 Task 6 实际采用的 gate；不得把第二种结果表述为 full suite 全绿。通过 gate 后仍要求 worktree clean。
 
 - [ ] **Step 2: 动态选卡并只运行一次 A0v4 smoke**
 
