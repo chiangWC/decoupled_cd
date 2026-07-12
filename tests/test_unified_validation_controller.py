@@ -1965,6 +1965,93 @@ controller.authorize_next(
                 eligible_candidates=3,
             )
         )
+
+    def test_successful_xes_short_recipe_is_third_candidate_and_suppresses_long_run(self) -> None:
+        dataset_ids = ("ASSIST09", "ASSIST17", "XES3G5M")
+        cohort: dict[str, object] = {
+            "schema_version": 1,
+            "dataset_ids": list(dataset_ids),
+            "audit_sha256": "a" * 64,
+            "dataset_audit_sha256": {
+                dataset_id: "d" * 64 for dataset_id in dataset_ids
+            },
+            "b0_validation_references": {
+                dataset_id: {"source": "registered-baseline"}
+                for dataset_id in dataset_ids
+            },
+        }
+        cohort["cohort_sha256"] = canonical_sha256(cohort)
+        self.cohort = cohort
+        self.cohort_path.write_text(json.dumps(cohort), encoding="utf-8")
+
+        existing = {row["dataset_id"]: dict(row) for row in self.baseline_rows}
+        xes_row = dict(existing["MOOCRadar"], dataset_id="XES3G5M")
+        xes_row["numerical_recipe"] = RECIPES["XES3G5M"][0].__dict__
+        existing["XES3G5M"] = xes_row
+        self.baseline_rows = [existing[dataset_id] for dataset_id in dataset_ids]
+        for row in self.baseline_rows:
+            row["cohort_sha256"] = cohort["cohort_sha256"]
+        self.baseline_path.write_text(
+            json.dumps({"rows": self.baseline_rows}), encoding="utf-8"
+        )
+
+        for directory_name in DATASET_DIRECTORIES["XES3G5M"]:
+            directory = self.data_root / directory_name
+            directory.mkdir(parents=True, exist_ok=True)
+            for name in ("train.csv", "valid.csv", "Q_matrix.csv"):
+                (directory / name).write_text(
+                    f"{directory_name},{name}\n", encoding="utf-8"
+                )
+            if directory_name.endswith("_chold_v2"):
+                (directory / "student_concept_holdout_assignments.csv").write_text(
+                    f"{directory_name},holdout\n", encoding="utf-8"
+                )
+
+        self.initialize(architecture="a0")
+        token_path, token = self.issue()
+        self._prepare_pair_artifacts(
+            token_path, token, dataset_id="ASSIST09", architecture="a0"
+        )
+        self._advance_unit_launch()
+
+        token_path = self.root / "assist17-short.json"
+        token = authorize_next(
+            state_dir=self.state_dir,
+            repo_root=self.repo_root,
+            output_path=token_path,
+        )
+        self._prepare_pair_artifacts(
+            token_path, token, dataset_id="ASSIST17", architecture="a0"
+        )
+        self._advance_unit_launch()
+        token_path = self.root / "assist17-fallback.json"
+        token = authorize_next(
+            state_dir=self.state_dir,
+            repo_root=self.repo_root,
+            output_path=token_path,
+        )
+        self._prepare_pair_artifacts(
+            token_path, token, dataset_id="ASSIST17", architecture="a0"
+        )
+        state = self._advance_unit_launch()
+        self.assertEqual(state["successes"], 2)
+
+        token_path = self.root / "xes-short.json"
+        token = authorize_next(
+            state_dir=self.state_dir,
+            repo_root=self.repo_root,
+            output_path=token_path,
+        )
+        self._prepare_pair_artifacts(
+            token_path, token, dataset_id="XES3G5M", architecture="a0"
+        )
+        state = self._advance_unit_launch()
+
+        self.assertTrue(state["complete"])
+        self.assertEqual(state["successes"], 3)
+        self.assertEqual(state["recipe_indices"]["XES3G5M"], 0)
+        self.assertEqual(state["issuance_counter"], 4)
+        self.assertFalse((self.root / "xes-long.json").exists())
         self.assertEqual(
             controller_module._next_a0_recipe_index(
                 dataset_id="XES3G5M",

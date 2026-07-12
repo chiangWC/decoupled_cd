@@ -540,17 +540,23 @@ def run_with_gpu_sampling(
     stdout: Any,
 ) -> tuple[int, dict[str, Any]]:
     termination_signals = {signal.SIGTERM, signal.SIGINT}
-    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, termination_signals)
     process: subprocess.Popen[Any] | None = None
+    pending_signal: int | None = None
     peak = empty_gpu_peak_record()
     previous_handlers: dict[int, Any] = {}
 
     def forward_signal(signum: int, _frame: Any) -> None:
-        assert process is not None
+        nonlocal pending_signal
+        pending_signal = signum
+        if process is None:
+            return
         terminate_process_tree(process)
         raise ForwardedTermination(signum)
 
     try:
+        for signum in termination_signals:
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, forward_signal)
         process = subprocess.Popen(
             command,
             cwd=cwd,
@@ -560,16 +566,16 @@ def run_with_gpu_sampling(
             text=True,
             start_new_session=True,
         )
-        for signum in termination_signals:
-            previous_handlers[signum] = signal.getsignal(signum)
-            signal.signal(signum, forward_signal)
+        if pending_signal is not None:
+            terminate_process_tree(process)
+            raise ForwardedTermination(pending_signal)
     except BaseException:
         if process is not None:
             terminate_process_tree(process)
-        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        for signum, previous_handler in previous_handlers.items():
+            signal.signal(signum, previous_handler)
         raise
     try:
-        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         while True:
             try:
                 sample = sample_gpu_process_memory(process.pid)
@@ -582,6 +588,8 @@ def run_with_gpu_sampling(
             update_gpu_peak_record(peak, sample)
             try:
                 exit_code = process.wait(timeout=GPU_SAMPLE_INTERVAL_SECONDS)
+                if pending_signal is not None:
+                    raise ForwardedTermination(pending_signal)
                 return exit_code, peak
             except subprocess.TimeoutExpired:
                 continue

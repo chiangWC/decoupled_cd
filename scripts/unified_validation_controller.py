@@ -1158,7 +1158,9 @@ def _advance_active_pair(
         dataset_id=dataset_id,
         recipe_index=recipe_index,
         overall_guard_passed=overall_success,
-        eligible_candidates=int(state.get("successes", 0)),
+        eligible_candidates=(
+            int(state.get("successes", 0)) + int(joint_success)
+        ),
     )
     if state.get("architecture") == "a0" and next_recipe_index is not None:
         state["cursor"] = cursor

@@ -559,35 +559,32 @@ class RemoteCampaignTests(unittest.TestCase):
         self.assertEqual(exit_code, 7)
         self.assertIn("sampler exploded", peak["last_error"])
 
-    def test_termination_signals_are_blocked_during_child_spawn(self) -> None:
+    def test_signal_during_spawn_is_handed_to_child_without_inherited_block(self) -> None:
         process = mock.MagicMock()
         process.pid = 123456
-        process.wait.return_value = 0
-        process.poll.return_value = 0
+        process.poll.return_value = None
 
         def spawn(*_args, **_kwargs):
             current_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
-            self.assertIn(signal.SIGTERM, current_mask)
-            self.assertIn(signal.SIGINT, current_mask)
+            self.assertNotIn(signal.SIGTERM, current_mask)
+            self.assertNotIn(signal.SIGINT, current_mask)
+            os.kill(os.getpid(), signal.SIGTERM)
             return process
 
         with (
             open(os.devnull, "w", encoding="utf-8") as sink,
             mock.patch.object(RUNNER_MODULE.subprocess, "Popen", side_effect=spawn),
-            mock.patch.object(
-                RUNNER_MODULE,
-                "sample_gpu_process_memory",
-                return_value={"available": False, "devices": {}},
-            ),
+            mock.patch.object(RUNNER_MODULE, "terminate_process_tree") as terminate,
+            self.assertRaises(RUNNER_MODULE.ForwardedTermination),
         ):
-            exit_code, _ = RUNNER_MODULE.run_with_gpu_sampling(
+            RUNNER_MODULE.run_with_gpu_sampling(
                 [sys.executable, "-c", "pass"],
                 cwd=self.repo,
                 env=os.environ.copy(),
                 stdout=sink,
             )
 
-        self.assertEqual(exit_code, 0)
+        terminate.assert_called_with(process)
 
     def test_keyboard_interrupt_terminates_and_reaps_child_process(self) -> None:
         pid_path = self.root / "child.pid"
@@ -684,6 +681,7 @@ class RemoteCampaignTests(unittest.TestCase):
 
     def test_sigterm_to_runner_forwards_to_nested_child_process_group(self) -> None:
         grandchild_pid_path = self.root / "forwarded-grandchild.pid"
+        graceful_term_path = self.root / "graceful-term-observed"
         grandchild_code = (
             "import os, signal, time; from pathlib import Path; "
             "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
@@ -691,7 +689,10 @@ class RemoteCampaignTests(unittest.TestCase):
             "time.sleep(30)"
         )
         parent_code = (
-            "import subprocess, sys, time; "
+            "import signal, subprocess, sys, time; from pathlib import Path; "
+            f"marker = Path({str(graceful_term_path)!r}); "
+            "signal.signal(signal.SIGTERM, "
+            "lambda *_: (marker.write_text('term'), sys.exit(0))); "
             f"subprocess.Popen([sys.executable, '-c', {grandchild_code!r}]); "
             "time.sleep(30)"
         )
@@ -725,6 +726,7 @@ class RemoteCampaignTests(unittest.TestCase):
             status = self.load_status("attempt-001")
             self.assertEqual(status["status"], "failed")
             self.assertNotEqual(status["exit_code"], 0)
+            self.assertTrue(graceful_term_path.exists())
 
             deadline = time.monotonic() + 3
             while Path(f"/proc/{grandchild_pid}/stat").exists() and time.monotonic() < deadline:
