@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -620,3 +622,17 @@ class PrimaryCohortRankingTests(unittest.TestCase):
         invalid[0]["a0_fingerprint"] = "A" * 64
         with self.assertRaisesRegex(ValueError, "invalid A0 fingerprint"):
             freeze_primary_cohort(invalid, self.baseline_audit, self.audit_rows)
+
+    def test_cohort_cli_exposes_freeze_and_verify(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        completed = subprocess.run(
+            [sys.executable, str(root / "scripts" / "unified_cohort.py"), "--help"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("freeze", completed.stdout)
+        self.assertIn("verify", completed.stdout)

@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from scripts.run_unified_validation import (
     ARCHITECTURES,
@@ -30,6 +30,7 @@ from scripts.run_unified_validation import (
     validate_smoke_summary,
     _write_synthetic_fixture,
     main as validation_main,
+    parse_args,
 )
 
 
@@ -295,6 +296,64 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
                     expected_fingerprint=fingerprint,
                     require_gpu_peak=True,
                 )
+
+    def test_gpu_smoke_runs_only_the_explicit_architecture(self) -> None:
+        args = parse_args([
+            "smoke", "--architecture", "a0", "--devices", "gpu",
+            "--output", "smoke.json",
+        ])
+        self.assertEqual(args.architecture, "a0")
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "smoke.json"
+            snapshot = GpuSnapshot(2, 100, 24_000, 0)
+            slot = MagicMock()
+            slot.__enter__.return_value = (
+                2,
+                [snapshot],
+                Path("/tmp/unified-mastery-gpu-2.lock"),
+            )
+
+            def fake_run(command, *, env):
+                summary_path = Path(command[command.index("--output") + 1])
+                summary_path.parent.mkdir(parents=True, exist_ok=True)
+                summary_path.write_text(json.dumps({
+                    "architecture_manifest": architecture_spec("a0").manifest(),
+                    "architecture_fingerprint": architecture_fingerprint("a0"),
+                    "num_students": 3,
+                    "num_concepts": 3,
+                    "final_loss": 0.4,
+                    "parameter_count": 123,
+                    "max_cuda_memory_allocated_gb": 0.2,
+                }), encoding="utf-8")
+
+            with (
+                patch(
+                    "scripts.run_unified_validation.locked_gpu",
+                    return_value=slot,
+                ),
+                patch(
+                    "scripts.run_unified_validation._run_checked",
+                    side_effect=fake_run,
+                ),
+                patch(
+                    "scripts.run_unified_validation._gpu_uuid",
+                    return_value="GPU-unit-uuid",
+                    create=True,
+                ),
+            ):
+                validation_main([
+                    "smoke", "--architecture", "a0", "--devices", "gpu",
+                    "--output", str(output),
+                ])
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [row["architecture"] for row in payload["records"]], ["a0"]
+            )
+            self.assertEqual(
+                payload["records"][0]["physical_gpu_uuid"], "GPU-unit-uuid"
+            )
 
     def test_candidate_rows_require_every_frozen_dataset_and_both_splits(self):
         cohort_hash = "a" * 64

@@ -151,7 +151,7 @@ class UnifiedBaselineAuditTests(unittest.TestCase):
             result = json.loads(output.read_text(encoding="utf-8"))
 
         self.assertEqual(result["accepted_count"], 6)
-        self.assertEqual(result["rejected_count"], 1)
+        self.assertEqual(result["rejected_count"], 0)
         self.assertEqual(result["discovered_source_count"], 7)
         self.assertEqual(result["source_root_count"], 7)
         self.assertEqual(
@@ -163,8 +163,7 @@ class UnifiedBaselineAuditTests(unittest.TestCase):
         self.assertEqual(len(rejected_source["source_sha256"]), 64)
         self.assertEqual(
             rejected_source["reasons"][0],
-            "row 1: source_path does not match containing artifact: expected "
-            + str(extra.resolve()),
+            "artifact does not declare required baseline fields",
         )
         unhashed = dict(result)
         stored = unhashed.pop("audit_sha256")
@@ -248,6 +247,28 @@ class UnifiedBaselineAuditTests(unittest.TestCase):
             "row 2: " + expected_prefix + str(artifact.resolve()),
             "row 3: " + expected_prefix + str(artifact.resolve()),
         ])
+
+    def test_non_baseline_csv_is_rejected_once_at_artifact_level(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "interactions.csv"
+            artifact.write_text(
+                "stu_id,exer_id,label\n"
+                "0,10,1\n"
+                "1,11,0\n"
+                "2,12,1\n",
+                encoding="utf-8",
+            )
+
+            result = audit_baseline_sources([artifact], self.audits)
+
+        self.assertEqual(result["accepted_count"], 0)
+        self.assertEqual(result["rejected_count"], 0)
+        self.assertEqual(result["discovered_source_count"], 1)
+        self.assertEqual(len(result["rejected_source_records"]), 1)
+        self.assertEqual(
+            result["rejected_source_records"][0]["reasons"],
+            ["artifact does not declare required baseline fields"],
+        )
 
 
 if __name__ == "__main__":

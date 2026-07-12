@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+if __package__ in (None, ""):
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.unified_baseline_audit import (
     REQUIRED_BASELINE_FIELDS,
@@ -418,3 +424,63 @@ def freeze_primary_cohort(
         raise
     _fsync_parent(cohort_path)
     return cohort
+
+
+def _load_json(path: Path) -> Any:
+    with path.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _trusted_freeze(args: argparse.Namespace) -> dict[str, Any]:
+    a0_payload = _load_json(args.a0_metrics)
+    a0_rows = (
+        a0_payload.get("rows")
+        if isinstance(a0_payload, Mapping)
+        else a0_payload
+    )
+    if not isinstance(a0_rows, list):
+        raise ValueError("A0 metrics must be a row list or an object containing rows")
+    baseline_audit = _load_json(args.baseline_audit)
+    dataset_audit = _load_json(args.dataset_audit)
+    if not isinstance(baseline_audit, Mapping) or not isinstance(
+        dataset_audit, Mapping
+    ):
+        raise ValueError("trusted audits must be JSON objects")
+    return freeze_primary_cohort(
+        a0_rows,
+        baseline_audit,
+        dataset_audit,
+        path=args.output if hasattr(args, "output") else args.cohort,
+    )
+
+
+def _print_cohort(payload: Mapping[str, Any]) -> None:
+    print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Freeze or verify the Unified A0 cohort."
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    for command in ("freeze", "verify"):
+        child = subparsers.add_parser(command)
+        child.add_argument("--a0-metrics", type=Path, required=True)
+        child.add_argument("--baseline-audit", type=Path, required=True)
+        child.add_argument("--dataset-audit", type=Path, required=True)
+        if command == "freeze":
+            child.add_argument("--output", type=Path, required=True)
+        else:
+            child.add_argument("--cohort", type=Path, required=True)
+        child.set_defaults(handler=_trusted_freeze)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    _print_cohort(args.handler(args))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

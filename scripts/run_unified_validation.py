@@ -173,6 +173,24 @@ def query_gpu_inventory() -> tuple[str, list[GpuSnapshot]]:
     return completed.stdout, parse_gpu_inventory(completed.stdout)
 
 
+def _gpu_uuid(index: int) -> str:
+    completed = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,uuid",
+            "--format=csv,noheader,nounits",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    for line in completed.stdout.splitlines():
+        fields = [field.strip() for field in line.split(",")]
+        if len(fields) == 2 and fields[0] == str(index) and fields[1]:
+            return fields[1]
+    raise RuntimeError(f"nvidia-smi returned no UUID for physical GPU {index}")
+
+
 @contextmanager
 def locked_gpu() -> Iterator[tuple[int, list[GpuSnapshot], Path]]:
     _, snapshots = query_gpu_inventory()
@@ -789,13 +807,18 @@ def _write_synthetic_fixture(root: Path) -> tuple[Path, Path, Path]:
 
 
 def _run_smoke(args: argparse.Namespace) -> None:
-    output_path = _output_path(args.output).resolve()
+    raw_output = (
+        args.output
+        if args.output is not None
+        else args.output_root / "smoke.json"
+    )
+    output_path = _output_path(raw_output).resolve()
     root = output_path.parent / "smoke-work"
     train_path, valid_path, q_path = _write_synthetic_fixture(root / "data")
     devices = ("cpu", "gpu") if args.devices == "both" else (args.devices,)
     records: list[dict[str, object]] = []
     for device_kind in devices:
-        for architecture in ARCHITECTURES:
+        for architecture in (args.architecture,):
             summary_path = root / f"{device_kind}-{architecture}.json"
             recipe = NumericalRecipe("full_batch", 4, 1, 1e-3, 0.0, 1)
             if device_kind == "cpu":
@@ -835,11 +858,11 @@ def _run_smoke(args: argparse.Namespace) -> None:
                     "--concept-dim",
                     "4",
                     "--epochs",
-                    "1",
+                    str(args.epochs),
                     "--early-stop-patience",
                     "1",
                     "--seed",
-                    "42",
+                    str(args.seed),
                     "--device",
                     device,
                     "--log-dir",
@@ -859,6 +882,9 @@ def _run_smoke(args: argparse.Namespace) -> None:
                     "parameter_count": raw["parameter_count"],
                     "peak_gpu_memory_gb": raw["max_cuda_memory_allocated_gb"],
                     "physical_gpu_index": gpu_index,
+                    "physical_gpu_uuid": (
+                        None if gpu_index is None else _gpu_uuid(gpu_index)
+                    ),
                     "gpu_lock_path": None if lock_path is None else str(lock_path),
                     "gpu_inventory_after_lock": _gpu_payload(snapshots),
                 }
@@ -872,7 +898,7 @@ def _run_smoke(args: argparse.Namespace) -> None:
         output_path,
         {
             "schema_version": 3,
-            "seed": 42,
+            "seed": args.seed,
             "synthetic": True,
             "records": records,
         },
@@ -939,8 +965,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     manifest.set_defaults(handler=_manifest)
 
     smoke = subparsers.add_parser("smoke")
+    smoke.add_argument("--architecture", choices=ARCHITECTURES, required=True)
     smoke.add_argument("--devices", choices=("cpu", "gpu", "both"), default="both")
-    smoke.add_argument("--output", type=Path, required=True)
+    smoke.add_argument("--seed", type=int, choices=(42,), default=42)
+    smoke.add_argument("--epochs", type=int, choices=(1,), default=1)
+    smoke_output = smoke.add_mutually_exclusive_group(required=True)
+    smoke_output.add_argument("--output", type=Path)
+    smoke_output.add_argument("--output-root", type=Path)
     smoke.set_defaults(handler=_run_smoke)
 
     authorize = subparsers.add_parser("authorize")

@@ -121,13 +121,21 @@ def _read_artifact_rows(path: Path) -> list[dict[str, Any]]:
     suffix = path.suffix.lower()
     if suffix == ".csv":
         with path.open(newline="", encoding="utf-8") as handle:
-            return [
-                _canonicalize_artifact_row(row) for row in csv.DictReader(handle)
-            ]
+            reader = csv.DictReader(handle)
+            if not set(REQUIRED_BASELINE_FIELDS).issubset(reader.fieldnames or ()):
+                raise ValueError(
+                    "artifact does not declare required baseline fields"
+                )
+            return [_canonicalize_artifact_row(row) for row in reader]
     if suffix == ".json":
         with path.open(encoding="utf-8") as handle:
             payload = json.load(handle)
-        return [_canonicalize_artifact_row(row) for row in _json_rows(payload)]
+        rows = [_canonicalize_artifact_row(row) for row in _json_rows(payload)]
+        if rows and any(
+            not set(REQUIRED_BASELINE_FIELDS).issubset(row) for row in rows
+        ):
+            raise ValueError("artifact does not declare required baseline fields")
+        return rows
     if suffix == ".jsonl":
         rows: list[dict[str, Any]] = []
         with path.open(encoding="utf-8") as handle:
@@ -137,7 +145,12 @@ def _read_artifact_rows(path: Path) -> list[dict[str, Any]]:
                 payload = json.loads(line)
                 if not isinstance(payload, Mapping):
                     raise ValueError(f"JSONL row {line_number} is not an object")
-                rows.append(_canonicalize_artifact_row(payload))
+                row = _canonicalize_artifact_row(payload)
+                if not set(REQUIRED_BASELINE_FIELDS).issubset(row):
+                    raise ValueError(
+                        "artifact does not declare required baseline fields"
+                    )
+                rows.append(row)
         return rows
     shown_suffix = suffix if suffix else "(none)"
     raise ValueError(f"unsupported source artifact type: {shown_suffix}")
