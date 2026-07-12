@@ -1,5 +1,20 @@
 # A2 关系图补全冻结验证（2026-07-12）
 
+## Task 8 关闭移交（以有效 r6 为准）
+
+本页下文保留 r5 protocol-invalid 诊断历史；当前权威结论来自独立 campaign `unified-ergc-r6-20260712` 与报告 `stable_graph_a2_r6_20260712.md`。r5 登记保持 `VOID-A2-r5-001`；有效 r6 登记为 `F-A2-R6-001`，下一独立机制为 **MNAR / exposure-aware mastery completion**，只把下列失败事实作为设计输入，不在本次关闭任务中设计模块：
+
+- standard overall：MOOCRadar `-0.0004243465040141281`、XES3G5M `-0.00187074496124906`，出现回退；
+- holdout overall：ASSIST17 `-0.000001826372766688955`，出现微回退；
+- exact-zero：仅 XES3G5M 胜出，计数 `1/3`，且 `+0.0005681385058069477 < 0.001`；
+- DOA：MOO/XES ordinary 分别提升 `+0.04884646857106317` / `+0.030303030303030276`，weighted 却分别回退 `-0.00012775743122395156` / `-0.009433962264150941`，说明普通排序改善没有转化为高支持概念上的稳健改善。
+
+Task 8 在远端 HEAD `325f7e7a4c40549062306bfbe57416073c9e85c2` 各显式调用一次 `external-gate` 与 `run-test-once --architecture a2`。前者以 `ValueError: relative gate has not passed`、后者以缺少 `external-gate.json` 拒绝，均 exit `1`；没有生成 `external-gate.json`、`test-once.json` 或 `attempts/test-once`。调用前后 r6 的 152 个文件内容清单完全一致，聚合 SHA-256 均为 `fbe81a155fd8461521bb8c426208b3245a5662d89e5c8473eaac57db5f360019`；controller 保持 8 attempts / 8 ledger entries，四个既有 decision SHA 不变，campaign 中 test 路径与 `test.csv` 引用均为 `0`。
+
+因此 external comparator 未执行、test 未打开，不能把 A2 失败描述为整体完成，也不能用 external comparator 覆盖 relative gate。下一阶段仅允许另立 MNAR campaign，同时保留 v4 behavior、同一 mastery/head、冻结 cohort 与 test-closed 协议。
+
+---
+
 ## 结论
 
 A2 r5 是 **protocol-invalid diagnostic**，不是已注册 A2 的冻结 relative gate。三个 A2 validation 实际使用 train CLI 默认 graph hidden dim `32`，违反冻结 recipe `64/256/64`；r5 smoke 也没有生成可验证的 masked-edge、hard-assembly 与 graph-gradient diagnostic schema。因此 r5 `relative-gate.json` 不具权威性，不能判定注册 A2。`test` 与 external gate 仍关闭；MNAR / exposure-aware mastery completion 的下一机制登记撤回，等待有效重跑。
