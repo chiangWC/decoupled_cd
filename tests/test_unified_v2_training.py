@@ -12,6 +12,7 @@ from unittest import mock
 import torch
 
 from models import UnifiedArchitectureSpec, UnifiedDecoupledCDM
+from models.unified_v2_components import smoothed_evidence_logits
 from scripts import analyze_prediction_slices
 from scripts import evaluate_doa
 from scripts import evaluate_history_hiding_stress
@@ -19,6 +20,7 @@ from scripts import train as train_script
 from trainers.engine import (
     _train_full_batch_epoch,
     _train_student_recompute_minibatch_epoch,
+    observed_mastery_evidence_loss,
     train_model,
 )
 
@@ -36,7 +38,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
 
     @staticmethod
     def tensors() -> dict[str, torch.Tensor | None]:
-        evidence = torch.zeros(2, 3, 6)
+        evidence = torch.zeros(2, 3, 2)
         evidence[0, 0, :2] = torch.tensor([4.0, 3.0])
         evidence[0, 1, :2] = torch.tensor([3.0, 1.0])
         evidence[1, 1, :2] = torch.tensor([5.0, 4.0])
@@ -85,18 +87,17 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         )
 
     @staticmethod
-    def model(
-        *, inference: str = "prior", composer: str = "mask"
-    ) -> UnifiedDecoupledCDM:
+    def model(*, completion: str = "prior") -> UnifiedDecoupledCDM:
+        evidence = UnifiedV2TrainingTests.tensors()[
+            "student_concept_evidence"
+        ]
         return UnifiedDecoupledCDM(
             num_students=2,
             num_exercises=3,
             num_concepts=3,
             dim=4,
-            architecture=UnifiedArchitectureSpec(
-                inference=inference,
-                composer=composer,
-            ),
+            architecture=UnifiedArchitectureSpec(completion=completion),
+            initial_mastery_logits=smoothed_evidence_logits(evidence),
         )
 
     @staticmethod
@@ -113,31 +114,101 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             target_exercise_ids=tensors["interaction_exercise_ids"],
         )
 
-    def test_cli_accepts_unified_and_rejects_invalid_architecture(self) -> None:
-        args = self.parse_and_validate("--model", "unified_v2")
-        self.assertEqual(args.unified_inference, "prior")
-        self.assertEqual(args.unified_composer, "mask")
+    def test_cli_accepts_a0_and_rejects_positive_completion_loss(self) -> None:
+        args = self.parse_and_validate(
+            "--model",
+            "unified_v2",
+            "--unified-completion",
+            "prior",
+            "--unified-completion-loss-weight",
+            "0",
+        )
+        self.assertEqual(args.unified_completion, "prior")
+        self.assertEqual(args.unified_completion_rank, 32)
+        self.assertEqual(args.unified_evidence_loss_weight, 1.0)
+        self.assertEqual(args.unified_completion_loss_weight, 0.0)
 
-        with self.assertRaisesRegex(
-            ValueError, "coverage composer requires graph inference"
-        ):
+        with self.assertRaisesRegex(ValueError, "must be zero"):
             self.parse_and_validate(
                 "--model",
                 "unified_v2",
-                "--unified-inference",
+                "--unified-completion",
                 "prior",
-                "--unified-composer",
-                "coverage",
+                "--unified-completion-loss-weight",
+                "0.1",
             )
-
-    def test_unified_requires_positive_mastery_weight(self) -> None:
+        lowrank = self.parse_and_validate(
+            "--model",
+            "unified_v2",
+            "--unified-completion",
+            "lowrank",
+            "--unified-completion-loss-weight",
+            "0.1",
+        )
+        self.assertEqual(lowrank.unified_completion, "lowrank")
         with self.assertRaisesRegex(ValueError, "must be positive"):
             self.parse_and_validate(
                 "--model",
                 "unified_v2",
-                "--unified-mastery-loss-weight",
+                "--unified-completion",
+                "lowrank",
+                "--unified-completion-loss-weight",
                 "0",
             )
+
+    def test_lowrank_model_construction_fails_explicitly_until_task_8(self) -> None:
+        with self.assertRaisesRegex(NotImplementedError, "Task 8"):
+            self.model(completion="lowrank")
+
+    def test_a0_forward_uses_train_evidence_and_one_mastery_path(self) -> None:
+        tensors = self.tensors()
+        evidence = tensors["student_concept_evidence"]
+        model = self.model()
+        self.assertEqual(
+            set(dict(model.named_children())),
+            {"mastery_estimator", "completer", "decoder", "behavior_model"},
+        )
+        output = model(
+            q_matrix=tensors["q_matrix"],
+            concept_graph=tensors["concept_graph"],
+            student_exercise_mask=tensors["student_exercise_mask"],
+            response_matrix=tensors["response_matrix"],
+            student_tkc_mask=tensors["student_tkc_mask"],
+            student_ukc_mask=tensors["student_ukc_mask"],
+            student_concept_evidence=evidence,
+            target_student_ids=torch.tensor([0, 1]),
+            target_exercise_ids=torch.tensor([0, 1]),
+        )
+
+        self.assertEqual(tuple(output.mastery.shape), (2, 3))
+        self.assertIs(output.student_state, output.mastery)
+        self.assertTrue(
+            torch.equal(output.mastery_observed_mask, evidence[..., 0] > 0)
+        )
+        self.assertTrue(torch.all(output.guess_probs + output.slip_probs < 1.0))
+        expected_tkc = (
+            output.mastery.unsqueeze(-1)
+            * output.mastery_observed_mask.unsqueeze(-1)
+        )
+        expected_ukc = (
+            output.mastery.unsqueeze(-1)
+            * (~output.mastery_observed_mask).unsqueeze(-1)
+        )
+        self.assertTrue(torch.equal(output.tkc_states, expected_tkc))
+        self.assertTrue(torch.equal(output.ukc_states, expected_ukc))
+
+    def test_observed_loss_ignores_missing_cell_targets(self) -> None:
+        tensors = self.tensors()
+        output = self.forward(self.model(), tensors)
+        evidence = tensors["student_concept_evidence"]
+        changed = evidence.clone()
+        missing = evidence[..., 0] == 0
+        changed[..., 1][missing] = 999.0
+
+        first = observed_mastery_evidence_loss(output, evidence)
+        second = observed_mastery_evidence_loss(output, changed)
+
+        torch.testing.assert_close(first, second)
 
     def test_unified_rejects_legacy_v1_and_v2_flags(self) -> None:
         for legacy_flag in (
@@ -298,19 +369,20 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         train_script.parse_args()
 
-    def test_unified_mastery_weight_must_be_finite(self) -> None:
+    def test_unified_loss_weights_must_be_finite_and_valid(self) -> None:
         with self.assertRaisesRegex(ValueError, "finite and positive"):
             self.parse_and_validate(
                 "--model",
                 "unified_v2",
-                "--unified-mastery-loss-weight",
+                "--unified-evidence-loss-weight",
                 "nan",
             )
         with self.assertRaisesRegex(ValueError, "finite and positive"):
             train_model(
                 train_bundle=None,
                 model=self.model(),
-                unified_mastery_bce_weight=float("nan"),
+                unified_evidence_loss_weight=float("nan"),
+                unified_completion_loss_weight=0.0,
             )
 
     def test_summary_writes_manifest_fingerprint_and_positive_weight(self) -> None:
@@ -320,6 +392,9 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 num_students=2,
                 num_exercises=3,
                 num_concepts=3,
+                student_concept_evidence_tensor=self.tensors()[
+                    "student_concept_evidence"
+                ],
             )
             train_result = SimpleNamespace(
                 checkpoint_selection_metric="auc",
@@ -379,19 +454,22 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             self.assertEqual(summary["model"], "unified_v2")
             self.assertEqual(
                 summary["architecture_manifest"]["modules"],
-                "m1-m4-neuralcdm",
+                "m1-prior-m3-m4",
             )
             self.assertEqual(
-                summary["architecture_manifest"]["decoder"],
+                summary["architecture_manifest"]["cognitive_decoder"],
                 "neuralcdm-monotonic",
             )
-            self.assertEqual(summary["architecture_manifest"]["version"], 2)
+            self.assertEqual(summary["architecture_manifest"]["version"], 3)
             self.assertRegex(
                 summary["architecture_fingerprint"], r"^[0-9a-f]{64}$"
             )
-            self.assertGreater(summary["unified_mastery_loss_weight"], 0.0)
+            self.assertEqual(summary["unified_completion"], "prior")
+            self.assertEqual(summary["unified_completion_rank"], 32)
+            self.assertGreater(summary["unified_evidence_loss_weight"], 0.0)
+            self.assertEqual(summary["unified_completion_loss_weight"], 0.0)
 
-    def test_direct_mastery_supervision_runs_in_both_training_modes(self) -> None:
+    def test_observed_evidence_supervision_runs_in_both_training_modes(self) -> None:
         for mode in ("full_batch", "student_recompute_minibatch"):
             with self.subTest(mode=mode):
                 torch.manual_seed(7)
@@ -403,7 +481,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                         model=model,
                         tensors=tensors,
                         optimizer=optimizer,
-                        unified_mastery_bce_weight=0.5,
+                        unified_evidence_loss_weight=0.5,
                     )
                 else:
                     stats = _train_student_recompute_minibatch_epoch(
@@ -411,17 +489,17 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                         tensors=tensors,
                         optimizer=optimizer,
                         student_batch_size=1,
-                        unified_mastery_bce_weight=0.5,
+                        unified_evidence_loss_weight=0.5,
                     )
                 self.assertTrue(torch.isfinite(torch.tensor(stats.mean_loss)))
                 self.assertGreater(stats.optimizer_steps, 0)
-                self.assertIsNotNone(model.decoder.mastery_head.weight.grad)
+                self.assertIsNotNone(model.mastery_estimator.logits.grad)
                 output = self.forward(model, tensors)
                 self.assertIsNone(output.mastery_aux_logits)
 
     def test_saved_unified_checkpoint_reloads_with_identical_predictions(self) -> None:
         torch.manual_seed(11)
-        model = self.model(inference="graph", composer="coverage")
+        model = self.model()
         tensors = self.tensors()
         before = self.forward(model, tensors)
         manifest = model.architecture.manifest()
@@ -454,8 +532,47 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         self.assertTrue(torch.equal(before.probs, after.probs))
         self.assertTrue(torch.equal(before.mastery, after.mastery))
 
+    def test_trained_checkpoint_saves_unified_configuration(self) -> None:
+        model = self.model()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint = Path(temp_dir) / "trained.pt"
+            train_model(
+                train_bundle=self.bundle(),
+                valid_bundle=self.bundle(),
+                model=model,
+                epochs=1,
+                checkpoint_path=str(checkpoint),
+                unified_evidence_loss_weight=0.75,
+                unified_completion_loss_weight=0.0,
+            )
+            state = torch.load(checkpoint, weights_only=True)
+
+        def decode(name: str) -> str:
+            return bytes(state[name].tolist()).decode("utf-8")
+
+        self.assertEqual(
+            json.loads(decode("_checkpoint_architecture_manifest")),
+            model.architecture.manifest(),
+        )
+        self.assertEqual(
+            decode("_checkpoint_architecture_fingerprint"),
+            model.architecture.fingerprint(),
+        )
+        self.assertEqual(decode("_checkpoint_unified_completion"), "prior")
+        self.assertEqual(
+            int(state["_checkpoint_unified_completion_rank"]), 32
+        )
+        self.assertEqual(
+            float(state["_checkpoint_unified_evidence_loss_weight"]),
+            0.75,
+        )
+        self.assertEqual(
+            float(state["_checkpoint_unified_completion_loss_weight"]),
+            0.0,
+        )
+
     def test_unified_loader_rejects_tampered_architecture_metadata(self) -> None:
-        model = self.model(inference="graph", composer="coverage")
+        model = self.model()
         manifest = model.architecture.manifest()
         fingerprint = model.architecture.fingerprint()
         invalid_summaries = {
@@ -468,7 +585,10 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 "architecture_fingerprint": fingerprint,
             },
             "decoder": {
-                "architecture_manifest": {**manifest, "decoder": "free"},
+                "architecture_manifest": {
+                    **manifest,
+                    "cognitive_decoder": "free",
+                },
                 "architecture_fingerprint": fingerprint,
             },
             "mastery": {
@@ -483,7 +603,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 "architecture_fingerprint": fingerprint,
             },
             "field_type": {
-                "architecture_manifest": {**manifest, "inference": 1},
+                "architecture_manifest": {**manifest, "completion": 1},
                 "architecture_fingerprint": fingerprint,
             },
             "version_type": {
@@ -531,7 +651,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
 
     def test_coverage_evaluation_forwards_loaded_unified_model(self) -> None:
         torch.manual_seed(13)
-        model = self.model(inference="graph", composer="coverage")
+        model = self.model()
         manifest = model.architecture.manifest()
         summary = {
             "model": "unified_v2",

@@ -236,13 +236,21 @@ class UnifiedComponentTests(unittest.TestCase):
         self.assertEqual(tuple(jacobian.shape), (4, 4))
         self.assertEqual(int(torch.linalg.matrix_rank(jacobian)), 4)
 
-    def test_b0_always_emits_student_concept_mastery(self):
+    def test_a0_always_emits_student_concept_mastery(self):
+        evidence = torch.tensor(
+            [
+                [[2.0, 2.0], [0.0, 0.0], [0.0, 0.0]],
+                [[0.0, 0.0], [3.0, 1.0], [1.0, 1.0]],
+                [[1.0, 0.0], [2.0, 2.0], [0.0, 0.0]],
+            ]
+        )
         model = UnifiedDecoupledCDM(
             num_students=3,
             num_exercises=2,
             num_concepts=3,
             dim=4,
-            architecture=UnifiedArchitectureSpec(inference="prior", composer="mask"),
+            architecture=UnifiedArchitectureSpec(completion="prior"),
+            initial_mastery_logits=smoothed_evidence_logits(evidence),
         )
         q = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]])
         history = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
@@ -254,7 +262,7 @@ class UnifiedComponentTests(unittest.TestCase):
             "response_matrix": torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]]),
             "student_tkc_mask": tkc,
             "student_ukc_mask": 1.0 - tkc,
-            "student_concept_evidence": None,
+            "student_concept_evidence": evidence,
             "target_student_ids": torch.tensor([0, 1, 2]),
             "target_exercise_ids": torch.tensor([0, 1, 1]),
         }
@@ -262,27 +270,18 @@ class UnifiedComponentTests(unittest.TestCase):
         self.assertEqual(tuple(output.mastery.shape), (3, 3))
         self.assertTrue(torch.isfinite(output.mastery).all())
 
-    def test_graph_inference_wires_m2_into_state_map(self):
+    def test_a0_prior_completer_fills_only_missing_mastery(self):
+        evidence = torch.tensor(
+            [[[3.0, 0.0], [0.0, 0.0]], [[2.0, 2.0], [0.0, 0.0]]]
+        )
         model = UnifiedDecoupledCDM(
             num_students=2,
             num_exercises=1,
             num_concepts=2,
             dim=4,
-            architecture=UnifiedArchitectureSpec(
-                inference="graph",
-                composer="mask",
-            ),
+            architecture=UnifiedArchitectureSpec(completion="prior"),
+            initial_mastery_logits=smoothed_evidence_logits(evidence),
         )
-        with torch.no_grad():
-            first_encoder = model.evidence_encoder.encoder[0]
-            second_encoder = model.evidence_encoder.encoder[2]
-            first_encoder.weight.zero_()
-            first_encoder.bias.zero_()
-            first_encoder.weight[0, 2] = 1.0
-            second_encoder.weight.copy_(torch.eye(4))
-            second_encoder.bias.zero_()
-            for layer in model.inference_network.layers:
-                layer.weight.copy_(torch.eye(4))
 
         output = model(
             q_matrix=torch.tensor([[1.0, 0.0]]),
@@ -291,31 +290,32 @@ class UnifiedComponentTests(unittest.TestCase):
             response_matrix=torch.tensor([[0.0], [1.0]]),
             student_tkc_mask=torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
             student_ukc_mask=torch.tensor([[0.0, 1.0], [0.0, 1.0]]),
-            student_concept_evidence=None,
+            student_concept_evidence=evidence,
             target_student_ids=torch.tensor([0, 1]),
             target_exercise_ids=torch.tensor([0, 0]),
         )
-        self.assertFalse(
-            torch.equal(output.ukc_states[0, 1], output.ukc_states[1, 1])
+        torch.testing.assert_close(
+            output.completion_predictions[0],
+            output.completion_predictions[1],
         )
-        self.assertTrue(
-            torch.equal(
-                output.student_state,
-                (output.tkc_states + output.ukc_states).mean(dim=1),
-            )
+        mask = output.mastery_observed_mask
+        torch.testing.assert_close(
+            output.mastery[~mask], output.completion_predictions[~mask]
+        )
+        torch.testing.assert_close(
+            output.mastery[mask], output.observed_mastery[mask]
         )
         self.assertIsNone(output.source_weights)
 
-    def test_coverage_composer_wires_m3_and_exposes_source_weights(self):
+    def test_a0_legacy_states_are_transparent_mastery_views(self):
+        evidence = torch.tensor([[[2.0, 1.0], [0.0, 0.0]]])
         model = UnifiedDecoupledCDM(
             num_students=1,
             num_exercises=1,
             num_concepts=2,
             dim=4,
-            architecture=UnifiedArchitectureSpec(
-                inference="graph",
-                composer="coverage",
-            ),
+            architecture=UnifiedArchitectureSpec(completion="prior"),
+            initial_mastery_logits=smoothed_evidence_logits(evidence),
         )
         output = model(
             q_matrix=torch.tensor([[1.0, 0.0]]),
@@ -324,31 +324,26 @@ class UnifiedComponentTests(unittest.TestCase):
             response_matrix=torch.ones(1, 1),
             student_tkc_mask=torch.tensor([[1.0, 0.0]]),
             student_ukc_mask=torch.tensor([[0.0, 1.0]]),
-            student_concept_evidence=None,
+            student_concept_evidence=evidence,
             target_student_ids=torch.tensor([0]),
             target_exercise_ids=torch.tensor([0]),
         )
 
-        self.assertIsNotNone(output.source_weights)
-        self.assertEqual(tuple(output.source_weights.shape), (1, 2, 3))
-        candidates = torch.stack(
-            [
-                output.tkc_states,
-                output.ukc_states,
-                model.inference_network.concept_prior.unsqueeze(0),
-            ],
-            dim=-2,
-        )
-        expected_state_map = (
-            output.source_weights.unsqueeze(-1) * candidates
-        ).sum(dim=-2)
+        mask = output.mastery_observed_mask
+        self.assertIs(output.student_state, output.mastery)
         self.assertTrue(
-            torch.allclose(
-                output.student_state,
-                expected_state_map.mean(dim=1),
+            torch.equal(
+                output.tkc_states,
+                output.mastery.unsqueeze(-1) * mask.unsqueeze(-1),
             )
         )
-        self.assertIsNotNone(output.mastery)
+        self.assertTrue(
+            torch.equal(
+                output.ukc_states,
+                output.mastery.unsqueeze(-1) * (~mask).unsqueeze(-1),
+            )
+        )
+        self.assertIsNone(output.source_weights)
 
     def test_decoder_is_monotone_in_target_mastery(self):
         decoder = MonotonicDiagnosisDecoder(num_exercises=1, num_concepts=1, dim=4)
@@ -522,12 +517,16 @@ class UnifiedComponentTests(unittest.TestCase):
             self.assertGreater(float(layer.bias.grad.abs().sum()), 0.0)
 
     def test_mastery_tensor_feeds_the_only_neuralcdm_prediction_path(self):
+        evidence = torch.tensor(
+            [[[2.0, 2.0], [0.0, 0.0]], [[0.0, 0.0], [2.0, 0.0]]]
+        )
         model = UnifiedDecoupledCDM(
             num_students=2,
             num_exercises=2,
             num_concepts=2,
             dim=4,
-            architecture=UnifiedArchitectureSpec(inference="prior", composer="mask"),
+            architecture=UnifiedArchitectureSpec(completion="prior"),
+            initial_mastery_logits=smoothed_evidence_logits(evidence),
         )
         target_students = torch.tensor([0, 1])
         with mock.patch.object(
@@ -542,7 +541,7 @@ class UnifiedComponentTests(unittest.TestCase):
                 response_matrix=torch.eye(2),
                 student_tkc_mask=torch.eye(2),
                 student_ukc_mask=1.0 - torch.eye(2),
-                student_concept_evidence=None,
+                student_concept_evidence=evidence,
                 target_student_ids=target_students,
                 target_exercise_ids=torch.tensor([0, 1]),
             )
@@ -550,7 +549,12 @@ class UnifiedComponentTests(unittest.TestCase):
         self.assertEqual(tuple(output.mastery.shape), (2, 2))
         self.assertGreater(output.mastery.numel(), 0)
         self.assertTrue(torch.equal(captured_mastery, output.mastery[target_students]))
-        self.assertEqual(output.probs.data_ptr(), output.cognitive_probs.data_ptr())
+        self.assertTrue(torch.all(output.guess_probs + output.slip_probs < 1.0))
+        expected = (
+            (1.0 - output.slip_probs) * output.cognitive_probs
+            + output.guess_probs * (1.0 - output.cognitive_probs)
+        )
+        torch.testing.assert_close(output.probs, expected)
         names = {name for name, _ in model.decoder.named_parameters()}
         self.assertTrue(any(name.startswith("item_concept_difficulty") for name in names))
         self.assertNotIn("concept_difficulty.weight", names)

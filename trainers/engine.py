@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 
 from data import StepDataBundle
-from models import DecoupledCDM, UnifiedDecoupledCDM
+from models import DecoupledCDM, DecoupledForwardOutput, UnifiedDecoupledCDM
 from utils import compute_metrics
 
 
@@ -72,33 +72,23 @@ def _forward_model(*, model: DecoupledCDM, **kwargs):
     return model(**kwargs)
 
 
-def _unified_mastery_bce_loss(
-    *,
-    output,
-    student_concept_evidence: torch.Tensor | None,
+def observed_mastery_evidence_loss(
+    output: DecoupledForwardOutput,
+    evidence: torch.Tensor,
     student_ids: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    mastery = getattr(output, "mastery", None)
-    if mastery is None:
-        raise ValueError(
-            "unified_mastery_bce_weight requires a model that emits mastery."
-        )
-    if student_concept_evidence is None:
-        raise ValueError(
-            "unified_mastery_bce_weight requires student_concept_evidence."
-        )
-    evidence = (
-        student_concept_evidence
-        if student_ids is None
-        else student_concept_evidence[student_ids]
-    )
-    attempts = evidence[..., 0]
-    correct = evidence[..., 1]
+    if output.observed_mastery is None or output.mastery_observed_mask is None:
+        raise ValueError("observed mastery output is required")
+    selected = evidence if student_ids is None else evidence[student_ids]
+    attempts, correct = selected.unbind(dim=-1)
     target = (correct + 1.0) / (attempts + 2.0)
-    observed = attempts >= 3.0
-    if not bool(observed.any()):
-        return mastery.sum() * 0.0
-    return F.binary_cross_entropy(mastery[observed], target[observed])
+    mask = output.mastery_observed_mask
+    if not bool(mask.any()):
+        raise ValueError("at least one observed mastery cell is required")
+    return F.binary_cross_entropy(
+        output.observed_mastery[mask],
+        target[mask],
+    )
 
 
 def _hash_interaction_rows(frame: pd.DataFrame) -> set[int]:
@@ -307,7 +297,8 @@ def train_model(
     ukc_consistency_weight: float = 0.0,
     ukc_consistency_drop_frac: float = 0.2,
     mastery_aux_bce_weight: float = 0.0,
-    unified_mastery_bce_weight: float = 0.0,
+    unified_evidence_loss_weight: float = 0.0,
+    unified_completion_loss_weight: float = 0.0,
     history_dropout_frac: float = 0.0,
     masked_response_weight: float = 0.0,
     masked_response_frac: float = 0.15,
@@ -326,28 +317,64 @@ def train_model(
         raise ValueError("ukc_consistency_weight requires a model with compute_ukc_consistency_loss.")
     if isinstance(model, UnifiedDecoupledCDM):
         if (
-            not math.isfinite(unified_mastery_bce_weight)
-            or unified_mastery_bce_weight <= 0.0
+            not math.isfinite(unified_evidence_loss_weight)
+            or unified_evidence_loss_weight <= 0.0
         ):
             raise ValueError(
-                "unified_mastery_bce_weight must be finite and positive "
+                "unified_evidence_loss_weight must be finite and positive "
                 "for unified models."
+            )
+        if (
+            not math.isfinite(unified_completion_loss_weight)
+            or unified_completion_loss_weight < 0.0
+        ):
+            raise ValueError(
+                "unified_completion_loss_weight must be finite and "
+                "non-negative."
+            )
+        if (
+            model.architecture.completion == "prior"
+            and unified_completion_loss_weight != 0.0
+        ):
+            raise ValueError(
+                "unified_completion_loss_weight must be zero for prior "
+                "completion."
+            )
+        if (
+            model.architecture.completion == "lowrank"
+            and unified_completion_loss_weight <= 0.0
+        ):
+            raise ValueError(
+                "unified_completion_loss_weight must be positive for "
+                "lowrank completion."
             )
         if training_mode not in {"full_batch", "student_recompute_minibatch"}:
             raise ValueError(
                 "unified mastery supervision supports full_batch and "
                 "student_recompute_minibatch training."
             )
+        model.set_checkpoint_loss_weights(
+            evidence_loss_weight=unified_evidence_loss_weight,
+            completion_loss_weight=unified_completion_loss_weight,
+        )
     else:
-        if not math.isfinite(unified_mastery_bce_weight):
-            raise ValueError("unified_mastery_bce_weight must be finite.")
-        if unified_mastery_bce_weight < 0.0:
+        for name, value in (
+            ("unified_evidence_loss_weight", unified_evidence_loss_weight),
+            (
+                "unified_completion_loss_weight",
+                unified_completion_loss_weight,
+            ),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite.")
+            if value < 0.0:
+                raise ValueError(f"{name} must be non-negative.")
+        if (
+            unified_evidence_loss_weight > 0.0
+            or unified_completion_loss_weight > 0.0
+        ):
             raise ValueError(
-                "unified_mastery_bce_weight must be non-negative."
-            )
-        if unified_mastery_bce_weight > 0.0:
-            raise ValueError(
-                "unified_mastery_bce_weight is only supported by unified models."
+                "unified loss weights are only supported by unified models."
             )
     if not 0.0 <= history_dropout_frac < 1.0:
         raise ValueError("history_dropout_frac must be in [0, 1).")
@@ -560,7 +587,9 @@ def train_model(
                     ukc_consistency_weight=ukc_consistency_weight,
                     ukc_consistency_drop_frac=ukc_consistency_drop_frac,
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
-                    unified_mastery_bce_weight=unified_mastery_bce_weight,
+                    unified_evidence_loss_weight=(
+                        unified_evidence_loss_weight
+                    ),
                     history_dropout_frac=history_dropout_frac,
                     masked_response_weight=masked_response_weight,
                     masked_response_frac=masked_response_frac,
@@ -660,7 +689,9 @@ def train_model(
                     optimizer=optimizer,
                     student_batch_size=int(student_batch_size),
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
-                    unified_mastery_bce_weight=unified_mastery_bce_weight,
+                    unified_evidence_loss_weight=(
+                        unified_evidence_loss_weight
+                    ),
                     contrastive_weight=contrastive_weight,
                     consistency_weight=consistency_weight,
                     consistency_adaptive=consistency_adaptive,
@@ -941,7 +972,7 @@ def _train_full_batch_epoch(
     ukc_consistency_weight: float = 0.0,
     ukc_consistency_drop_frac: float = 0.2,
     mastery_aux_bce_weight: float = 0.0,
-    unified_mastery_bce_weight: float = 0.0,
+    unified_evidence_loss_weight: float = 0.0,
     history_dropout_frac: float = 0.0,
     masked_response_weight: float = 0.0,
     masked_response_frac: float = 0.15,
@@ -975,10 +1006,14 @@ def _train_full_batch_epoch(
         loss = loss + mastery_aux_bce_weight * F.binary_cross_entropy_with_logits(
             output.mastery_aux_logits, tensors["interaction_labels"]
         )
-    if unified_mastery_bce_weight > 0.0:
-        loss = loss + unified_mastery_bce_weight * _unified_mastery_bce_loss(
-            output=output,
-            student_concept_evidence=tensors["student_concept_evidence"],
+    if unified_evidence_loss_weight > 0.0:
+        loss = (
+            loss
+            + unified_evidence_loss_weight
+            * observed_mastery_evidence_loss(
+                output,
+                tensors["student_concept_evidence"][..., :2],
+            )
         )
     if masked_response_weight > 0.0:
         loss = loss + masked_response_weight * _masked_response_loss(
@@ -1204,7 +1239,7 @@ def _train_student_recompute_minibatch_epoch(
     checkpoint_distillation_loss: str = "bce",
     dual_tower_branch_bce_weight: float = 0.0,
     mastery_aux_bce_weight: float = 0.0,
-    unified_mastery_bce_weight: float = 0.0,
+    unified_evidence_loss_weight: float = 0.0,
     contrastive_weight: float = 0.0,
     consistency_weight: float = 0.0,
     consistency_adaptive: bool = False,
@@ -1265,17 +1300,19 @@ def _train_student_recompute_minibatch_epoch(
             loss = loss + mastery_aux_bce_weight * F.binary_cross_entropy_with_logits(
                 output.mastery_aux_logits, batch_labels
             )
-        if unified_mastery_bce_weight > 0.0:
+        if unified_evidence_loss_weight > 0.0:
             mastery_student_ids = torch.unique(
                 tensors["interaction_student_ids"][batch_indices],
                 sorted=True,
             )
-            loss = loss + unified_mastery_bce_weight * _unified_mastery_bce_loss(
-                output=output,
-                student_concept_evidence=tensors[
-                    "student_concept_evidence"
-                ],
-                student_ids=mastery_student_ids,
+            loss = (
+                loss
+                + unified_evidence_loss_weight
+                * observed_mastery_evidence_loss(
+                    output,
+                    tensors["student_concept_evidence"][..., :2],
+                    student_ids=mastery_student_ids,
+                )
             )
         if consistency_weight > 0.0 or contrastive_weight > 0.0:
             if consistency_adaptive:

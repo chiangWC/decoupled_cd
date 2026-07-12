@@ -25,6 +25,7 @@ from models import (
     UnifiedArchitectureSpec,
     UnifiedDecoupledCDM,
 )
+from models.unified_v2_components import smoothed_evidence_logits
 from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
@@ -63,15 +64,27 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--unified-completion",
-        choices=["prior", "lowrank"],
+        choices=("prior", "lowrank"),
         default="prior",
         help="Unified V3 missing-mastery completion module.",
     )
     parser.add_argument(
-        "--unified-mastery-loss-weight",
+        "--unified-completion-rank",
+        type=int,
+        default=32,
+        help="Rank reserved for the unified A1 low-rank completer.",
+    )
+    parser.add_argument(
+        "--unified-evidence-loss-weight",
         type=float,
-        default=0.1,
-        help="Positive weight for direct supervision of unified mastery outputs.",
+        default=1.0,
+        help="Positive observed-cell evidence supervision weight.",
+    )
+    parser.add_argument(
+        "--unified-completion-loss-weight",
+        type=float,
+        default=0.0,
+        help="Missing-cell completion supervision weight.",
     )
     parser.add_argument(
         "--kancd-latent-dim",
@@ -771,13 +784,39 @@ def validate_model_args(args: argparse.Namespace) -> None:
         UnifiedArchitectureSpec(
             completion=args.unified_completion,
         )
+        if args.unified_completion_rank <= 0:
+            raise ValueError("--unified-completion-rank must be positive.")
         if (
-            not math.isfinite(args.unified_mastery_loss_weight)
-            or args.unified_mastery_loss_weight <= 0.0
+            not math.isfinite(args.unified_evidence_loss_weight)
+            or args.unified_evidence_loss_weight <= 0.0
         ):
             raise ValueError(
-                "--unified-mastery-loss-weight must be positive; use a "
+                "--unified-evidence-loss-weight must be positive; use a "
                 "finite and positive value for unified_v2."
+            )
+        if (
+            not math.isfinite(args.unified_completion_loss_weight)
+            or args.unified_completion_loss_weight < 0.0
+        ):
+            raise ValueError(
+                "--unified-completion-loss-weight must be finite and "
+                "non-negative."
+            )
+        if (
+            args.unified_completion == "prior"
+            and args.unified_completion_loss_weight != 0.0
+        ):
+            raise ValueError(
+                "--unified-completion-loss-weight must be zero for prior "
+                "completion."
+            )
+        if (
+            args.unified_completion == "lowrank"
+            and args.unified_completion_loss_weight <= 0.0
+        ):
+            raise ValueError(
+                "--unified-completion-loss-weight must be positive for "
+                "lowrank completion."
             )
         if args.training_mode not in {
             "full_batch",
@@ -1035,12 +1074,21 @@ def main() -> None:
         architecture = UnifiedArchitectureSpec(
             completion=args.unified_completion,
         )
+        if train_bundle.student_concept_evidence_tensor is None:
+            raise ValueError(
+                "unified_v2 requires train-only student concept evidence"
+            )
+        initial_mastery_logits = smoothed_evidence_logits(
+            train_bundle.student_concept_evidence_tensor[..., :2]
+        )
         model = UnifiedDecoupledCDM(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
             num_concepts=train_bundle.num_concepts,
             dim=args.concept_dim,
             architecture=architecture,
+            initial_mastery_logits=initial_mastery_logits,
+            completion_rank=args.unified_completion_rank,
         )
     elif args.model == "v2":
         model = DecoupledCDMV2(
@@ -1133,8 +1181,13 @@ def main() -> None:
         ukc_consistency_weight=args.v2_ukc_consistency_weight,
         ukc_consistency_drop_frac=args.v2_ukc_consistency_drop_frac,
         mastery_aux_bce_weight=args.v2_mastery_aux_weight,
-        unified_mastery_bce_weight=(
-            args.unified_mastery_loss_weight
+        unified_evidence_loss_weight=(
+            args.unified_evidence_loss_weight
+            if args.model == "unified_v2"
+            else 0.0
+        ),
+        unified_completion_loss_weight=(
+            args.unified_completion_loss_weight
             if args.model == "unified_v2"
             else 0.0
         ),
@@ -1181,8 +1234,21 @@ def main() -> None:
         "model": args.model,
         "architecture_manifest": architecture_manifest,
         "architecture_fingerprint": architecture_fingerprint,
-        "unified_mastery_loss_weight": (
-            args.unified_mastery_loss_weight
+        "unified_completion": (
+            args.unified_completion if args.model == "unified_v2" else None
+        ),
+        "unified_completion_rank": (
+            args.unified_completion_rank
+            if args.model == "unified_v2"
+            else None
+        ),
+        "unified_evidence_loss_weight": (
+            args.unified_evidence_loss_weight
+            if args.model == "unified_v2"
+            else 0.0
+        ),
+        "unified_completion_loss_weight": (
+            args.unified_completion_loss_weight
             if args.model == "unified_v2"
             else 0.0
         ),

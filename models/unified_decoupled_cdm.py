@@ -1,19 +1,29 @@
 from __future__ import annotations
 
+import json
+
 import torch
 import torch.nn as nn
 
 from .decoupled_cdm import DecoupledForwardOutput
 from .unified_v2_components import (
-    CoverageAwareStateComposer,
+    ConditionalSimplexBehaviorModel,
+    GlobalConceptPriorCompleter,
     MonotonicDiagnosisDecoder,
-    TestedKnowledgeEvidenceEncoder,
-    UntestedKnowledgeInferenceNetwork,
+    ObservedMasteryEstimator,
+    assemble_mastery,
 )
 from .unified_v2_spec import UnifiedArchitectureSpec
 
 
 class UnifiedDecoupledCDM(nn.Module):
+    @staticmethod
+    def _text_tensor(value: str) -> torch.Tensor:
+        return torch.tensor(
+            list(value.encode("utf-8")),
+            dtype=torch.uint8,
+        )
+
     def __init__(
         self,
         *,
@@ -22,38 +32,95 @@ class UnifiedDecoupledCDM(nn.Module):
         num_concepts: int,
         dim: int,
         architecture: UnifiedArchitectureSpec,
+        initial_mastery_logits: torch.Tensor | None = None,
+        completion_rank: int = 32,
         evidence_cap: float = 20.0,
     ) -> None:
         super().__init__()
+        if type(completion_rank) is not int or completion_rank <= 0:
+            raise ValueError("completion_rank must be a positive integer")
+        if architecture.completion == "lowrank":
+            raise NotImplementedError(
+                "unified v3 lowrank completion is not implemented until Task 8"
+            )
         self.num_students = num_students
         self.architecture = architecture
-        self.evidence_encoder = TestedKnowledgeEvidenceEncoder(
-            dim=dim,
+        self.register_buffer(
+            "_checkpoint_architecture_manifest",
+            self._text_tensor(
+                json.dumps(
+                    architecture.manifest(),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            ),
+        )
+        self.register_buffer(
+            "_checkpoint_architecture_fingerprint",
+            self._text_tensor(architecture.fingerprint()),
+        )
+        self.register_buffer(
+            "_checkpoint_unified_completion",
+            self._text_tensor(architecture.completion),
+        )
+        self.register_buffer(
+            "_checkpoint_unified_completion_rank",
+            torch.tensor(completion_rank, dtype=torch.int64),
+        )
+        self.register_buffer(
+            "_checkpoint_unified_evidence_loss_weight",
+            torch.tensor(float("nan"), dtype=torch.float64),
+        )
+        self.register_buffer(
+            "_checkpoint_unified_completion_loss_weight",
+            torch.tensor(float("nan"), dtype=torch.float64),
+        )
+        self.mastery_estimator = ObservedMasteryEstimator(
+            num_students=num_students,
+            num_concepts=num_concepts,
+            initial_logits=initial_mastery_logits,
             evidence_cap=evidence_cap,
         )
-        self.concept_prior = (
-            nn.Parameter(torch.zeros(num_concepts, dim))
-            if architecture.inference == "prior"
-            else None
-        )
-        self.inference_network = (
-            UntestedKnowledgeInferenceNetwork(
-                num_concepts=num_concepts,
-                dim=dim,
-                layers=2,
-            )
-            if architecture.inference == "graph"
-            else None
-        )
-        self.state_composer = (
-            CoverageAwareStateComposer(dim=dim)
-            if architecture.composer == "coverage"
-            else None
-        )
+        self.completer = GlobalConceptPriorCompleter(num_concepts)
         self.decoder = MonotonicDiagnosisDecoder(
             num_exercises=num_exercises,
             num_concepts=num_concepts,
             dim=dim,
+        )
+        self.behavior_model = ConditionalSimplexBehaviorModel(
+            num_students=num_students,
+            num_exercises=num_exercises,
+            dim=dim,
+        )
+
+    @property
+    def completion_rank(self) -> int:
+        return int(self._checkpoint_unified_completion_rank.item())
+
+    def set_checkpoint_loss_weights(
+        self,
+        *,
+        evidence_loss_weight: float,
+        completion_loss_weight: float,
+    ) -> None:
+        self._checkpoint_unified_evidence_loss_weight.fill_(
+            evidence_loss_weight
+        )
+        self._checkpoint_unified_completion_loss_weight.fill_(
+            completion_loss_weight
+        )
+
+    @staticmethod
+    def _select_students(
+        target_student_ids: torch.Tensor,
+        use_student_subset: bool,
+    ) -> tuple[torch.Tensor | None, torch.Tensor]:
+        if not use_student_subset:
+            return None, target_student_ids
+        return torch.unique(
+            target_student_ids,
+            sorted=True,
+            return_inverse=True,
         )
 
     def forward(
@@ -69,87 +136,69 @@ class UnifiedDecoupledCDM(nn.Module):
         target_exercise_ids: torch.Tensor,
         use_student_subset: bool = False,
     ) -> DecoupledForwardOutput:
-        del student_concept_evidence
-        state_target_student_ids = target_student_ids
-        if use_student_subset:
-            student_indices, state_target_student_ids = torch.unique(
-                target_student_ids,
-                sorted=True,
-                return_inverse=True,
-            )
-            student_exercise_mask = student_exercise_mask[student_indices]
-            response_matrix = response_matrix[student_indices]
-            student_tkc_mask = student_tkc_mask[student_indices]
-            student_ukc_mask = student_ukc_mask[student_indices]
-
-        tested = self.evidence_encoder(
-            q_matrix,
+        del (
+            concept_graph,
             student_exercise_mask,
             response_matrix,
             student_tkc_mask,
+            student_ukc_mask,
         )
-        if self.architecture.inference == "prior":
-            assert self.concept_prior is not None
-            concept_prior = self.concept_prior
-            ukc_states = (
-                concept_prior.unsqueeze(0)
-                * student_ukc_mask.unsqueeze(-1)
+        if student_concept_evidence is None:
+            raise ValueError(
+                "unified v3 requires train-only student_concept_evidence"
             )
-            inferred_reliability = torch.zeros_like(
-                tested.direct_reliability
-            )
-        else:
-            assert self.inference_network is not None
-            inferred = self.inference_network(
-                tkc_states=tested.tkc_states,
-                tkc_mask=student_tkc_mask,
-                ukc_mask=student_ukc_mask,
-                concept_graph=concept_graph,
-                direct_reliability=tested.direct_reliability,
-            )
-            concept_prior = self.inference_network.concept_prior
-            ukc_states = inferred.ukc_states
-            inferred_reliability = inferred.inferred_reliability
-
-        source_weights = None
-        if self.architecture.composer == "coverage":
-            assert self.state_composer is not None
-            state_map, source_weights = self.state_composer(
-                tkc_states=tested.tkc_states,
-                ukc_states=ukc_states,
-                concept_prior=concept_prior,
-                tkc_mask=student_tkc_mask,
-                direct_reliability=tested.direct_reliability,
-                inferred_reliability=inferred_reliability,
-            )
-        else:
-            state_map = tested.tkc_states + ukc_states
-        cognitive_probs, probs, mastery = self.decoder(
-            state_map,
+        student_ids, local_target_ids = self._select_students(
+            target_student_ids,
+            use_student_subset,
+        )
+        observed = self.mastery_estimator(
+            student_concept_evidence,
+            student_ids,
+        )
+        missing = self.completer(observed.mastery.shape[0])
+        mastery = assemble_mastery(
+            observed.mastery,
+            missing,
+            observed.observed_mask,
+        )
+        cognitive_probs, difficulty = self.decoder(
+            mastery,
             q_matrix,
-            state_target_student_ids,
+            local_target_ids,
             target_exercise_ids,
         )
-
-        q_vectors = q_matrix[target_exercise_ids]
-        q_weights = q_vectors / q_vectors.sum(dim=1, keepdim=True).clamp_min(1.0)
-        beta = torch.sigmoid(
-            self.decoder.item_concept_difficulty(target_exercise_ids)
+        behavior = self.behavior_model(
+            cognitive_probs,
+            target_student_ids,
+            target_exercise_ids,
         )
-        difficulty = (q_weights * beta).sum(dim=1)
-        zeros = torch.zeros_like(probs)
+        concept_basis = torch.eye(
+            q_matrix.shape[1],
+            device=mastery.device,
+            dtype=mastery.dtype,
+        )
         return DecoupledForwardOutput(
-            student_state=state_map.mean(dim=1),
-            tkc_states=tested.tkc_states,
-            ukc_states=ukc_states,
-            tkc_weight=tested.direct_reliability,
-            concept_embeddings=concept_prior,
-            exercise_embeddings=q_matrix @ concept_prior,
+            student_state=mastery,
+            tkc_states=(
+                mastery.unsqueeze(-1)
+                * observed.observed_mask.unsqueeze(-1)
+            ),
+            ukc_states=(
+                mastery.unsqueeze(-1)
+                * (~observed.observed_mask).unsqueeze(-1)
+            ),
+            tkc_weight=observed.reliability,
+            concept_embeddings=concept_basis,
+            exercise_embeddings=q_matrix.to(dtype=mastery.dtype),
             cognitive_probs=cognitive_probs,
-            probs=probs,
-            guess_probs=zeros,
-            slip_probs=zeros,
+            probs=behavior.probs,
+            guess_probs=behavior.guess_probs,
+            slip_probs=behavior.slip_probs,
             difficulty=difficulty,
             mastery=mastery,
-            source_weights=source_weights,
+            source_weights=None,
+            observed_mastery=observed.mastery,
+            completion_predictions=missing,
+            mastery_observed_mask=observed.observed_mask,
+            cognitive_weight=behavior.cognitive_weight,
         )
