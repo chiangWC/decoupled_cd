@@ -1557,7 +1557,6 @@ def _advance_active_pair(
     state["active_pair"] = None
     dataset_ids = state.get("dataset_ids")
     assert isinstance(dataset_ids, list)
-    remaining = len(dataset_ids) - int(state["cursor"])
     required_improvements = math.ceil(2 * len(dataset_ids) / 3)
     if int(state["cursor"]) == len(dataset_ids):
         state["complete"] = True
@@ -1566,11 +1565,6 @@ def _advance_active_pair(
             and int(state["successes"]) >= required_improvements
             and bool(state["zero_delta_threshold_seen"])
         )
-    elif (
-        int(state.get("overall_failures", 0)) > 0
-        or int(state["successes"]) + remaining < required_improvements
-    ):
-        state["blocked"] = True
     _atomic_json(state_dir / "state.json", state)
     return state
 

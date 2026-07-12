@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ from models.unified_v2_spec import UnifiedArchitectureSpec
 from scripts.run_unified_validation import RECIPES
 from scripts.unified_baseline_audit import audit_baseline_rows
 from scripts.unified_dataset_audit import canonical_sha256
+from scripts.unified_cohort import verify_primary_cohort
 from scripts.unified_validation_controller import (
     CAMPAIGN_ID,
     authorize_next,
@@ -134,8 +136,13 @@ def _atomic_json(path: Path, payload: object) -> None:
 
 
 def _init(args: argparse.Namespace) -> None:
+    if args.architecture == "a1":
+        _init_a1(args)
+        return
     if args.campaign_id != CAMPAIGN_ID or args.architecture != "a0":
         raise ValueError("A0 exploration requires the registered campaign and architecture")
+    if args.dataset_audit is None or args.cohort is not None:
+        raise ValueError("A0 init requires --dataset-audit and forbids --cohort")
     dataset_audit = _read_json(args.dataset_audit)
     baseline_audit = _read_json(args.baseline_audit)
     if not isinstance(dataset_audit, Mapping) or not isinstance(baseline_audit, Mapping):
@@ -174,6 +181,146 @@ def _init(args: argparse.Namespace) -> None:
         "provisional_registry_sha256": registry["cohort_sha256"],
         "dataset_audit": str(args.dataset_audit.resolve()),
         "baseline_audit": str(args.baseline_audit.resolve()),
+        "rows_output": str(rows_path),
+    })
+
+
+def _selected_a0_parameter_count(
+    controller_dir: Path, row: Mapping[str, Any]
+) -> int:
+    counter = row.get("proof_counter")
+    dataset_id = row.get("dataset_id")
+    if type(counter) is not int or not isinstance(dataset_id, str):
+        raise ValueError("selected A0 proof binding is invalid")
+    proof_path = controller_dir / "proofs" / f"{counter:06d}-{dataset_id}.json"
+    proof_bytes = proof_path.read_bytes()
+    if hashlib.sha256(proof_bytes).hexdigest() != row.get("proof_sha256"):
+        raise ValueError(f"selected A0 raw proof SHA-256 mismatch: {dataset_id}")
+    proof = json.loads(proof_bytes)
+    split_proofs = proof.get("split_proofs") if isinstance(proof, Mapping) else None
+    standard = split_proofs.get("standard") if isinstance(split_proofs, Mapping) else None
+    holdout = split_proofs.get("holdout") if isinstance(split_proofs, Mapping) else None
+    if (
+        proof.get("counter") != counter
+        or proof.get("dataset_id") != dataset_id
+        or not isinstance(standard, Mapping)
+        or not isinstance(holdout, Mapping)
+        or standard.get("recipe_index") != row.get("recipe_index")
+        or standard.get("numerical_recipe") != row.get("numerical_recipe")
+        or holdout.get("recipe_index") != row.get("recipe_index")
+        or holdout.get("numerical_recipe") != row.get("numerical_recipe")
+        or standard.get("parameter_count") != holdout.get("parameter_count")
+        or type(standard.get("parameter_count")) is not int
+    ):
+        raise ValueError(f"selected A0 proof semantics mismatch: {dataset_id}")
+    return int(standard["parameter_count"])
+
+
+def _primary_baseline_rows(
+    *,
+    cohort: Mapping[str, Any],
+    a0_rows: Sequence[Mapping[str, Any]],
+    a0_controller_dir: Path,
+) -> list[dict[str, Any]]:
+    indexed = {str(row.get("dataset_id")): row for row in a0_rows}
+    dataset_ids = cohort.get("dataset_ids")
+    fingerprints = cohort.get("a0_fingerprints")
+    if not isinstance(dataset_ids, list) or not isinstance(fingerprints, Mapping):
+        raise ValueError("frozen primary cohort registry is invalid")
+    rows: list[dict[str, Any]] = []
+    for dataset_id in dataset_ids:
+        source = indexed.get(str(dataset_id))
+        if not isinstance(source, Mapping):
+            raise ValueError(f"frozen A0 row is missing: {dataset_id}")
+        fingerprint = source.get("a0_fingerprint")
+        if fingerprint != fingerprints.get(dataset_id):
+            raise ValueError(f"frozen A0 fingerprint mismatch: {dataset_id}")
+        recipe = source.get("numerical_recipe")
+        if (
+            not isinstance(recipe, Mapping)
+            or source.get("recipe_sha256") != canonical_sha256(recipe)
+        ):
+            raise ValueError(f"frozen A0 recipe hash mismatch: {dataset_id}")
+        rows.append({
+            "dataset_id": dataset_id,
+            "cohort_sha256": cohort["cohort_sha256"],
+            "architecture_fingerprint": fingerprint,
+            "standard_overall_auc": float(source["a0_standard_auc"]),
+            "holdout_overall_auc": float(source["a0_holdout_auc"]),
+            "zero_auc": float(source["a0_zero_auc"]),
+            "ordinary_doa": float(source["a0_ordinary_doa"]),
+            "weighted_doa": float(source["a0_weighted_doa"]),
+            "parameter_count": _selected_a0_parameter_count(
+                a0_controller_dir, source
+            ),
+            "recipe_index": int(source["recipe_index"]),
+            "numerical_recipe": dict(recipe),
+            "recipe_sha256": source["recipe_sha256"],
+            "proof_counter": int(source["proof_counter"]),
+            "proof_sha256": source["proof_sha256"],
+        })
+    return rows
+
+
+def _init_a1(args: argparse.Namespace) -> None:
+    if args.campaign_id != CAMPAIGN_ID:
+        raise ValueError("A1 validation requires the registered campaign")
+    if args.cohort is None or args.dataset_audit is not None:
+        raise ValueError("A1 init requires --cohort and forbids --dataset-audit")
+    state_path = args.state.resolve()
+    campaign_root = state_path.parent.parent
+    a0_wrapper = _read_json(state_path.parent / "a0.json")
+    if not isinstance(a0_wrapper, Mapping):
+        raise ValueError("registered A0 wrapper is invalid")
+    if (
+        Path(str(a0_wrapper.get("baseline_audit"))).resolve()
+        != args.baseline_audit.resolve()
+    ):
+        raise ValueError("A1 baseline audit differs from registered A0 audit")
+    dataset_audit_path = Path(str(a0_wrapper.get("dataset_audit"))).resolve()
+    dataset_audit = _read_json(dataset_audit_path)
+    baseline_audit = _read_json(args.baseline_audit.resolve())
+    a0_controller_dir = Path(str(a0_wrapper.get("controller_state_dir"))).resolve()
+    a0_rows = finalize_exploration(a0_controller_dir)
+    if not isinstance(dataset_audit, Mapping) or not isinstance(
+        baseline_audit, Mapping
+    ):
+        raise ValueError("trusted A1 audits must be JSON objects")
+    cohort = verify_primary_cohort(
+        a0_rows, baseline_audit, dataset_audit, path=args.cohort.resolve()
+    )
+    baseline_rows = _primary_baseline_rows(
+        cohort=cohort,
+        a0_rows=a0_rows,
+        a0_controller_dir=a0_controller_dir,
+    )
+    stem = state_path.with_suffix("")
+    baseline_path = stem.parent / "a0-primary-validation-rows.json"
+    manifest_path = stem.parent / f"{stem.name}-manifest.json"
+    controller_dir = stem.parent / f"{stem.name}-controller"
+    rows_path = stem.parent / f"{stem.name}-validation-rows.json"
+    manifest = UnifiedArchitectureSpec(completion="lowrank").manifest()
+    _exclusive_json(baseline_path, {"rows": baseline_rows})
+    _exclusive_json(manifest_path, manifest)
+    initialize_controller(
+        state_dir=controller_dir,
+        repo_root=args.repo_root.resolve(),
+        cohort_path=args.cohort.resolve(),
+        manifest_path=manifest_path,
+        architecture="a1",
+        baseline_rows_path=baseline_path,
+        data_root=Path(str(dataset_audit["root"])),
+        artifact_root=campaign_root,
+    )
+    _exclusive_json(state_path, {
+        "schema_version": 1,
+        "campaign_id": CAMPAIGN_ID,
+        "architecture": "a1",
+        "controller_state_dir": str(controller_dir),
+        "repo_root": str(args.repo_root.resolve()),
+        "cohort": str(args.cohort.resolve()),
+        "baseline_audit": str(args.baseline_audit.resolve()),
+        "baseline_rows": str(baseline_path),
         "rows_output": str(rows_path),
     })
 
@@ -306,6 +453,65 @@ def _assemble_rows(controller_dir: Path) -> list[dict[str, Any]]:
     return finalize_exploration(controller_dir)
 
 
+def finalize_candidate(controller_dir: Path) -> list[dict[str, Any]]:
+    state = _read_json(controller_dir / "state.json")
+    baseline = _read_json(controller_dir / "baseline.json")
+    if (
+        not isinstance(state, Mapping)
+        or state.get("mode") != "candidate_gate"
+        or state.get("architecture") != "a1"
+        or state.get("complete") is not True
+        or state.get("active_pair") is not None
+        or state.get("launch") is not None
+        or not isinstance(baseline, Mapping)
+        or canonical_sha256(baseline) != state.get("baseline_sha256")
+    ):
+        raise ValueError("A1 controller is not complete and immutable")
+    dataset_ids = state.get("dataset_ids")
+    proof_hashes = state.get("proof_sha256_by_counter")
+    if not isinstance(dataset_ids, list) or not isinstance(proof_hashes, Mapping):
+        raise ValueError("A1 controller proof registry is invalid")
+    rows: list[dict[str, Any]] = []
+    for counter, dataset_id in enumerate(dataset_ids, start=1):
+        proof_path = controller_dir / "proofs" / f"{counter:06d}-{dataset_id}.json"
+        proof_bytes = proof_path.read_bytes()
+        if hashlib.sha256(proof_bytes).hexdigest() != proof_hashes.get(str(counter)):
+            raise ValueError(f"A1 raw proof SHA-256 mismatch: {dataset_id}")
+        proof = json.loads(proof_bytes)
+        splits = proof.get("split_proofs") if isinstance(proof, Mapping) else None
+        standard = splits.get("standard") if isinstance(splits, Mapping) else None
+        holdout = splits.get("holdout") if isinstance(splits, Mapping) else None
+        if (
+            proof.get("counter") != counter
+            or proof.get("dataset_id") != dataset_id
+            or proof.get("controller_id") != state.get("controller_id")
+            or proof.get("route_commit") != state.get("route_commit")
+            or proof.get("baseline_sha256") != state.get("baseline_sha256")
+            or not isinstance(standard, Mapping)
+            or not isinstance(holdout, Mapping)
+            or standard.get("recipe_index") != holdout.get("recipe_index")
+            or standard.get("numerical_recipe") != holdout.get("numerical_recipe")
+            or standard.get("parameter_count") != holdout.get("parameter_count")
+        ):
+            raise ValueError(f"A1 proof semantics mismatch: {dataset_id}")
+        rows.append({
+            "dataset_id": dataset_id,
+            "cohort_sha256": state["cohort_sha256"],
+            "architecture_fingerprint": state["architecture_fingerprint"],
+            "standard_overall_auc": float(standard["metrics"]["overall_auc"]),
+            "holdout_overall_auc": float(holdout["metrics"]["overall_auc"]),
+            "zero_auc": float(holdout["metrics"]["zero_auc"]),
+            "ordinary_doa": float(standard["metrics"]["ordinary_doa"]),
+            "weighted_doa": float(standard["metrics"]["weighted_doa"]),
+            "parameter_count": int(standard["parameter_count"]),
+            "recipe_index": int(standard["recipe_index"]),
+            "numerical_recipe": standard["numerical_recipe"],
+            "proof_counter": counter,
+            "proof_sha256": proof_hashes[str(counter)],
+        })
+    return rows
+
+
 def _run_validation(args: argparse.Namespace) -> None:
     wrapper = _read_json(args.state.resolve())
     if not isinstance(wrapper, Mapping):
@@ -330,25 +536,32 @@ def _run_validation(args: argparse.Namespace) -> None:
             repo_root=repo_root,
             parallel=args.parallel_gpus,
         )
-    _exclusive_json(
-        Path(str(wrapper["rows_output"])),
-        {"rows": finalize_exploration(controller_dir)},
+    rows = (
+        finalize_candidate(controller_dir)
+        if wrapper.get("architecture") == "a1"
+        else finalize_exploration(controller_dir)
     )
+    _exclusive_json(Path(str(wrapper["rows_output"])), {"rows": rows})
 
 
 def _finalize(args: argparse.Namespace) -> None:
     wrapper = _read_json(args.state.resolve())
     if not isinstance(wrapper, Mapping):
         raise ValueError("exploration state must be a JSON object")
+    controller_dir = Path(str(wrapper["controller_state_dir"]))
     rows_payload = {
-        "rows": finalize_exploration(Path(str(wrapper["controller_state_dir"])))
+        "rows": (
+            finalize_candidate(controller_dir)
+            if wrapper.get("architecture") == "a1"
+            else finalize_exploration(controller_dir)
+        )
     }
     rows_path = Path(str(wrapper["rows_output"]))
     if rows_path.exists():
         existing = _read_json(rows_path)
         legacy_payload = json.loads(json.dumps(rows_payload))
         for row in legacy_payload["rows"]:
-            row.pop("proof_sha256")
+            row.pop("proof_sha256", None)
         if existing not in (rows_payload, legacy_payload):
             raise ValueError("existing A0 rows do not match replayed immutable proofs")
         if existing != rows_payload:
@@ -362,8 +575,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     init = subparsers.add_parser("init")
     init.add_argument("--campaign-id", required=True)
-    init.add_argument("--architecture", choices=("a0",), required=True)
-    init.add_argument("--dataset-audit", type=Path, required=True)
+    init.add_argument("--architecture", choices=("a0", "a1"), required=True)
+    init.add_argument("--dataset-audit", type=Path)
+    init.add_argument("--cohort", type=Path)
     init.add_argument("--baseline-audit", type=Path, required=True)
     init.add_argument("--state", type=Path, required=True)
     init.add_argument("--repo-root", type=Path, default=Path.cwd())

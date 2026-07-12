@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -110,6 +111,8 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
 
     def test_controller_cli_exposes_init_and_run_validation(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        child_environment = dict(os.environ)
+        child_environment.pop("MKL_THREADING_LAYER", None)
         completed = subprocess.run(
             [
                 sys.executable,
@@ -117,6 +120,7 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
                 "--help",
             ],
             cwd=root,
+            env=child_environment,
             capture_output=True,
             text=True,
             check=False,
@@ -124,6 +128,22 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("init", completed.stdout)
         self.assertIn("run-validation", completed.stdout)
+
+    def test_controller_parser_accepts_registered_a1_frozen_cohort_init(self) -> None:
+        from scripts.unified_a0_exploration import build_parser
+
+        args = build_parser().parse_args([
+            "init",
+            "--campaign-id", "unified-mastery-20260712",
+            "--architecture", "a1",
+            "--cohort", "/campaign/cohort.json",
+            "--baseline-audit", "/campaign/audit/baselines.json",
+            "--state", "/campaign/controllers/a1.json",
+        ])
+
+        self.assertEqual(args.architecture, "a1")
+        self.assertEqual(args.cohort, Path("/campaign/cohort.json"))
+        self.assertIsNone(args.dataset_audit)
 
     def test_run_validation_without_parallel_flag_uses_sequential_controller_pair(self) -> None:
         from argparse import Namespace

@@ -2094,7 +2094,7 @@ controller.authorize_next(
             _advance_active_pair(state_dir=self.state_dir, state=state)
         self.assertFalse(any((self.state_dir / "proofs").glob("*.json")))
 
-    def test_any_overall_auc_regression_blocks_the_frozen_cohort(self) -> None:
+    def test_any_overall_auc_regression_still_finishes_the_frozen_cohort(self) -> None:
         self.initialize()
         first_path, first = self.issue()
         self._prepare_pair_artifacts(
@@ -2104,18 +2104,18 @@ controller.authorize_next(
             standard_overall_auc=0.69,
         )
         self._advance_unit_launch()
-        next_path = self.root / "must-not-issue.json"
-        with self.assertRaisesRegex(RuntimeError, "primary cohort is unreachable"):
-            authorize_next(
-                state_dir=self.state_dir,
-                repo_root=self.repo_root,
-                output_path=next_path,
-            )
-        self.assertFalse(next_path.exists())
+        next_path = self.root / "next-frozen-dataset.json"
+        next_token = authorize_next(
+            state_dir=self.state_dir,
+            repo_root=self.repo_root,
+            output_path=next_path,
+        )
+        self.assertEqual(next_token["dataset_id"], "ASSIST17")
+        self.assertTrue(next_path.exists())
         state = json.loads((self.state_dir / "state.json").read_text())
         self.assertEqual(state["cursor"], 1)
         self.assertEqual(state["successes"], 0)
-        self.assertTrue(state["blocked"])
+        self.assertFalse(state["blocked"])
 
     def test_joint_gate_uses_nonregression_and_strict_improvement_boundaries(self) -> None:
         passing = {
