@@ -231,6 +231,30 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
     return payload
 
 
+def _load_registered_cohort(path: Path) -> dict[str, Any]:
+    payload = _load_json(path, label="registered cohort")
+    if payload.get("schema_version") != 2:
+        return load_verified_cohort(path)
+    dataset_ids = payload.get("dataset_ids")
+    fingerprints = payload.get("a0_fingerprints")
+    comparator_hash = payload.get("comparator_audit_sha256")
+    dataset_hash = payload.get("dataset_audit_sha256")
+    if (
+        not isinstance(dataset_ids, list)
+        or not isinstance(fingerprints, Mapping)
+        or not isinstance(comparator_hash, str)
+        or not isinstance(dataset_hash, str)
+    ):
+        raise ValueError("registered primary cohort expectations are invalid")
+    return load_verified_cohort(
+        path,
+        expected_dataset_ids=dataset_ids,
+        expected_a0_fingerprints=dict(fingerprints),
+        expected_comparator_audit_sha256=comparator_hash,
+        expected_dataset_audit_sha256=dataset_hash,
+    )
+
+
 def _route_head(repo_root: Path) -> str:
     repo_root = repo_root.resolve(strict=True)
     if not repo_root.is_dir():
@@ -374,7 +398,7 @@ def _load_state(state_dir: Path, repo_root: Path) -> dict[str, Any]:
         raise ValueError(
             f"route HEAD mismatch: registered {registered_head}, actual {actual_head}"
         )
-    cohort = load_verified_cohort(state_dir / "cohort.json")
+    cohort = _load_registered_cohort(state_dir / "cohort.json")
     if (
         cohort.get("cohort_sha256") != state.get("cohort_sha256")
         or cohort.get("dataset_ids") != state.get("dataset_ids")
@@ -717,7 +741,7 @@ def initialize_controller(
 ) -> dict[str, object]:
     state_dir = state_dir.resolve()
     repo_root = repo_root.resolve()
-    cohort = load_verified_cohort(cohort_path)
+    cohort = _load_registered_cohort(cohort_path)
     dataset_ids = cohort.get("dataset_ids")
     cohort_hash = cohort.get("cohort_sha256")
     if not isinstance(dataset_ids, list) or not all(
@@ -941,7 +965,7 @@ def _verify_split_proof(
     registered_manifest = _load_json(
         state_dir / "manifest.json", label="registered architecture manifest"
     )
-    registered_cohort = load_verified_cohort(state_dir / "cohort.json")
+    registered_cohort = _load_registered_cohort(state_dir / "cohort.json")
     immutable_inputs = status.get("immutable_inputs")
     if not isinstance(immutable_inputs, Mapping):
         raise ValueError(f"{split_id} outer status has no immutable inputs")
@@ -1129,7 +1153,7 @@ def _verified_replay_state(
         or state.get("split_seed") != 2024
     ):
         raise ValueError("controller replay state is not a completed exploration")
-    cohort = load_verified_cohort(state_dir / "cohort.json")
+    cohort = _load_registered_cohort(state_dir / "cohort.json")
     manifest = _load_json(state_dir / "manifest.json", label="replay manifest")
     baseline = _load_json(state_dir / "baseline.json", label="replay baseline")
     if (

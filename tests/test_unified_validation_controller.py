@@ -655,6 +655,34 @@ print(attempt_dir)
         for directory in ("issued", "consumed", "proofs"):
             self.assertTrue((self.state_dir / directory).is_dir())
 
+    def test_initialization_accepts_canonically_verified_primary_cohort(self) -> None:
+        fingerprint = self.baseline_rows[0]["architecture_fingerprint"]
+        primary = {
+            "schema_version": 2,
+            "dataset_ids": list(DATASET_IDS),
+            "a0_fingerprints": {
+                dataset_id: fingerprint for dataset_id in DATASET_IDS
+            },
+            "comparator_audit_sha256": "e" * 64,
+            "dataset_audit_sha256": "f" * 64,
+            "rankings": [
+                {"dataset_id": dataset_id, "rank_key": [0.0, 0.0, 1, 0]}
+                for dataset_id in DATASET_IDS
+            ],
+        }
+        primary["cohort_sha256"] = canonical_sha256(primary)
+        self.cohort_path.write_text(json.dumps(primary), encoding="utf-8")
+        for row in self.baseline_rows:
+            row["cohort_sha256"] = primary["cohort_sha256"]
+        self.baseline_path.write_text(
+            json.dumps({"rows": self.baseline_rows}), encoding="utf-8"
+        )
+
+        state = self.initialize()
+
+        self.assertEqual(state["cohort_sha256"], primary["cohort_sha256"])
+        self.assertEqual(state["dataset_ids"], list(DATASET_IDS))
+
     def test_initialization_is_exclusive(self) -> None:
         self.initialize()
 
