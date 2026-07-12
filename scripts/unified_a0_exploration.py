@@ -520,12 +520,15 @@ def _run_validation(args: argparse.Namespace) -> None:
     repo_root = Path(str(wrapper["repo_root"]))
     tokens = args.state.resolve().parent / "tokens"
     tokens.mkdir(parents=True, exist_ok=True)
+    architecture = str(wrapper.get("architecture"))
+    if architecture not in {"a0", "a1"}:
+        raise ValueError("validation wrapper architecture is invalid")
     while True:
         state = _read_json(controller_dir / "state.json")
         if state.get("complete"):
             break
         counter = int(state.get("issuance_counter", 0)) + 1
-        token_path = tokens / f"a0-{counter:06d}.json"
+        token_path = tokens / f"{architecture}-{counter:06d}.json"
         authorize_next(
             state_dir=controller_dir,
             repo_root=repo_root,

@@ -150,6 +150,7 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
         from scripts.unified_a0_exploration import _run_validation
 
         wrapper = {
+            "architecture": "a0",
             "controller_state_dir": "/controller",
             "repo_root": "/repo",
             "rows_output": "/rows.json",
@@ -159,7 +160,7 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
             side_effect=[wrapper, {"complete": False, "issuance_counter": 0}, {"complete": True}],
         ), patch(
             "scripts.unified_a0_exploration.authorize_next"
-        ), patch(
+        ) as authorize, patch(
             "scripts.unified_a0_exploration.run_registered_pair"
         ) as run_pair, patch(
             "scripts.unified_a0_exploration.finalize_exploration", return_value=[]
@@ -177,6 +178,7 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
         from scripts.unified_a0_exploration import _run_validation
 
         wrapper = {
+            "architecture": "a1",
             "controller_state_dir": "/controller",
             "repo_root": "/repo",
             "rows_output": "/rows.json",
@@ -186,10 +188,10 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
             side_effect=[wrapper, {"complete": False, "issuance_counter": 0}, {"complete": True}],
         ), patch(
             "scripts.unified_a0_exploration.authorize_next"
-        ), patch(
+        ) as authorize, patch(
             "scripts.unified_a0_exploration.run_registered_pair"
         ) as run_pair, patch(
-            "scripts.unified_a0_exploration.finalize_exploration", return_value=[]
+            "scripts.unified_a0_exploration.finalize_candidate", return_value=[]
         ), patch("scripts.unified_a0_exploration._exclusive_json"):
             _run_validation(Namespace(
                 state=Path(directory) / "wrapper.json", parallel_gpus=True
@@ -197,6 +199,10 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
 
         run_pair.assert_called_once_with(
             state_dir=Path("/controller"), repo_root=Path("/repo"), parallel=True
+        )
+        self.assertEqual(
+            authorize.call_args.kwargs["output_path"].name,
+            "a1-000001.json",
         )
 
     def test_finalization_rejects_hand_authored_proof_only_inputs(self) -> None:
