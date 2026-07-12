@@ -307,6 +307,42 @@ class StableGraphValidationControllerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "canonical|recomputed|immutable|field set"):
                 controller.execute(["replay", "--architecture", "a2"], dependencies=deps)
 
+    def test_metric_source_artifacts_are_bound_and_recomputed_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / controller.CAMPAIGN_ID
+            root.mkdir()
+
+            def runner(argv, attempt_dir):
+                architecture = argv[argv.index("--architecture") + 1]
+                dataset = argv[argv.index("--dataset") + 1]
+                result = controller.fake_validation_result(architecture, dataset)
+                for split in ("standard", "holdout"):
+                    work = attempt_dir / "stable-validation-work" / split
+                    work.mkdir(parents=True)
+                    overall = 0.5
+                    zero = 0.9 if split == "holdout" else 0.5
+                    (work / "coverage-valid.json").write_text(json.dumps({
+                        "slices": [
+                            {"scope": "overall", "auc": overall},
+                            {"scope": "bucket:zero", "auc": zero},
+                        ]
+                    }))
+                    (work / "doa-valid.json").write_text(json.dumps({
+                        "rows": [{"doa": 0.5, "doa_weighted": 0.5}]
+                    }))
+                    (work / "train-summary.json").write_text(json.dumps({
+                        "architecture_manifest": controller.architecture_spec(architecture).manifest(),
+                        "architecture_fingerprint": controller.architecture_fingerprint(architecture),
+                    }))
+                return result
+
+            deps = self.dependencies(root, runner)
+            with self.assertRaisesRegex(ValueError, "metric source|recomputed"):
+                controller.execute(
+                    ["run-validation", "--architecture", "a2", "--dataset", "ASSIST17"],
+                    dependencies=deps,
+                )
+
     def test_docs_only_route_progresses_but_code_change_stales_campaign(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)

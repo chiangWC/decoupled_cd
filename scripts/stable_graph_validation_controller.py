@@ -90,6 +90,11 @@ ATTEMPT_PROOF_FIELDS = {
     "runner_result", "artifacts", "proof_sha256",
 }
 ARTIFACT_FIELDS = {"path", "size_bytes", "sha256", "device", "inode"}
+VALIDATION_SOURCE_SUFFIXES = tuple(
+    f"stable-validation-work/{split}/{name}"
+    for split in ("standard", "holdout")
+    for name in ("train-summary.json", "coverage-valid.json", "doa-valid.json")
+)
 
 
 class CampaignStore:
@@ -186,7 +191,10 @@ class CampaignStore:
         return self._open_dir(parts[:-1], create=create), parts[-1]
 
     def exists(self, relative: str | Path) -> bool:
-        parent, name = self._parent(relative)
+        try:
+            parent, name = self._parent(relative)
+        except FileNotFoundError:
+            return False
         try:
             try:
                 status = os.stat(name, dir_fd=parent, follow_symlinks=False)
@@ -704,7 +712,7 @@ def _canonical_attempt_proof(
     ledger: Mapping[str, object],
     entry: Mapping[str, object],
     result: Mapping[str, object],
-    artifact: Mapping[str, object],
+    artifacts: Sequence[Mapping[str, object]],
 ) -> dict[str, Any]:
     if set(entry) != ENTRY_COMPLETE_FIELDS:
         raise ValueError("immutable ledger entry field set mismatch")
@@ -737,8 +745,15 @@ def _canonical_attempt_proof(
         registered_code_hash=ledger.get("implementation_code_sha256"),
     )
     normalized = _validate_runner_result(str(kind), str(architecture), dataset if isinstance(dataset, str) else None, result)
-    if set(artifact) != ARTIFACT_FIELDS or artifact.get("path") != f"{attempt_dir}/runner-result.json":
+    if not artifacts or set(artifacts[0]) != ARTIFACT_FIELDS or artifacts[0].get("path") != f"{attempt_dir}/runner-result.json":
         raise ValueError("canonical attempt artifact field/path mismatch")
+    _validate_metric_sources(
+        dependencies,
+        attempt_dir=attempt_dir,
+        kind=str(kind),
+        result=normalized,
+        artifacts=artifacts[1:],
+    )
     argv = _runner_argv(
         str(kind), str(architecture),
         dependencies.campaign_root / attempt_dir,
@@ -763,8 +778,84 @@ def _canonical_attempt_proof(
         "nonce": nonce,
         "runner_argv": argv,
         "runner_result": normalized,
-        "artifacts": [dict(artifact)],
+        "artifacts": [dict(artifact) for artifact in artifacts],
     })
+
+
+def _collect_metric_sources(
+    dependencies: CampaignDependencies, attempt_dir: str, kind: str
+) -> list[dict[str, object]]:
+    if kind != "validation":
+        return []
+    paths = [f"{attempt_dir}/{suffix}" for suffix in VALIDATION_SOURCE_SUFFIXES]
+    present = [dependencies.store.exists(path) for path in paths]
+    if not any(present):
+        return []
+    if not all(present):
+        raise ValueError("validation metric source artifact set is incomplete")
+    return [
+        dependencies.store.read_regular(path, label="validation metric source")[1]
+        for path in paths
+    ]
+
+
+def _validate_metric_sources(
+    dependencies: CampaignDependencies,
+    *,
+    attempt_dir: str,
+    kind: str,
+    result: Mapping[str, object],
+    artifacts: Sequence[Mapping[str, object]],
+) -> None:
+    if kind != "validation":
+        if artifacts:
+            raise ValueError("non-validation attempt has unexpected metric sources")
+        return
+    if not artifacts:
+        return
+    expected_paths = [f"{attempt_dir}/{suffix}" for suffix in VALIDATION_SOURCE_SUFFIXES]
+    if len(artifacts) != len(expected_paths):
+        raise ValueError("validation metric source artifact count mismatch")
+    for artifact, path in zip(artifacts, expected_paths, strict=True):
+        if set(artifact) != ARTIFACT_FIELDS or artifact.get("path") != path:
+            raise ValueError("validation metric source artifact registry mismatch")
+        _, current = dependencies.store.read_regular(path, label="validation metric source")
+        if current != artifact:
+            raise ValueError("validation metric source artifact identity/SHA mismatch")
+    sources: dict[tuple[str, str], dict[str, Any]] = {}
+    for split in ("standard", "holdout"):
+        for name in ("train-summary.json", "coverage-valid.json", "doa-valid.json"):
+            path = f"{attempt_dir}/stable-validation-work/{split}/{name}"
+            sources[(split, name)] = dependencies.store.read_json(path, label="validation metric source")
+        train = sources[(split, "train-summary.json")]
+        if (
+            train.get("architecture_manifest") != result.get("architecture_manifest")
+            or train.get("architecture_fingerprint") != result.get("architecture_fingerprint")
+        ):
+            raise ValueError("validation train source architecture mismatch")
+
+    def coverage(split: str, scope: str) -> float:
+        rows = sources[(split, "coverage-valid.json")].get("slices")
+        if type(rows) is not list:
+            raise ValueError("validation coverage metric source is invalid")
+        selected = [row for row in rows if type(row) is dict and row.get("scope") == scope]
+        if len(selected) != 1 or type(selected[0].get("auc")) is not float or not math.isfinite(selected[0]["auc"]):
+            raise ValueError("validation coverage metric source is invalid")
+        return selected[0]["auc"]
+
+    doa_rows = sources[("standard", "doa-valid.json")].get("rows")
+    if type(doa_rows) is not list or len(doa_rows) != 1 or type(doa_rows[0]) is not dict:
+        raise ValueError("validation DOA metric source is invalid")
+    recomputed = {
+        "standard_overall_auc": coverage("standard", "overall"),
+        "holdout_overall_auc": coverage("holdout", "overall"),
+        "zero_auc": coverage("holdout", "bucket:zero"),
+        "ordinary_doa": doa_rows[0].get("doa"),
+        "weighted_doa": doa_rows[0].get("doa_weighted"),
+    }
+    validate_metrics(recomputed)
+    if any(result.get(field) != value for field, value in recomputed.items()):
+        raise ValueError("validation metric source differs from recomputed runner result")
 
 
 def _run_registered(dependencies: CampaignDependencies, *, kind: str, architecture: str, dataset: str | None = None) -> dict[str, Any]:
@@ -804,10 +895,19 @@ def _run_registered(dependencies: CampaignDependencies, *, kind: str, architectu
     argv = _runner_argv(kind, architecture, attempt_dir, dataset)
     try:
         result = _validate_runner_result(kind, architecture, dataset, dependencies.runner(argv, attempt_dir))
+        source_artifacts = _collect_metric_sources(
+            dependencies, attempt_relative, kind
+        )
         store.exclusive_json(f"{attempt_relative}/runner-result.json", result)
         _, artifact = store.read_regular(f"{attempt_relative}/runner-result.json", label="runner result")
         complete_entry = {**entry, "status": "complete", "proof_file_sha256": "0" * 64}
-        proof = _canonical_attempt_proof(dependencies, ledger, complete_entry, result, artifact)
+        proof = _canonical_attempt_proof(
+            dependencies,
+            ledger,
+            complete_entry,
+            result,
+            [artifact, *source_artifacts],
+        )
         store.exclusive_json(f"{attempt_relative}/proof.json", proof)
     except BaseException:
         with _with_lock(dependencies):
@@ -847,16 +947,21 @@ def _verify_attempts(dependencies: CampaignDependencies) -> tuple[dict[str, Any]
         if proof_record["sha256"] != entry.get("proof_file_sha256"):
             raise ValueError("attempt proof artifact SHA mismatch")
         artifacts = proof.get("artifacts")
-        if type(artifacts) is not list or len(artifacts) != 1:
+        if type(artifacts) is not list or not artifacts:
             raise ValueError("attempt artifact registry is invalid")
-        if type(artifacts[0]) is not dict or set(artifacts[0]) != ARTIFACT_FIELDS:
-            raise ValueError("attempt artifact field set mismatch")
-        artifact_path = str(artifacts[0].get("path"))
-        _, current = store.read_regular(artifact_path, label="runner artifact")
-        if current != artifacts[0]:
-            raise ValueError("runner artifact identity/SHA mismatch")
-        result = store.read_json(artifact_path, label="runner artifact")
-        expected = _canonical_attempt_proof(dependencies, ledger, entry, result, current)
+        current_artifacts: list[dict[str, object]] = []
+        for artifact in artifacts:
+            if type(artifact) is not dict or set(artifact) != ARTIFACT_FIELDS:
+                raise ValueError("attempt artifact field set mismatch")
+            artifact_path = str(artifact.get("path"))
+            _, current = store.read_regular(artifact_path, label="runner artifact")
+            if current != artifact:
+                raise ValueError("runner artifact identity/SHA mismatch")
+            current_artifacts.append(current)
+        result = store.read_json(str(artifacts[0]["path"]), label="runner artifact")
+        expected = _canonical_attempt_proof(
+            dependencies, ledger, entry, result, current_artifacts
+        )
         if proof != expected:
             raise ValueError("canonical attempt proof differs from recomputed immutable authority")
         proofs.append(proof)
