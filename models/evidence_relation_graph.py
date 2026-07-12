@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -18,7 +19,25 @@ def _evidence_counts(evidence: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor
         raise ValueError(
             "evidence must have shape [students, concepts, features>=2]"
         )
-    return evidence[..., 0], evidence[..., 1]
+    attempts = evidence[..., 0]
+    correct = evidence[..., 1]
+    if not bool(torch.isfinite(attempts).all()):
+        raise ValueError("attempts must be finite")
+    if bool((attempts < 0).any()):
+        raise ValueError("attempts must be nonnegative")
+    if not bool(torch.isfinite(correct).all()):
+        raise ValueError("correct must be finite")
+    if bool((correct < 0).any()):
+        raise ValueError("correct must be nonnegative")
+    if bool((correct > attempts).any()):
+        raise ValueError("correct cannot exceed attempts")
+
+    float_dtype = (
+        evidence.dtype
+        if torch.is_floating_point(evidence)
+        else torch.get_default_dtype()
+    )
+    return attempts.to(dtype=float_dtype), correct.to(dtype=float_dtype)
 
 
 def _deterministic_mask(
@@ -54,8 +73,8 @@ def build_relation_graph(
 ) -> RelationGraphBatch:
     if not 0.0 <= mask_fraction <= 1.0:
         raise ValueError("mask_fraction must be in [0, 1]")
-    if reliability_cap <= 0.0:
-        raise ValueError("reliability_cap must be positive")
+    if not math.isfinite(reliability_cap) or reliability_cap <= 0.0:
+        raise ValueError("reliability_cap must be finite and positive")
     if training and epoch is None:
         raise ValueError("epoch is required during training")
     if not training and epoch is not None:

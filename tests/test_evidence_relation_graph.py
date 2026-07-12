@@ -98,6 +98,136 @@ class EvidenceRelationGraphTests(unittest.TestCase):
             concepts[:, 3], self.q_matrix.sum(dim=0)
         )
 
+    def test_integer_counts_produce_float_graph_and_summary_outputs(
+        self,
+    ) -> None:
+        evidence = torch.tensor(
+            [
+                [[0, 0], [2, 1], [4, 3]],
+                [[3, 1], [1, 1], [5, 2]],
+            ],
+            dtype=torch.int64,
+        )
+        q_matrix = torch.tensor(
+            [[1, 0, 1], [0, 1, 1]], dtype=torch.int64
+        )
+
+        graph = build_relation_graph(evidence, epoch=None, training=False)
+        students, concepts = node_summary_features(evidence, q_matrix)
+
+        self.assertEqual(graph.target.dtype, torch.get_default_dtype())
+        self.assertEqual(
+            graph.positive_weight.dtype, torch.get_default_dtype()
+        )
+        self.assertEqual(
+            graph.negative_weight.dtype, torch.get_default_dtype()
+        )
+        self.assertEqual(students.dtype, torch.get_default_dtype())
+        self.assertEqual(concepts.dtype, torch.get_default_dtype())
+        torch.testing.assert_close(
+            graph.target,
+            torch.tensor(
+                [[0.5, 0.5, 4.0 / 6.0], [2.0 / 5.0, 2.0 / 3.0, 3.0 / 7.0]]
+            ),
+        )
+        torch.testing.assert_close(
+            students,
+            torch.tensor(
+                [
+                    [2.0 / 3.0, 5.0 / 8.0, torch.log1p(torch.tensor(6.0))],
+                    [1.0, 5.0 / 11.0, torch.log1p(torch.tensor(9.0))],
+                ]
+            ),
+        )
+        torch.testing.assert_close(
+            concepts,
+            torch.tensor(
+                [
+                    [0.5, 2.0 / 5.0, torch.log1p(torch.tensor(3.0)), 1.0],
+                    [1.0, 3.0 / 5.0, torch.log1p(torch.tensor(3.0)), 1.0],
+                    [1.0, 6.0 / 11.0, torch.log1p(torch.tensor(9.0)), 2.0],
+                ]
+            ),
+        )
+
+    def test_rejects_nonfinite_attempts(self) -> None:
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                evidence = torch.tensor([[[value, 0.0]]])
+                with self.assertRaisesRegex(
+                    ValueError, "attempts must be finite"
+                ):
+                    build_relation_graph(evidence, epoch=None, training=False)
+
+    def test_rejects_negative_attempts(self) -> None:
+        evidence = torch.tensor([[[-1.0, 0.0]]])
+        with self.assertRaisesRegex(ValueError, "attempts must be nonnegative"):
+            node_summary_features(evidence, torch.ones(1, 1))
+
+    def test_rejects_nonfinite_correct_counts(self) -> None:
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                evidence = torch.tensor([[[1.0, value]]])
+                with self.assertRaisesRegex(
+                    ValueError, "correct must be finite"
+                ):
+                    build_relation_graph(evidence, epoch=None, training=False)
+
+    def test_rejects_negative_correct_counts(self) -> None:
+        evidence = torch.tensor([[[1.0, -1.0]]])
+        with self.assertRaisesRegex(ValueError, "correct must be nonnegative"):
+            node_summary_features(evidence, torch.ones(1, 1))
+
+    def test_rejects_correct_counts_above_attempts(self) -> None:
+        evidence = torch.tensor([[[1.0, 2.0]]])
+        with self.assertRaisesRegex(ValueError, "correct cannot exceed attempts"):
+            build_relation_graph(evidence, epoch=None, training=False)
+
+    def test_rejects_nonfinite_or_nonpositive_reliability_cap(self) -> None:
+        for value in (
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            0.0,
+            -1.0,
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    ValueError, "reliability_cap must be finite and positive"
+                ):
+                    build_relation_graph(
+                        self.evidence,
+                        epoch=None,
+                        training=False,
+                        reliability_cap=value,
+                    )
+
+    def test_sparse_mask_is_observed_subset_with_floor_and_epoch_variation(
+        self,
+    ) -> None:
+        evidence = torch.zeros(8, 8, 2)
+        observed_ids = torch.tensor(
+            [0, 3, 7, 12, 18, 25, 31, 40, 48, 55, 63]
+        )
+        evidence[..., 0].flatten()[observed_ids] = 2
+        evidence[..., 1].flatten()[observed_ids] = 1
+
+        first = build_relation_graph(
+            evidence, epoch=0, training=True, mask_fraction=0.4
+        )
+        later = build_relation_graph(
+            evidence, epoch=100_000, training=True, mask_fraction=0.4
+        )
+        observed = evidence[..., 0] > 0
+
+        self.assertTrue(bool((first.reconstruction_mask <= observed).all()))
+        self.assertTrue(bool((later.reconstruction_mask <= observed).all()))
+        self.assertEqual(int(first.reconstruction_mask.sum()), 4)
+        self.assertEqual(int(later.reconstruction_mask.sum()), 4)
+        self.assertFalse(
+            torch.equal(first.reconstruction_mask, later.reconstruction_mask)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
