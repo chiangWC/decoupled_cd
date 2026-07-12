@@ -12,7 +12,7 @@
 
 - 远端唯一可写工作树是 `/home/xph/jwc/research/decoupled_cd_codex_worktrees/complete_model`；不得修改 `decoupled_cd_v2`，不得 push。
 - Git 身份固定为 `chiangWC <215551297+chiangWC@users.noreply.github.com>`；每个里程碑提交并在 campaign root 生成 Git bundle。
-- campaign root 固定为 `/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712/`；数据、日志、checkpoint、预测和 mastery 不进 Git。
+- campaign root 固定为 `/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712/`；数据、日志、checkpoint、预测和 mastery 不进 Git。
 - 仅使用 seed `42` 与既有 split seed `2024`；优先空闲 GPU，也可使用显存占用低于一半的卡，同卡 `flock` 排他；OOM 不静默改 batch size。
 - primary cohort 固定为 `MOOCRadar / ASSIST17 / XES3G5M`，cohort SHA-256 为 `6342dc8a5f73a4e03a1645780597b625c1480ba7a6513668b6766089cdd5b8a5`。
 - A0v4 recipe 固定为 MOOCRadar r2、ASSIST17 r1、XES3G5M r0；不得重新选择 recipe。
@@ -412,13 +412,13 @@ git commit -m "feat: integrate graph completion into unified v4"
 
 **Interfaces:**
 - Produces CLI: `smoke`、`run-validation`、`replay`、`freeze-a0v4`、`relative-gate`、`external-gate`、`run-test-once`、`status`。
-- Consumes现有 verified cohort/audit 和 runner proof helpers；只写 `unified-ergc-20260712`。
+- Consumes现有 verified cohort/audit 和 runner proof helpers；只写 `unified-ergc-r2-20260712`。
 
 - [ ] **Step 1: 写 campaign identity、recipe、五项门和 test-closed 测试**
 
 ```python
 def test_identity_recipes_and_test_closed(self):
-    self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-20260712")
+    self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r2-20260712")
     self.assertEqual(controller.FROZEN_RECIPES,
                      {"MOOCRadar": 2, "ASSIST17": 1, "XES3G5M": 0})
     with self.assertRaisesRegex(ValueError, "test remains closed"):
@@ -445,7 +445,7 @@ Expected: FAIL with `ImportError`。
 - [ ] **Step 3: 实现 controller 并复用受信 proof 验证**
 
 ```python
-CAMPAIGN_ID = "unified-ergc-20260712"
+CAMPAIGN_ID = "unified-ergc-r2-20260712"
 FROZEN_COHORT_SHA256 = "6342dc8a5f73a4e03a1645780597b625c1480ba7a6513668b6766089cdd5b8a5"
 FROZEN_RECIPES = {"MOOCRadar": 2, "ASSIST17": 1, "XES3G5M": 0}
 ARCHITECTURES = {"a0v4": ("prior", 0.0),
@@ -496,7 +496,7 @@ Expected: all tests PASS，worktree clean。失败时先用 `systematic-debuggin
 - [ ] **Step 2: 动态选卡并只运行一次 A0v4 smoke**
 
 ```bash
-conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py smoke --architecture a0v4 --seed 42 --epochs 1 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py smoke --architecture a0v4 --seed 42 --epochs 1 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712
 ```
 
 Expected: `smoke/a0v4/attempt-001` 记录 GPU UUID、峰值显存、route、manifest/fingerprint、mastery shape、有限 loss；再次调用必须拒绝覆盖。
@@ -504,9 +504,9 @@ Expected: `smoke/a0v4/attempt-001` 记录 GPU UUID、峰值显存、route、mani
 - [ ] **Step 3: 运行三个冻结 A0v4 validation job**
 
 ```bash
-conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset MOOCRadar --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
-conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset ASSIST17 --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
-conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset XES3G5M --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset MOOCRadar --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset ASSIST17 --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset XES3G5M --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712
 ```
 
 Controller 从 `FROZEN_RECIPES` 注入 recipe，不接受 CLI 改 epochs/dim/LR/batch。可让不同 GPU 并行不同数据集，但同 dataset 的 standard/holdout 是不可分割 proof，同卡以 flock 排他。
@@ -519,7 +519,7 @@ conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py f
 git add docs/experiments/stable_graph_a0v4_20260712.md
 git commit -m "docs: freeze stable unified v4 baseline"
 head=$(git rev-parse --short=12 HEAD)
-git bundle create "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712/bundles/a0v4-$head.bundle" HEAD
+git bundle create "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712/bundles/a0v4-$head.bundle" HEAD
 ```
 
 Expected: 三数据集各有唯一 standard/holdout 指标、fingerprint 相同、未访问 test。报告列出 A0v4 vs v3 A0 的 AUC 差值，但 v3 只作历史诊断。
@@ -537,7 +537,7 @@ Expected: 三数据集各有唯一 standard/holdout 指标、fingerprint 相同�
 - [ ] **Step 1: 只运行一次 A2 smoke**
 
 ```bash
-conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py smoke --architecture a2 --seed 42 --epochs 1 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py smoke --architecture a2 --seed 42 --epochs 1 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712
 ```
 
 Expected: `smoke/a2/attempt-001`；masked edge count > 0，graph 梯度有限，observed mastery hard assembly 相等，未 OOM。
@@ -545,9 +545,9 @@ Expected: `smoke/a2/attempt-001`；masked edge count > 0，graph 梯度有限，
 - [ ] **Step 2: 运行三个冻结 A2 validation job**
 
 ```bash
-conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset MOOCRadar --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
-conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset ASSIST17 --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
-conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset XES3G5M --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset MOOCRadar --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset ASSIST17 --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset XES3G5M --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712
 ```
 
 首轮 completion loss weight 固定 `1.0`，graph hidden dim 等于 recipe concept dim。不得看完 validation 后改变模块语义或加入 dataset-specific 数值。
@@ -569,7 +569,7 @@ Expected: 每个数据集输出 standard/holdout/zero/ordinary DOA/weighted DOA 
 git add docs/experiments/stable_graph_a2_20260712.md docs/experiments/unified_mastery_failure_registry.md
 git commit -m "docs: record relational graph validation"
 head=$(git rev-parse --short=12 HEAD)
-git bundle create "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712/bundles/a2-$head.bundle" HEAD
+git bundle create "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712/bundles/a2-$head.bundle" HEAD
 ```
 
 ### Task 8: 外部门、test-once 或下一机制移交
@@ -605,8 +605,8 @@ conda run -n decoupled_cd python -m unittest discover -s tests -v
 conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py status
 git status --short
 head=$(git rev-parse --short=12 HEAD)
-git bundle create "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712/bundles/final-$head.bundle" HEAD
-sha256sum "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712/bundles/final-$head.bundle"
+git bundle create "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712/bundles/final-$head.bundle" HEAD
+sha256sum "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-r2-20260712/bundles/final-$head.bundle"
 ```
 
 Expected: tests PASS、controller 与报告一致、worktree clean、无 test 泄漏、无模型产物入 Git。

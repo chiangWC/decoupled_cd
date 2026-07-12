@@ -133,7 +133,6 @@ def _unified_training_flags(
     spec: LegacyArchitectureIdentity | UnifiedArchitectureSpec,
     *,
     evidence_loss_weight: float,
-    completion_rank: int = 32,
 ) -> list[str]:
     completion_loss_weight = evidence_loss_weight * {
         "prior": 0.0,
@@ -143,8 +142,6 @@ def _unified_training_flags(
     return [
         "--unified-completion",
         spec.completion,
-        "--unified-completion-rank",
-        str(completion_rank),
         "--unified-evidence-loss-weight",
         str(evidence_loss_weight),
         "--unified-completion-loss-weight",

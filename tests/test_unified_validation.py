@@ -79,6 +79,36 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
                 interaction_pairs(train_path) & interaction_pairs(valid_path)
             )
 
+    def test_stable_a0v4_smoke_command_is_accepted_by_train_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "smoke.json"
+
+            try:
+                validation_main(
+                    [
+                        "smoke",
+                        "--architecture",
+                        "a0v4",
+                        "--devices",
+                        "cpu",
+                        "--seed",
+                        "42",
+                        "--epochs",
+                        "1",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+            except subprocess.CalledProcessError as error:
+                self.fail(
+                    f"stable A0v4 smoke command was rejected: {error.cmd}"
+                )
+
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["records"][0]["architecture"], "a0v4"
+            )
+
     def test_script_entrypoint_imports_from_project_root(self):
         child_environment = os.environ.copy()
         child_environment.pop("MKL_THREADING_LAYER", None)
@@ -117,9 +147,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         self.assertEqual(
             command[command.index("--unified-completion") + 1], "prior"
         )
-        self.assertEqual(
-            command[command.index("--unified-completion-rank") + 1], "32"
-        )
+        self.assertNotIn("--unified-completion-rank", command)
         self.assertEqual(
             command[command.index("--unified-evidence-loss-weight") + 1],
             "0.1",

@@ -109,7 +109,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
         return audit
 
     def test_identity_recipes_and_fingerprints(self) -> None:
-        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-20260712")
+        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r2-20260712")
         self.assertEqual(controller.FROZEN_RECIPES, {"MOOCRadar": 2, "ASSIST17": 1, "XES3G5M": 0})
         self.assertEqual(controller.architecture_fingerprint("a0v4"), UnifiedArchitectureSpec(completion="prior").fingerprint())
         self.assertEqual(controller.architecture_fingerprint("a2"), UnifiedArchitectureSpec(completion="evidence-relational-graph").fingerprint())
