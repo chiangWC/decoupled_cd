@@ -61,3 +61,25 @@ implementation phase establish only mechanism and auditability. They are not
 evidence that validation AUC or DOA improved. No controller initialization,
 GPU run, real validation, real test-data read, or experiment is part of this
 commit.
+
+## 注册验证结论（2026-07-12）
+
+Task 9 后续实验严格使用三个独立 trusted controller、固定 seed 42、固定 Task 8
+数值 recipe、controller-owned validation snapshot 与 immutable outer attempt。
+详细逐项指标、delta、GPU 和 proof 见 `docs/unified_v2_validation_log.md`。
+
+结果否定了“仅替换 M4 即可同时恢复 AUC 且不损失 DOA”的注册假设。B0 与 M2
+只在 ASSIST09 通过 joint gate；两者在 ASSIST17 的 weighted DOA 分别回退
+`-0.0004608118`、`-0.0006692743`，在 MOOCRadar 又分别回退
+`-0.0128396218`、`-0.0169917384`。M2+M3 在 ASSIST09 的 ordinary DOA 回退
+`-0.0006311529`，ASSIST17 的 weighted DOA 回退 `-0.0041253628` 且 zero AUC
+回退 `-0.0229749316`。
+
+controller 的可达性 stop gate 因而使 M2+M3 在 cursor 2 停止，使 B0/M2 在
+cursor 3 停止；三者均为 `blocked=true`。XES3G5M 未获授权、未运行，不能补齐
+或外推为四数据集成功。虽然所有已运行组合的 standard overall AUC delta 均为
+正数，但“任一 AUC 改善以 weighted DOA 为代价”已经满足预注册反证条件。
+
+最终判定：NeuralCDM 整体 M4 替换在结构与可训练性测试上成立，但本次冻结 cohort
+上的 global gate FAIL，Task 9 记录为负结果并停止 M4 修改。若要验证 whole-M1
+replacement，必须在新的任务中重新注册，不得从本轮 controller 续跑或调参。

@@ -199,3 +199,68 @@ Immutable negative smoke attempts were retained:
 
 Architecture manifests and fingerprints were identical across datasets;
 numerical recipes did not change architecture fingerprints.
+
+## Task 9：NeuralCDM M4 注册验证（2026-07-12）
+
+本轮在干净路由提交
+`e1d370717d6872d2bf32aafe7d84c165ac983616` 上执行，固定 cohort SHA-256 为
+`77ba446b4cd1e67cb25a5c6e754c6ffb78788fba1519b3ec65d269703313444f`，
+artifact root 为
+`/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-v2-neuralcdm-20260712`。
+B0、M2、M2+M3 的新 fingerprint 分别为 `83084810da46...cd239`、
+`756fe4732d58...4888`、`7b59fafb5d27...3191`。所有真实实验仅由各自的
+controller `authorize` 后调用 controller-owned `run-pair`；没有手工
+`run-split`、调参、测试集读取、OOM 重试或 batch 修改。
+
+括号内为相对同构旧 M4 行的精确 delta。指标口径依次为 standard overall
+AUC、holdout overall AUC、holdout zero AUC、standard ordinary DOA、standard
+weighted DOA。
+
+| 架构 | 数据集 | Standard overall AUC | Holdout overall AUC | Zero AUC | Ordinary DOA | Weighted DOA | Joint gate |
+|---|---|---:|---:|---:|---:|---:|---|
+| B0 | ASSIST09 | 0.6949973902 (+0.1158199089) | 0.6533762320 (+0.0897563513) | 0.6272741467 (+0.0987655538) | 0.6286784893 (+0.0179614404) | 0.6753073934 (+0.0085298345) | PASS |
+| M2 | ASSIST09 | 0.6936857244 (+0.1153868200) | 0.6532055897 (+0.0877105255) | 0.6413193019 (+0.1058558071) | 0.6261427773 (+0.0098944982) | 0.6753207005 (+0.0064273168) | PASS |
+| M2+M3 | ASSIST09 | 0.6884736734 (+0.1105296338) | 0.6548264160 (+0.0875903871) | 0.6205597548 (+0.0809653866) | 0.6213017065 (-0.0006311529) | 0.6750146378 (+0.0081439293) | FAIL |
+| B0 | ASSIST17 | 0.6980089267 (+0.1318609410) | 0.6268888753 (+0.0774896377) | 0.5697472419 (+0.0364335044) | 0.6511864275 (+0.0008668006) | 0.6807698849 (-0.0004608118) | FAIL |
+| M2 | ASSIST17 | 0.6219238593 (+0.0428500650) | 0.6610505093 (+0.0901492030) | 0.6579489025 (+0.0847739254) | 0.6886857636 (+0.0271018780) | 0.6801993560 (-0.0006692743) | FAIL |
+| M2+M3 | ASSIST17 | 0.6185213781 (+0.0401525724) | 0.5818714611 (+0.0142724489) | 0.5445743919 (-0.0229749316) | 0.6902001755 (+0.0028305296) | 0.6762879415 (-0.0041253628) | FAIL |
+| B0 | MOOCRadar | 0.8182326299 (+0.0878509043) | 0.8115020177 (+0.0910607003) | 0.7522291658 (+0.0910798633) | 0.5942040982 (-0.0017084263) | 0.6576846095 (-0.0128396218) | FAIL |
+| M2 | MOOCRadar | 0.8151590143 (+0.0830241032) | 0.8117347245 (+0.0870348575) | 0.7583983667 (+0.1111110782) | 0.5922534129 (-0.0023915592) | 0.6532556852 (-0.0169917384) | FAIL |
+
+GPU 记录中的 peak 为训练摘要的 PyTorch allocated peak；每个对应 outer
+`status.json` 均为 `completed`、exit code 0，并另有进程树采样峰值。
+
+| 架构 | 数据集 | Standard GPU / peak GiB / outer MiB | Holdout GPU / peak GiB / outer MiB |
+|---|---|---:|---:|
+| B0 | ASSIST09 | GPU3 / 2.3524584770 / 3650 | GPU3 / 2.2860584259 / 3558 |
+| M2 | ASSIST09 | GPU2 / 2.7135171890 / 4140 | GPU0 / 2.6470146179 / 4054 |
+| M2+M3 | ASSIST09 | GPU0 / 2.9388108253 / 4408 | GPU0 / 2.8728456497 / 4332 |
+| B0 | ASSIST17 | GPU2 / 2.5146756172 / 4182 | GPU2 / 2.4285235405 / 4058 |
+| M2 | ASSIST17 | GPU0 / 2.7063961029 / 4542 | GPU0 / 2.6197180748 / 4418 |
+| M2+M3 | ASSIST17 | GPU0 / 2.8349676132 / 4688 | GPU2 / 2.7481746674 / 4568 |
+| B0 | MOOCRadar | GPU3 / 0.4798274040 / 2248 | GPU3 / 0.4413785934 / 2226 |
+| M2 | MOOCRadar | GPU2 / 0.6296601295 / 10064 | GPU2 / 0.5895938873 / 10064 |
+
+所有 split 均为各自 immutable root 下的 `attempt-001`。由于外部 GPU2 上
+同时存在其他进程，M2 的 MOOCRadar outer 进程树采样峰值 10064 MiB 明显高于
+PyTorch 自身的 0.63 GiB；因此模型峰值以训练摘要为准，outer 值保留为设备级
+审计证据，不能归因于本模型。
+
+### Controller 终态与结论
+
+- B0：cursor 3，successes 1，issuance counter 3，`blocked=true`；
+  ASSIST09 PASS，ASSIST17/MOOCRadar FAIL。
+- M2：cursor 3，successes 1，issuance counter 3，`blocked=true`；
+  ASSIST09 PASS，ASSIST17/MOOCRadar FAIL。
+- M2+M3：cursor 2，successes 0，issuance counter 2，`blocked=true`；
+  ASSIST09/ASSIST17 均 FAIL。
+
+三个 controller 均因 `successes + remaining < 3` 按注册 stop rule 永久停止。
+没有签发 XES3G5M capability，也没有 XES3G5M attempt。新 M4 在所有已运行
+数据集上提高 standard overall AUC，但 ASSIST17 和 MOOCRadar 的 weighted DOA
+发生回退，直接触发预注册反证条件。因此 Task 9 为负结果、global gate FAIL；
+停止继续修改 M4，后续如切换整套 M1 必须另立任务与注册决策。
+
+辅助 work JSON 中，B0 各 holdout 的 `holdout_doa_spearman` 因常数/不可定义
+为 `NaN`，ASSIST09 standard 的若干空 coverage slice AUC 也为 `NaN`；这些值
+未进入冻结 summary、proof 或上述 gate 指标。必需指标、loss 与 mastery 均有限。
