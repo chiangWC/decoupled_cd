@@ -102,12 +102,66 @@ def load_model(
             manifest,
             architecture_fingerprint=summary["architecture_fingerprint"],
         )
+        required_settings = (
+            "unified_completion",
+            "unified_completion_rank",
+            "unified_evidence_loss_weight",
+            "unified_completion_loss_weight",
+        )
+        missing_settings = [
+            name for name in required_settings if name not in summary
+        ]
+        if missing_settings:
+            raise ValueError(
+                "unified_v2 summary requires settings: "
+                + ", ".join(missing_settings)
+            )
+        completion = summary["unified_completion"]
+        completion_rank = summary["unified_completion_rank"]
+        evidence_loss_weight = summary["unified_evidence_loss_weight"]
+        completion_loss_weight = summary[
+            "unified_completion_loss_weight"
+        ]
+        if type(completion) is not str or completion != architecture.completion:
+            raise ValueError(
+                "unified_completion does not match architecture_manifest"
+            )
+        if (
+            type(completion_rank) is not int
+            or completion_rank <= 0
+        ):
+            raise ValueError(
+                "unified_completion_rank must be a positive integer"
+            )
+        for name, value in (
+            ("unified_evidence_loss_weight", evidence_loss_weight),
+            ("unified_completion_loss_weight", completion_loss_weight),
+        ):
+            if type(value) not in {int, float} or not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+        if evidence_loss_weight <= 0.0:
+            raise ValueError(
+                "unified_evidence_loss_weight must be positive"
+            )
+        if completion == "prior" and completion_loss_weight != 0.0:
+            raise ValueError(
+                "unified_completion_loss_weight must be zero for prior"
+            )
+        if completion == "lowrank" and completion_loss_weight <= 0.0:
+            raise ValueError(
+                "unified_completion_loss_weight must be positive for lowrank"
+            )
         model = UnifiedDecoupledCDM(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
             num_concepts=train_bundle.num_concepts,
             dim=concept_dim,
             architecture=architecture,
+            completion_rank=completion_rank,
+        )
+        model.set_checkpoint_loss_weights(
+            evidence_loss_weight=float(evidence_loss_weight),
+            completion_loss_weight=float(completion_loss_weight),
         )
         return _finalize_loaded_model(
             model, checkpoint_path=checkpoint_path, device=device

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
+from collections.abc import Mapping
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -108,6 +111,66 @@ class UnifiedDecoupledCDM(nn.Module):
         )
         self._checkpoint_unified_completion_loss_weight.fill_(
             completion_loss_weight
+        )
+
+    @staticmethod
+    def _checkpoint_values_equal(
+        expected: torch.Tensor,
+        actual: torch.Tensor,
+    ) -> bool:
+        expected_cpu = expected.detach().cpu()
+        actual_cpu = actual.detach().cpu()
+        if expected_cpu.shape != actual_cpu.shape:
+            return False
+        if expected_cpu.is_floating_point() and expected_cpu.numel() == 1:
+            expected_value = float(expected_cpu)
+            actual_value = float(actual_cpu)
+            return (
+                math.isnan(expected_value) and math.isnan(actual_value)
+            ) or expected_value == actual_value
+        return torch.equal(expected_cpu, actual_cpu)
+
+    def _validate_checkpoint_metadata(
+        self,
+        state_dict: Mapping[str, Any],
+    ) -> None:
+        fields = {
+            "_checkpoint_architecture_manifest": "architecture manifest",
+            "_checkpoint_architecture_fingerprint": (
+                "architecture fingerprint"
+            ),
+            "_checkpoint_unified_completion": "unified completion",
+            "_checkpoint_unified_completion_rank": (
+                "unified completion_rank"
+            ),
+            "_checkpoint_unified_evidence_loss_weight": (
+                "unified evidence_loss_weight"
+            ),
+            "_checkpoint_unified_completion_loss_weight": (
+                "unified completion_loss_weight"
+            ),
+        }
+        for key, label in fields.items():
+            if key not in state_dict:
+                raise ValueError(f"checkpoint is missing {label}")
+            actual = state_dict[key]
+            if not isinstance(actual, torch.Tensor):
+                raise ValueError(f"checkpoint {label} must be a tensor")
+            expected = getattr(self, key)
+            if not self._checkpoint_values_equal(expected, actual):
+                raise ValueError(f"checkpoint {label} mismatch")
+
+    def load_state_dict(
+        self,
+        state_dict: Mapping[str, Any],
+        strict: bool = True,
+        assign: bool = False,
+    ):
+        self._validate_checkpoint_metadata(state_dict)
+        return super().load_state_dict(
+            state_dict,
+            strict=strict,
+            assign=assign,
         )
 
     @staticmethod

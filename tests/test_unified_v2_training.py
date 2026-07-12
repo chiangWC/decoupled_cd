@@ -38,7 +38,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
 
     @staticmethod
     def tensors() -> dict[str, torch.Tensor | None]:
-        evidence = torch.zeros(2, 3, 2)
+        evidence = torch.zeros(2, 3, 6)
         evidence[0, 0, :2] = torch.tensor([4.0, 3.0])
         evidence[0, 1, :2] = torch.tensor([3.0, 1.0])
         evidence[1, 1, :2] = torch.tensor([5.0, 4.0])
@@ -97,7 +97,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             num_concepts=3,
             dim=4,
             architecture=UnifiedArchitectureSpec(completion=completion),
-            initial_mastery_logits=smoothed_evidence_logits(evidence),
+            initial_mastery_logits=smoothed_evidence_logits(evidence[..., :2]),
         )
 
     @staticmethod
@@ -205,8 +205,8 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         missing = evidence[..., 0] == 0
         changed[..., 1][missing] = 999.0
 
-        first = observed_mastery_evidence_loss(output, evidence)
-        second = observed_mastery_evidence_loss(output, changed)
+        first = observed_mastery_evidence_loss(output, evidence[..., :2])
+        second = observed_mastery_evidence_loss(output, changed[..., :2])
 
         torch.testing.assert_close(first, second)
 
@@ -503,6 +503,10 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         tensors = self.tensors()
         before = self.forward(model, tensors)
         manifest = model.architecture.manifest()
+        model.set_checkpoint_loss_weights(
+            evidence_loss_weight=1.0,
+            completion_loss_weight=0.0,
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             checkpoint = Path(temp_dir) / "unified.pt"
@@ -511,6 +515,10 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 "model": "unified_v2",
                 "architecture_manifest": manifest,
                 "architecture_fingerprint": model.architecture.fingerprint(),
+                "unified_completion": "prior",
+                "unified_completion_rank": 32,
+                "unified_evidence_loss_weight": 1.0,
+                "unified_completion_loss_weight": 0.0,
             }
             bundles = {
                 "train": SimpleNamespace(
@@ -531,6 +539,83 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         self.assertEqual(loaded.architecture.manifest(), manifest)
         self.assertTrue(torch.equal(before.probs, after.probs))
         self.assertTrue(torch.equal(before.mastery, after.mastery))
+
+    def test_checkpoint_rejects_tampered_same_length_fingerprint(self) -> None:
+        model = self.model()
+        model.set_checkpoint_loss_weights(
+            evidence_loss_weight=1.0,
+            completion_loss_weight=0.0,
+        )
+        state = model.state_dict()
+        fingerprint = state["_checkpoint_architecture_fingerprint"].clone()
+        fingerprint[0] = (
+            ord("0") if int(fingerprint[0]) != ord("0") else ord("1")
+        )
+        state["_checkpoint_architecture_fingerprint"] = fingerprint
+        summary = {
+            "model": "unified_v2",
+            "architecture_manifest": model.architecture.manifest(),
+            "architecture_fingerprint": model.architecture.fingerprint(),
+            "unified_completion": "prior",
+            "unified_completion_rank": 32,
+            "unified_evidence_loss_weight": 1.0,
+            "unified_completion_loss_weight": 0.0,
+        }
+        bundles = {
+            "train": SimpleNamespace(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=3,
+            )
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint = Path(temp_dir) / "tampered.pt"
+            torch.save(state, checkpoint)
+            with self.assertRaisesRegex(ValueError, "fingerprint.*mismatch"):
+                analyze_prediction_slices.load_model(
+                    summary=summary,
+                    checkpoint_path=str(checkpoint),
+                    bundles=bundles,
+                    concept_dim=4,
+                    device="cpu",
+                )
+
+    def test_checkpoint_rejects_summary_loss_weight_disagreement(self) -> None:
+        model = self.model()
+        model.set_checkpoint_loss_weights(
+            evidence_loss_weight=0.75,
+            completion_loss_weight=0.0,
+        )
+        summary = {
+            "model": "unified_v2",
+            "architecture_manifest": model.architecture.manifest(),
+            "architecture_fingerprint": model.architecture.fingerprint(),
+            "unified_completion": "prior",
+            "unified_completion_rank": 32,
+            "unified_evidence_loss_weight": 0.5,
+            "unified_completion_loss_weight": 0.0,
+        }
+        bundles = {
+            "train": SimpleNamespace(
+                num_students=2,
+                num_exercises=3,
+                num_concepts=3,
+            )
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint = Path(temp_dir) / "mismatch.pt"
+            torch.save(model.state_dict(), checkpoint)
+            with self.assertRaisesRegex(
+                ValueError,
+                "evidence_loss_weight.*mismatch",
+            ):
+                analyze_prediction_slices.load_model(
+                    summary=summary,
+                    checkpoint_path=str(checkpoint),
+                    bundles=bundles,
+                    concept_dim=4,
+                    device="cpu",
+                )
 
     def test_trained_checkpoint_saves_unified_configuration(self) -> None:
         model = self.model()
@@ -652,11 +737,19 @@ class UnifiedV2TrainingTests(unittest.TestCase):
     def test_coverage_evaluation_forwards_loaded_unified_model(self) -> None:
         torch.manual_seed(13)
         model = self.model()
+        model.set_checkpoint_loss_weights(
+            evidence_loss_weight=1.0,
+            completion_loss_weight=0.0,
+        )
         manifest = model.architecture.manifest()
         summary = {
             "model": "unified_v2",
             "architecture_manifest": manifest,
             "architecture_fingerprint": model.architecture.fingerprint(),
+            "unified_completion": "prior",
+            "unified_completion_rank": 32,
+            "unified_evidence_loss_weight": 1.0,
+            "unified_completion_loss_weight": 0.0,
         }
         bundles = {
             "train": SimpleNamespace(

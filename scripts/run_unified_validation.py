@@ -109,6 +109,27 @@ def architecture_fingerprint(architecture: str) -> str:
     return architecture_spec(architecture).fingerprint()
 
 
+def _unified_training_flags(
+    spec: UnifiedArchitectureSpec,
+    *,
+    evidence_loss_weight: float,
+    completion_rank: int = 32,
+) -> list[str]:
+    completion_loss_weight = (
+        evidence_loss_weight if spec.completion == "lowrank" else 0.0
+    )
+    return [
+        "--unified-completion",
+        spec.completion,
+        "--unified-completion-rank",
+        str(completion_rank),
+        "--unified-evidence-loss-weight",
+        str(evidence_loss_weight),
+        "--unified-completion-loss-weight",
+        str(completion_loss_weight),
+    ]
+
+
 def parse_gpu_inventory(output: str) -> list[GpuSnapshot]:
     snapshots: list[GpuSnapshot] = []
     for line_number, line in enumerate(output.splitlines(), start=1):
@@ -225,10 +246,10 @@ def build_train_command(
         "scripts/train.py",
         "--model",
         "unified_v2",
-        "--unified-completion",
-        spec.completion,
-        "--unified-mastery-loss-weight",
-        str(selected_recipe.mastery_loss_weight),
+        *_unified_training_flags(
+            spec,
+            evidence_loss_weight=selected_recipe.mastery_loss_weight,
+        ),
         "--train-interactions",
         str(train_path),
         "--valid-interactions",
@@ -747,10 +768,10 @@ def _run_smoke(args: argparse.Namespace) -> None:
                     "scripts/train.py",
                     "--model",
                     "unified_v2",
-                    "--unified-completion",
-                    spec.completion,
-                    "--unified-mastery-loss-weight",
-                    "0.1",
+                    *_unified_training_flags(
+                        spec,
+                        evidence_loss_weight=0.1,
+                    ),
                     "--train-interactions",
                     str(train_path),
                     "--valid-interactions",

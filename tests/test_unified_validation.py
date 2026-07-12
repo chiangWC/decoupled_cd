@@ -113,8 +113,39 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         self.assertEqual(
             command[command.index("--unified-completion") + 1], "prior"
         )
+        self.assertEqual(
+            command[command.index("--unified-completion-rank") + 1], "32"
+        )
+        self.assertEqual(
+            command[command.index("--unified-evidence-loss-weight") + 1],
+            "0.1",
+        )
+        self.assertEqual(
+            command[command.index("--unified-completion-loss-weight") + 1],
+            "0.0",
+        )
+        self.assertNotIn("--unified-mastery-loss-weight", command)
         self.assertNotIn("--unified-inference", command)
         self.assertNotIn("--unified-composer", command)
+
+    def test_lowrank_training_command_registers_positive_completion_loss(self):
+        command = build_train_command(
+            dataset_id="ASSIST17",
+            split_id="standard",
+            architecture="m2",
+            data_root=Path("/datasets"),
+            output=Path("/artifacts/train-summary.json"),
+            device="cpu",
+        )
+
+        self.assertEqual(
+            command[command.index("--unified-completion") + 1], "lowrank"
+        )
+        self.assertEqual(
+            command[command.index("--unified-completion-loss-weight") + 1],
+            "0.1",
+        )
+        self.assertNotIn("--unified-mastery-loss-weight", command)
 
     def test_gpu_selection_prefers_idle_then_allows_under_half_memory(self):
         snapshots = parse_gpu_inventory(
