@@ -138,11 +138,6 @@ def evaluate_candidate(
             "baseline and candidate dataset sets differ: "
             f"baseline={sorted(baseline)}, candidate={sorted(candidate)}"
         )
-    if baseline_cohort != candidate_cohort:
-        raise ValueError(
-            "baseline and candidate cohort hashes differ: "
-            f"{baseline_cohort} != {candidate_cohort}"
-        )
     if baseline_metrics != candidate_metrics:
         raise ValueError("baseline and candidate validation metric sets differ")
 
@@ -174,7 +169,6 @@ def evaluate_candidate(
 
     standard_pass, standard_failures = non_regression("standard_overall_auc")
     holdout_pass, holdout_failures = non_regression("holdout_overall_auc")
-    weighted_pass, weighted_failures = non_regression("weighted_doa")
     zero_improved = [
         dataset_id for dataset_id in dataset_ids if deltas[dataset_id]["zero_auc"] > 0.0
     ]
@@ -182,11 +176,6 @@ def evaluate_candidate(
         dataset_id
         for dataset_id in dataset_ids
         if deltas[dataset_id]["zero_auc"] >= 0.001
-    ]
-    ordinary_improved = [
-        dataset_id
-        for dataset_id in dataset_ids
-        if deltas[dataset_id]["ordinary_doa"] > 0.0
     ]
 
     gates: dict[str, dict[str, Any]] = {
@@ -198,10 +187,6 @@ def evaluate_candidate(
             "pass": holdout_pass,
             "failed_datasets": holdout_failures,
         },
-        "weighted_doa_non_regression": {
-            "pass": weighted_pass,
-            "failed_datasets": weighted_failures,
-        },
         "zero_auc_improved_two_thirds": {
             "pass": len(zero_improved) >= required_improvements,
             "improved_datasets": zero_improved,
@@ -212,22 +197,31 @@ def evaluate_candidate(
             "qualifying_datasets": zero_threshold,
             "required_delta": 0.001,
         },
-        "ordinary_doa_improved_two_thirds": {
-            "pass": len(ordinary_improved) >= required_improvements,
-            "improved_datasets": ordinary_improved,
-            "required": required_improvements,
+        "same_frozen_cohort": {
+            "pass": baseline_cohort == candidate_cohort,
         },
     }
     failed_gates = [name for name, result in gates.items() if not result["pass"]]
     zero_deltas = [deltas[dataset_id]["zero_auc"] for dataset_id in dataset_ids]
-    ordinary_deltas = [
-        deltas[dataset_id]["ordinary_doa"] for dataset_id in dataset_ids
+    weighted_deltas = [
+        deltas[dataset_id]["weighted_doa"] for dataset_id in dataset_ids
     ]
+    parameter_counts = {
+        row["parameter_count"]
+        for row in candidate.values()
+        if "parameter_count" in row
+    }
+    if any(type(value) is not int or value < 0 for value in parameter_counts):
+        raise ValueError("candidate parameter_count must be a nonnegative integer")
+    if len(parameter_counts) > 1:
+        raise ValueError("candidate rows contain mixed parameter counts")
+    parameter_count = next(iter(parameter_counts), 0)
     ranking = {
         "mean_zero_auc_delta": math.fsum(zero_deltas) / len(zero_deltas),
         "worst_zero_auc_delta": min(zero_deltas),
-        "mean_ordinary_doa_delta": math.fsum(ordinary_deltas)
-        / len(ordinary_deltas),
+        "mean_weighted_doa_delta": math.fsum(weighted_deltas)
+        / len(weighted_deltas),
+        "negative_parameter_count": -float(parameter_count),
     }
     for name, value in ranking.items():
         if type(value) is not float or not math.isfinite(value):

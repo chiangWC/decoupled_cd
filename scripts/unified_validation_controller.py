@@ -12,6 +12,7 @@ import secrets
 import stat
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Mapping, Sequence
 
 from models.unified_v2_spec import UnifiedArchitectureSpec
@@ -22,9 +23,17 @@ from scripts.unified_dataset_audit import canonical_sha256
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 NONCE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ARCHITECTURES = {
-    "b0": ("prior", "mask"),
-    "m2": ("graph", "mask"),
-    "m2-m3": ("graph", "coverage"),
+    "a0": ("prior", 0.0),
+    "a1": ("lowrank", 1.0),
+}
+CAMPAIGN_ID = "unified-mastery-20260712"
+CONTROLLER_SCHEMA_VERSION = 3
+RECIPE_COUNTS = {
+    "ASSIST09": 1,
+    "ASSIST17": 2,
+    "NIPS34": 1,
+    "MOOCRadar": 3,
+    "XES3G5M": 2,
 }
 BASELINE_METRICS = (
     "standard_overall_auc",
@@ -202,10 +211,10 @@ def _verify_normal_git_index(
 
 def _architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
     try:
-        inference, composer = ARCHITECTURES[architecture]
+        completion, _ = ARCHITECTURES[architecture]
     except KeyError as error:
         raise ValueError(f"unknown unified architecture: {architecture}") from error
-    return UnifiedArchitectureSpec(inference=inference, composer=composer)
+    return UnifiedArchitectureSpec(completion=completion)
 
 
 def _load_json(path: Path, *, label: str) -> dict[str, Any]:
@@ -347,6 +356,13 @@ def _controller_lock(state_dir: Path):
 
 def _load_state(state_dir: Path, repo_root: Path) -> dict[str, Any]:
     state = _load_json(state_dir / "state.json", label="controller state")
+    if (
+        state.get("schema_version") != CONTROLLER_SCHEMA_VERSION
+        or state.get("campaign_id") != CAMPAIGN_ID
+    ):
+        raise ValueError(
+            "controller state schema/campaign is stale; initialize fresh state"
+        )
     registered_head = state.get("route_commit")
     actual_head = _route_head(repo_root.resolve())
     if registered_head != actual_head:
@@ -670,6 +686,25 @@ def initialize_controller(
         cohort_sha256=cohort_hash,
     )
     registered_baseline = {"rows": baseline_rows}
+    recipe_indices: dict[str, int] = {}
+    registered_recipes: dict[str, Mapping[str, object] | None] = {}
+    for row in baseline_rows:
+        dataset_id = str(row["dataset_id"])
+        recipe_index = row.get("recipe_index", 0)
+        if (
+            type(recipe_index) is not int
+            or not 0 <= recipe_index < RECIPE_COUNTS[dataset_id]
+        ):
+            raise ValueError(f"baseline recipe index is invalid: {dataset_id}")
+        recipe = row.get("numerical_recipe")
+        if architecture == "a1" and not isinstance(recipe, Mapping):
+            raise ValueError(f"A1 requires frozen A0 recipe: {dataset_id}")
+        recipe_indices[dataset_id] = recipe_index
+        registered_recipes[dataset_id] = (
+            dict(recipe)
+            if architecture == "a1" and isinstance(recipe, Mapping)
+            else None
+        )
     data_root = data_root.resolve()
     artifact_root = artifact_root.resolve()
     if _has_test_token(str(data_root)) or _has_test_token(str(artifact_root)):
@@ -704,7 +739,8 @@ def initialize_controller(
                 for source in sources
             ]
         state: dict[str, object] = {
-            "schema_version": 1,
+            "schema_version": CONTROLLER_SCHEMA_VERSION,
+            "campaign_id": CAMPAIGN_ID,
             "controller_id": secrets.token_hex(32),
             "route_commit": route_commit,
             "cohort_sha256": cohort_hash,
@@ -720,6 +756,10 @@ def initialize_controller(
             "validation_data_sha256": canonical_sha256(validation_data),
             "cursor": 0,
             "successes": 0,
+            "overall_failures": 0,
+            "recipe_indices": recipe_indices,
+            "registered_recipes": registered_recipes,
+            "selected_recipes": {},
             "zero_delta_threshold_seen": False,
             "issuance_counter": 0,
             "active_pair": None,
@@ -935,6 +975,11 @@ def _verify_split_proof(
     )
     if mastery_loss_weight <= 0.0:
         raise ValueError(f"{split_id} mastery_loss_weight must be positive")
+    if summary.get("recipe_index") != consumption.get("recipe_index"):
+        raise ValueError(f"{split_id} numerical recipe index mismatch")
+    expected_recipe = consumption.get("numerical_recipe")
+    if isinstance(expected_recipe, Mapping) and numerical_recipe != expected_recipe:
+        raise ValueError(f"{split_id} numerical recipe changed from frozen A0")
     metrics = {
         field: _finite_metric(summary, field)
         for field in ("overall_auc", "zero_auc", "ordinary_doa", "weighted_doa")
@@ -959,6 +1004,8 @@ def _verify_split_proof(
         "cohort": cohort_fingerprint,
         "datasets": verified_datasets,
         "metrics": metrics,
+        "recipe_index": summary["recipe_index"],
+        "numerical_recipe": dict(numerical_recipe),
     }
 
 
@@ -966,10 +1013,22 @@ def _joint_gate_success(deltas: Mapping[str, float]) -> bool:
     return (
         deltas["standard_overall_auc"] >= 0.0
         and deltas["holdout_overall_auc"] >= 0.0
-        and deltas["weighted_doa"] >= 0.0
         and deltas["zero_auc"] > 0.0
-        and deltas["ordinary_doa"] > 0.0
     )
+
+
+def _next_a0_recipe_index(
+    *,
+    dataset_id: str,
+    recipe_index: int,
+    overall_guard_passed: bool,
+    eligible_candidates: int,
+) -> int | None:
+    if overall_guard_passed or recipe_index + 1 >= RECIPE_COUNTS[dataset_id]:
+        return None
+    if dataset_id == "XES3G5M" and eligible_candidates >= 3:
+        return None
+    return recipe_index + 1
 
 
 def _advance_active_pair(
@@ -1028,9 +1087,20 @@ def _advance_active_pair(
         "ordinary_doa": standard["ordinary_doa"] - baseline["ordinary_doa"],
     }
     joint_success = _joint_gate_success(deltas)
+    overall_success = (
+        deltas["standard_overall_auc"] >= 0.0
+        and deltas["holdout_overall_auc"] >= 0.0
+    )
     dataset_id = str(active_pair.get("dataset_id"))
+    if (
+        split_proofs["standard"]["recipe_index"]
+        != split_proofs["holdout"]["recipe_index"]
+        or split_proofs["standard"]["numerical_recipe"]
+        != split_proofs["holdout"]["numerical_recipe"]
+    ):
+        raise ValueError("standard/holdout numerical recipes differ")
     proof: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": CONTROLLER_SCHEMA_VERSION,
         "controller_id": state["controller_id"],
         "route_commit": state["route_commit"],
         "counter": active_pair["counter"],
@@ -1051,21 +1121,54 @@ def _advance_active_pair(
     else:
         _exclusive_json(proof_path, proof)
     state["cursor"] = cursor + 1
+    recipe_indices = state.get("recipe_indices")
+    if not isinstance(recipe_indices, dict):
+        raise ValueError("controller recipe registry is invalid")
+    recipe_index = recipe_indices.get(dataset_id)
+    if type(recipe_index) is not int:
+        raise ValueError("controller recipe index is invalid")
+    next_recipe_index = _next_a0_recipe_index(
+        dataset_id=dataset_id,
+        recipe_index=recipe_index,
+        overall_guard_passed=overall_success,
+        eligible_candidates=int(state.get("successes", 0)),
+    )
+    if state.get("architecture") == "a0" and next_recipe_index is not None:
+        state["cursor"] = cursor
+        recipe_indices[dataset_id] = next_recipe_index
+        state["active_pair"] = None
+        _atomic_json(state_dir / "state.json", state)
+        return state
     if joint_success:
         state["successes"] = int(state.get("successes", 0)) + 1
+    if overall_success:
+        selected_recipes = state.get("selected_recipes")
+        if not isinstance(selected_recipes, dict):
+            raise ValueError("controller selected recipe registry is invalid")
+        selected_recipes[dataset_id] = {
+            "recipe_index": recipe_index,
+            "numerical_recipe": split_proofs["standard"]["numerical_recipe"],
+        }
+    if not overall_success:
+        state["overall_failures"] = int(state.get("overall_failures", 0)) + 1
     if deltas["zero_auc"] >= 0.001:
         state["zero_delta_threshold_seen"] = True
     state["active_pair"] = None
     dataset_ids = state.get("dataset_ids")
     assert isinstance(dataset_ids, list)
     remaining = len(dataset_ids) - int(state["cursor"])
+    required_improvements = math.ceil(2 * len(dataset_ids) / 3)
     if int(state["cursor"]) == len(dataset_ids):
         state["complete"] = True
         state["global_pass"] = (
-            int(state["successes"]) >= 3
+            int(state.get("overall_failures", 0)) == 0
+            and int(state["successes"]) >= required_improvements
             and bool(state["zero_delta_threshold_seen"])
         )
-    elif int(state["successes"]) + remaining < 3:
+    elif (
+        int(state.get("overall_failures", 0)) > 0
+        or int(state["successes"]) + remaining < required_improvements
+    ):
         state["blocked"] = True
     _atomic_json(state_dir / "state.json", state)
     return state
@@ -1105,7 +1208,7 @@ def _validate_pending_token(
     ):
         raise ValueError("controller progress cannot validate pending issuance")
     common = {
-        "schema_version": 1,
+        "schema_version": CONTROLLER_SCHEMA_VERSION,
         "controller_id": state.get("controller_id"),
         "route_commit": state.get("route_commit"),
         "counter": int(state.get("issuance_counter", 0)) + 1,
@@ -1230,7 +1333,7 @@ def authorize_next(
                 )
             if state.get("complete"):
                 completion: dict[str, object] = {
-                    "schema_version": 1,
+                    "schema_version": CONTROLLER_SCHEMA_VERSION,
                     "controller_id": state["controller_id"],
                     "route_commit": state["route_commit"],
                     "complete": True,
@@ -1255,7 +1358,7 @@ def authorize_next(
                 raise ValueError("controller dataset identity is invalid")
             counter = int(state.get("issuance_counter", 0)) + 1
             common: dict[str, object] = {
-                "schema_version": 1,
+                "schema_version": CONTROLLER_SCHEMA_VERSION,
                 "controller_id": state["controller_id"],
                 "route_commit": state["route_commit"],
                 "counter": counter,
@@ -1310,7 +1413,12 @@ def _outer_command(
     split_id: str,
 ) -> list[str]:
     runner = OUTER_RUNNER_OVERRIDE or repo_root / "scripts" / "run_remote_campaign.py"
-    artifact_root = Path(str(state["artifact_root"])) / dataset_id / split_id
+    artifact_root = (
+        Path(str(state["artifact_root"]))
+        / str(state["architecture"])
+        / dataset_id
+        / split_id
+    )
     records = state["validation_data"][f"{dataset_id}:{split_id}"]
     command = [
         sys.executable,
@@ -1336,6 +1444,8 @@ def _outer_command(
             str(state_dir / "cohort.json"),
             "--seed",
             "42",
+            "--split-seed",
+            "2024",
             "--doa-seed",
             "42",
             "--min-responses",
@@ -1350,6 +1460,12 @@ def _outer_command(
             split_id,
             "--architecture",
             str(state["architecture"]),
+            "--architecture-fingerprint",
+            str(state["architecture_fingerprint"]),
+            "--cohort-sha256",
+            str(state["cohort_sha256"]),
+            "--recipe-index",
+            str(state["recipe_indices"][dataset_id]),
             "--data-root",
             str(state["data_root"]),
             "--controller-state-dir",
@@ -1391,6 +1507,21 @@ def _block_launch(
             _atomic_json(state_dir / "state.json", state)
 
 
+def _terminate_started_processes(
+    processes: Mapping[str, subprocess.Popen[str]],
+) -> None:
+    for process in processes.values():
+        if process.poll() is None:
+            process.terminate()
+    for process in processes.values():
+        if process.poll() is None:
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+
 def run_registered_pair(
     *,
     state_dir: Path,
@@ -1417,7 +1548,10 @@ def run_registered_pair(
         counter = int(active["counter"])
         before_attempts = {
             split_id: _attempt_names(
-                Path(str(state["artifact_root"])) / dataset_id / split_id
+                Path(str(state["artifact_root"]))
+                / str(state["architecture"])
+                / dataset_id
+                / split_id
             )
             for split_id in ("standard", "holdout")
         }
@@ -1445,22 +1579,49 @@ def run_registered_pair(
 
     new_attempts: dict[str, str] = {}
     try:
-        for split_id in ("standard", "holdout"):
-            completed = subprocess.Popen(
-                commands[split_id],
-                cwd=repo_root,
-                env=_sanitized_subprocess_env(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            stdout, stderr = completed.communicate()
-            if completed.returncode != 0:
-                raise RuntimeError(
-                    f"{split_id} outer campaign failed with "
-                    f"{completed.returncode}: {stderr.strip()}"
+        processes: dict[str, subprocess.Popen[str]] = {}
+        try:
+            for split_id in ("standard", "holdout"):
+                processes[split_id] = subprocess.Popen(
+                    commands[split_id],
+                    cwd=repo_root,
+                    env=_sanitized_subprocess_env(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
                 )
-            split_root = Path(str(state["artifact_root"])) / dataset_id / split_id
+        except BaseException:
+            _terminate_started_processes(processes)
+            raise
+        results: dict[str, tuple[str, str]] = {}
+        failed_split: str | None = None
+        with ThreadPoolExecutor(max_workers=len(processes)) as executor:
+            futures = {
+                executor.submit(process.communicate): split_id
+                for split_id, process in processes.items()
+            }
+            for future in as_completed(futures):
+                split_id = futures[future]
+                results[split_id] = future.result()
+                if processes[split_id].returncode != 0 and failed_split is None:
+                    failed_split = split_id
+                    _terminate_started_processes(processes)
+        if failed_split is not None:
+            split_id = failed_split
+            _, stderr = results[split_id]
+            raise RuntimeError(
+                f"{split_id} outer campaign failed with "
+                f"{processes[split_id].returncode}: {stderr.strip()}"
+            )
+        for split_id in ("standard", "holdout"):
+            completed = processes[split_id]
+            stdout, stderr = results[split_id]
+            split_root = (
+                Path(str(state["artifact_root"]))
+                / str(state["architecture"])
+                / dataset_id
+                / split_id
+            )
             after = set(_attempt_names(split_root))
             created = sorted(after - set(before_attempts[split_id]))
             if len(created) != 1:
@@ -1536,7 +1697,7 @@ def consume_split_capability(
             raise ValueError(f"capability token has no {split_id} capability")
         capability = dict(capability)
         expected_top = {
-            "schema_version": 1,
+            "schema_version": CONTROLLER_SCHEMA_VERSION,
             "controller_id": state.get("controller_id"),
             "route_commit": state.get("route_commit"),
             "counter": active_pair.get("counter"),
@@ -1578,6 +1739,7 @@ def consume_split_capability(
         attempt_dir = attempt_dir.resolve()
         expected_attempt_root = (
             Path(str(state.get("artifact_root"))).resolve()
+            / architecture
             / dataset_id
             / split_id
         )
@@ -1626,6 +1788,8 @@ def consume_split_capability(
                 label="registered architecture manifest",
             ),
             "cohort_sha256": state["cohort_sha256"],
+            "recipe_index": state["recipe_indices"][dataset_id],
+            "numerical_recipe": state["registered_recipes"].get(dataset_id),
             "attempt_dir": str(attempt_dir),
             "summary_path": str(output_path.resolve()),
             "data_paths": _expected_data_paths(

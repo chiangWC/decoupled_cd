@@ -8,12 +8,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from unittest.mock import MagicMock
 
 from models.unified_v2_spec import UnifiedArchitectureSpec
 from scripts import unified_validation_controller as controller_module
 from scripts.unified_dataset_audit import canonical_sha256
-from scripts.run_unified_validation import main as validation_main
+from scripts.run_unified_validation import RECIPES, main as validation_main
 from scripts.unified_validation_controller import (
+    CAMPAIGN_ID,
     DATASET_DIRECTORIES,
     _advance_active_pair,
     authorize_next,
@@ -23,7 +25,7 @@ from scripts.unified_validation_controller import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATASET_IDS = ("ASSIST09", "ASSIST17", "MOOCRadar", "XES3G5M")
+DATASET_IDS = ("ASSIST09", "ASSIST17", "MOOCRadar")
 
 
 class UnifiedValidationControllerTests(unittest.TestCase):
@@ -59,16 +61,21 @@ class UnifiedValidationControllerTests(unittest.TestCase):
         cohort: dict[str, object] = {
             "schema_version": 1,
             "dataset_ids": list(DATASET_IDS),
+            "audit_sha256": "a" * 64,
+            "dataset_audit_sha256": {
+                dataset_id: "d" * 64 for dataset_id in DATASET_IDS
+            },
+            "b0_validation_references": {
+                dataset_id: {"source": "registered-baseline"}
+                for dataset_id in DATASET_IDS
+            },
         }
         cohort["cohort_sha256"] = canonical_sha256(cohort)
         self.cohort = cohort
         self.cohort_path.write_text(json.dumps(cohort), encoding="utf-8")
 
         self.manifest_path = self.root / "manifest.json"
-        self.manifest = UnifiedArchitectureSpec(
-            inference="graph",
-            composer="mask",
-        ).manifest()
+        self.manifest = UnifiedArchitectureSpec(completion="lowrank").manifest()
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
 
         self.baseline_path = self.root / "baseline.json"
@@ -82,6 +89,8 @@ class UnifiedValidationControllerTests(unittest.TestCase):
                 "zero_auc": 0.60,
                 "ordinary_doa": 0.61,
                 "weighted_doa": 0.62,
+                "recipe_index": 0,
+                "numerical_recipe": RECIPES[dataset_id][0].__dict__,
             }
             for dataset_id in DATASET_IDS
         ]
@@ -90,7 +99,8 @@ class UnifiedValidationControllerTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.data_root = self.root / "registered-data"
-        for standard_dir, holdout_dir in DATASET_DIRECTORIES.values():
+        for dataset_id in DATASET_IDS:
+            standard_dir, holdout_dir = DATASET_DIRECTORIES[dataset_id]
             for split_id, directory_name in (
                 ("standard", standard_dir),
                 ("holdout", holdout_dir),
@@ -116,7 +126,7 @@ class UnifiedValidationControllerTests(unittest.TestCase):
             repo_root=self.repo_root,
             cohort_path=self.cohort_path,
             manifest_path=self.manifest_path,
-            architecture="m2",
+            architecture="a1",
             baseline_rows_path=self.baseline_path,
             data_root=self.data_root,
             artifact_root=self.artifact_root,
@@ -139,7 +149,7 @@ class UnifiedValidationControllerTests(unittest.TestCase):
     ) -> dict[str, object]:
         state = json.loads((self.state_dir / "state.json").read_text())
         self._set_unit_launch(state, dataset_id="ASSIST09")
-        attempt_dir = self.artifact_root / "ASSIST09" / split_id / "attempt-001"
+        attempt_dir = self.artifact_root / "a1" / "ASSIST09" / split_id / "attempt-001"
         attempt_dir.mkdir(parents=True, exist_ok=True)
         return consume_split_capability(
             state_dir=self.state_dir,
@@ -147,7 +157,7 @@ class UnifiedValidationControllerTests(unittest.TestCase):
             token_path=token_path,
             dataset_id="ASSIST09",
             split_id=split_id,
-            architecture="m2",
+            architecture="a1",
             data_root=Path(state["data_root"]),
             raw_output=Path("validation-summary.json"),
             attempt_dir=attempt_dir,
@@ -231,7 +241,7 @@ binding = consume_split_capability(
 )
 summary_path = Path(binding["summary_path"])
 summary = {
-    "schema_version": 1,
+    "schema_version": 3,
     "dataset_id": binding["dataset_id"],
     "split_id": split_id,
     "architecture": binding["architecture"],
@@ -251,7 +261,8 @@ summary = {
     "mastery_shape": [2, 3],
     "final_loss": 0.4,
     "peak_gpu_memory_gb": 0.1,
-    "numerical_recipe": {"mastery_loss_weight": 0.1},
+    "recipe_index": binding["recipe_index"],
+    "numerical_recipe": binding["numerical_recipe"],
 }
 summary_path.write_text(json.dumps(summary), encoding="utf-8")
 def fingerprint(file_path):
@@ -300,7 +311,7 @@ print(attempt_dir)
 
         records: dict[str, dict[str, object]] = {}
         for split_id in ("standard", "holdout"):
-            attempt_dir = self.artifact_root / dataset_id / split_id / "attempt-001"
+            attempt_dir = self.artifact_root / "a1" / dataset_id / split_id / "attempt-001"
             attempt_dir.mkdir(parents=True, exist_ok=True)
             record = consume_split_capability(
                 state_dir=self.state_dir,
@@ -308,7 +319,7 @@ print(attempt_dir)
                 token_path=token_path,
                 dataset_id=dataset_id,
                 split_id=split_id,
-                architecture="m2",
+                architecture="a1",
                 data_root=data_root,
                 raw_output=Path("validation-summary.json"),
                 attempt_dir=attempt_dir,
@@ -316,10 +327,10 @@ print(attempt_dir)
             summary_path = Path(str(record["summary_path"]))
             capability = token["capabilities"][split_id]
             summary = {
-                "schema_version": 1,
+                "schema_version": 3,
                 "dataset_id": dataset_id,
                 "split_id": split_id,
-                "architecture": "m2",
+                "architecture": "a1",
                 "architecture_manifest": self.manifest,
                 "architecture_fingerprint": record["architecture_fingerprint"],
                 "cohort_sha256": self.cohort["cohort_sha256"],
@@ -340,7 +351,8 @@ print(attempt_dir)
                 "mastery_shape": [2, 3],
                 "final_loss": 0.4,
                 "peak_gpu_memory_gb": 0.1,
-                "numerical_recipe": {"mastery_loss_weight": 0.1},
+                "recipe_index": record["recipe_index"],
+                "numerical_recipe": record["numerical_recipe"],
             }
             summary_path.write_text(json.dumps(summary), encoding="utf-8")
             status = {
@@ -403,6 +415,8 @@ print(attempt_dir)
         self.assertEqual(state["cursor"], 0)
         self.assertEqual(state["successes"], 0)
         self.assertEqual(state["issuance_counter"], 0)
+        self.assertEqual(state["schema_version"], 3)
+        self.assertEqual(state["campaign_id"], CAMPAIGN_ID)
         self.assertIsNone(state["active_pair"])
         self.assertEqual(
             state["baseline_sha256"],
@@ -429,6 +443,21 @@ print(attempt_dir)
         with self.assertRaises(FileExistsError):
             self.initialize()
 
+    def test_task_9_controller_schema_is_rejected_instead_of_reused(self) -> None:
+        self.initialize()
+        state_path = self.state_dir / "state.json"
+        state = json.loads(state_path.read_text())
+        state["schema_version"] = 1
+        state["campaign_id"] = "unified-v2-task-9"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "schema|campaign"):
+            authorize_next(
+                state_dir=self.state_dir,
+                repo_root=self.repo_root,
+                output_path=self.root / "must-not-publish.json",
+            )
+
     def test_initialization_rejects_baseline_order_or_cohort_mismatch(self) -> None:
         broken = list(reversed(self.baseline_rows))
         broken[0] = dict(broken[0], cohort_sha256="c" * 64)
@@ -453,7 +482,8 @@ print(attempt_dir)
     def test_initialization_registers_validation_data_and_artifact_roots(self) -> None:
         data_root = self.root / "all-validation-data"
         expected_paths: list[Path] = []
-        for standard_dir, holdout_dir in DATASET_DIRECTORIES.values():
+        for dataset_id in DATASET_IDS:
+            standard_dir, holdout_dir = DATASET_DIRECTORIES[dataset_id]
             for split_id, directory_name in (
                 ("standard", standard_dir),
                 ("holdout", holdout_dir),
@@ -475,7 +505,7 @@ print(attempt_dir)
             repo_root=self.repo_root,
             cohort_path=self.cohort_path,
             manifest_path=self.manifest_path,
-            architecture="m2",
+            architecture="a1",
             baseline_rows_path=self.baseline_path,
             data_root=data_root,
             artifact_root=artifact_root,
@@ -524,7 +554,7 @@ print(attempt_dir)
                 "--cohort",
                 str(self.cohort_path),
                 "--architecture",
-                "m2",
+                "a1",
                 "--architecture-manifest",
                 str(self.manifest_path),
                 "--baseline-rows",
@@ -832,7 +862,7 @@ print(attempt_dir)
         original_state = json.loads(json.dumps(state))
         output_path = self.root / "forged-reservation.json"
         common = {
-            "schema_version": 1,
+            "schema_version": 3,
             "controller_id": state["controller_id"],
             "route_commit": state["route_commit"],
             "counter": 999,
@@ -852,7 +882,7 @@ print(attempt_dir)
         output_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 3,
                     "controller_reservation": state["controller_id"],
                     "token": token,
                 }
@@ -877,7 +907,7 @@ print(attempt_dir)
         original_state = json.loads(json.dumps(state))
         output_path = self.root / "traversal-reservation.json"
         common = {
-            "schema_version": 1,
+            "schema_version": 3,
             "controller_id": state["controller_id"],
             "route_commit": state["route_commit"],
             "counter": 1,
@@ -901,7 +931,7 @@ print(attempt_dir)
         output_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 3,
                     "controller_reservation": state["controller_id"],
                     "token": token,
                 }
@@ -925,7 +955,7 @@ print(attempt_dir)
     def test_pending_token_validator_binds_exact_controller_state(self) -> None:
         state = self.initialize()
         common = {
-            "schema_version": 1,
+            "schema_version": 3,
             "controller_id": state["controller_id"],
             "route_commit": state["route_commit"],
             "counter": 1,
@@ -976,7 +1006,7 @@ print(attempt_dir)
         token_path, _ = self.issue()
         state = json.loads((self.state_dir / "state.json").read_text())
         self._set_unit_launch(state, dataset_id="ASSIST09")
-        attempt_dir = self.artifact_root / "ASSIST09" / "standard" / "attempt-001"
+        attempt_dir = self.artifact_root / "a1" / "ASSIST09" / "standard" / "attempt-001"
         attempt_dir.mkdir(parents=True)
 
         with patch(
@@ -989,7 +1019,7 @@ print(attempt_dir)
                 token_path=token_path,
                 dataset_id="ASSIST09",
                 split_id="standard",
-                architecture="m2",
+                architecture="a1",
                 data_root=Path(state["data_root"]),
                 raw_output=Path("validation-summary.json"),
                 attempt_dir=attempt_dir,
@@ -1125,7 +1155,7 @@ controller.authorize_next(
                 token_path=forged_path,
                 dataset_id="ASSIST09",
                 split_id="standard",
-                architecture="m2",
+                architecture="a1",
                 data_root=self.root / "data",
                 raw_output=output_parent / "summary.json",
                 attempt_dir=self.root / "attempt-forged",
@@ -1148,7 +1178,7 @@ controller.authorize_next(
     def test_manual_run_split_cannot_consume_without_controller_launch(self) -> None:
         self.initialize()
         token_path, _ = self.issue()
-        attempt_dir = self.artifact_root / "ASSIST09" / "standard" / "attempt-001"
+        attempt_dir = self.artifact_root / "a1" / "ASSIST09" / "standard" / "attempt-001"
         attempt_dir.mkdir(parents=True)
         state = json.loads((self.state_dir / "state.json").read_text())
 
@@ -1159,7 +1189,7 @@ controller.authorize_next(
                 token_path=token_path,
                 dataset_id="ASSIST09",
                 split_id="standard",
-                architecture="m2",
+                architecture="a1",
                 data_root=Path(state["data_root"]),
                 raw_output=Path("validation-summary.json"),
                 attempt_dir=attempt_dir,
@@ -1188,9 +1218,25 @@ controller.authorize_next(
         self.assertEqual(state["cursor"], 1)
         self.assertEqual(state["successes"], 1)
         self.assertIsNone(state["launch"])
+        for split_id, command in result["launch"]["commands"].items():
+            self.assertEqual(command[command.index("--seed") + 1], "42")
+            self.assertEqual(command[command.index("--split-seed") + 1], "2024")
+            self.assertEqual(
+                command[command.index("--architecture-fingerprint") + 1],
+                state["architecture_fingerprint"],
+            )
+            self.assertEqual(
+                command[command.index("--cohort-sha256") + 1],
+                state["cohort_sha256"],
+            )
+            artifact_root = Path(command[command.index("--artifact-root") + 1])
+            self.assertEqual(
+                artifact_root,
+                self.artifact_root / "a1" / "ASSIST09" / split_id,
+            )
         for split_id in ("standard", "holdout"):
             attempts = list(
-                (self.artifact_root / "ASSIST09" / split_id).glob("attempt-*")
+                (self.artifact_root / "a1" / "ASSIST09" / split_id).glob("attempt-*")
             )
             self.assertEqual(len(attempts), 1)
             self.assertEqual(
@@ -1220,7 +1266,7 @@ controller.authorize_next(
         self._prepare_pair_artifacts(token_path, token, dataset_id="ASSIST09")
         state = json.loads((self.state_dir / "state.json").read_text())
         state["launch"]["attempts"]["standard"] = str(
-            self.artifact_root / "ASSIST09" / "standard" / "attempt-999"
+            self.artifact_root / "a1" / "ASSIST09" / "standard" / "attempt-999"
         )
         (self.state_dir / "state.json").write_text(json.dumps(state))
 
@@ -1238,6 +1284,35 @@ controller.authorize_next(
             controller_module.run_registered_pair(
                 state_dir=self.state_dir, repo_root=self.repo_root
             )
+
+    def test_partial_parallel_startup_terminates_already_started_child(self) -> None:
+        self.initialize()
+        self.issue()
+        started = MagicMock()
+        started.poll.return_value = None
+        real_popen = subprocess.Popen
+        outer_calls = 0
+
+        def popen(command, *args, **kwargs):
+            nonlocal outer_calls
+            if command[0] == str(controller_module.TRUSTED_GIT):
+                return real_popen(command, *args, **kwargs)
+            outer_calls += 1
+            if outer_calls == 1:
+                return started
+            raise OSError("second startup failed")
+
+        with patch(
+            "scripts.unified_validation_controller.subprocess.Popen",
+            side_effect=popen,
+        ), self.assertRaisesRegex(OSError, "second startup failed"):
+            controller_module.run_registered_pair(
+                state_dir=self.state_dir,
+                repo_root=self.repo_root,
+            )
+
+        started.terminate.assert_called_once_with()
+        started.wait.assert_called_once()
 
         state = json.loads((self.state_dir / "state.json").read_text())
         self.assertTrue(state["blocked"])
@@ -1295,7 +1370,7 @@ controller.authorize_next(
         token_path, token = self.issue()
         state = json.loads((self.state_dir / "state.json").read_text())
         self._set_unit_launch(state, dataset_id="ASSIST09")
-        attempt_dir = self.artifact_root / "ASSIST09" / "standard" / "attempt-001"
+        attempt_dir = self.artifact_root / "a1" / "ASSIST09" / "standard" / "attempt-001"
         attempt_dir.mkdir(parents=True)
         original_atomic_json = controller_module._atomic_json
 
@@ -1310,7 +1385,7 @@ controller.authorize_next(
             "token_path": token_path,
             "dataset_id": "ASSIST09",
             "split_id": "standard",
-            "architecture": "m2",
+            "architecture": "a1",
             "data_root": Path(state["data_root"]),
             "raw_output": Path("validation-summary.json"),
             "attempt_dir": attempt_dir,
@@ -1334,7 +1409,7 @@ controller.authorize_next(
         token_path, token = self.issue()
         state = json.loads((self.state_dir / "state.json").read_text())
         self._set_unit_launch(state, dataset_id="ASSIST09")
-        attempt_dir = self.artifact_root / "ASSIST09" / "standard" / "attempt-001"
+        attempt_dir = self.artifact_root / "a1" / "ASSIST09" / "standard" / "attempt-001"
         attempt_dir.mkdir(parents=True)
         issued_dir = self.state_dir / "issued"
         original_unlink = controller_module._unlink_fsync
@@ -1350,7 +1425,7 @@ controller.authorize_next(
             "token_path": token_path,
             "dataset_id": "ASSIST09",
             "split_id": "standard",
-            "architecture": "m2",
+            "architecture": "a1",
             "data_root": Path(state["data_root"]),
             "raw_output": Path("validation-summary.json"),
             "attempt_dir": attempt_dir,
@@ -1391,7 +1466,7 @@ controller.authorize_next(
             repo_root=route_repo,
             cohort_path=self.cohort_path,
             manifest_path=self.manifest_path,
-            architecture="m2",
+            architecture="a1",
             baseline_rows_path=self.baseline_path,
             data_root=self.data_root,
             artifact_root=self.artifact_root,
@@ -1413,7 +1488,7 @@ controller.authorize_next(
         token_path, token = self.issue()
         state = json.loads((self.state_dir / "state.json").read_text())
         self._set_unit_launch(state, dataset_id="ASSIST09")
-        attempt_dir = self.artifact_root / "ASSIST09" / "standard" / "attempt-001"
+        attempt_dir = self.artifact_root / "a1" / "ASSIST09" / "standard" / "attempt-001"
         attempt_dir.mkdir(parents=True)
         output_path = attempt_dir / "validation-summary.json"
 
@@ -1434,7 +1509,13 @@ controller.authorize_next(
                         "--split-id",
                         "standard",
                         "--architecture",
-                        "m2",
+                        "a1",
+                        "--architecture-fingerprint",
+                        str(state["architecture_fingerprint"]),
+                        "--cohort-sha256",
+                        str(state["cohort_sha256"]),
+                        "--recipe-index",
+                        str(state["recipe_indices"]["ASSIST09"]),
                         "--data-root",
                         str(state["data_root"]),
                         "--controller-state-dir",
@@ -1481,7 +1562,7 @@ controller.authorize_next(
                 token_path=first_path,
                 dataset_id="ASSIST09",
                 split_id="standard",
-                architecture="m2",
+                architecture="a1",
                 data_root=self.root / "registered-data",
                 raw_output=Path("validation-summary.json"),
                 attempt_dir=self.root / "stale-attempt",
@@ -1501,6 +1582,28 @@ controller.authorize_next(
             self._advance_unit_launch()
         next_path = self.root / "must-not-issue.json"
         self.assertFalse(next_path.exists())
+        self.assertFalse(any((self.state_dir / "proofs").glob("*.json")))
+
+    def test_proof_publication_waits_for_split_metrics_and_doa(self) -> None:
+        self.initialize()
+        token_path, token = self.issue()
+        records = self._prepare_pair_artifacts(
+            token_path, token, dataset_id="ASSIST09"
+        )
+        standard = records["standard"]
+        summary = dict(standard["summary"])
+        summary.pop("weighted_doa")
+        summary_path = Path(standard["summary_path"])
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+        status = standard["status"]
+        status["output_hashes"]["validation-summary.json"] = {
+            "exists": True,
+            **self._fingerprint(summary_path),
+        }
+        Path(standard["status_path"]).write_text(json.dumps(status), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "weighted_doa"):
+            self._advance_unit_launch()
         self.assertFalse(any((self.state_dir / "proofs").glob("*.json")))
 
     def test_status_attempt_path_mismatch_cannot_advance_progress(self) -> None:
@@ -1685,7 +1788,7 @@ controller.authorize_next(
                 with self.assertRaisesRegex(ValueError, expected):
                     self._advance_unit_launch()
 
-    def test_summary_allows_unbounded_finite_loss_and_mastery_weight(self) -> None:
+    def test_summary_allows_unbounded_finite_loss_with_frozen_recipe(self) -> None:
         self.initialize()
         token_path, token = self.issue()
         records = self._prepare_pair_artifacts(
@@ -1695,7 +1798,6 @@ controller.authorize_next(
             record = records[split_id]
             summary = dict(record["summary"])
             summary["final_loss"] = 1.08
-            summary["numerical_recipe"] = {"mastery_loss_weight": 2.0}
             summary_path = Path(record["summary_path"])
             summary_path.write_text(json.dumps(summary), encoding="utf-8")
             status = dict(record["status"])
@@ -1726,7 +1828,7 @@ controller.authorize_next(
             _advance_active_pair(state_dir=self.state_dir, state=state)
         self.assertFalse(any((self.state_dir / "proofs").glob("*.json")))
 
-    def test_two_joint_gate_failures_make_three_successes_unreachable(self) -> None:
+    def test_any_overall_auc_regression_blocks_the_frozen_cohort(self) -> None:
         self.initialize()
         first_path, first = self.issue()
         self._prepare_pair_artifacts(
@@ -1736,31 +1838,16 @@ controller.authorize_next(
             standard_overall_auc=0.69,
         )
         self._advance_unit_launch()
-        second_path = self.root / "capability-2.json"
-        second = authorize_next(
-            state_dir=self.state_dir,
-            repo_root=self.repo_root,
-            output_path=second_path,
-        )
-        self.assertEqual(second["dataset_id"], "ASSIST17")
-        self._prepare_pair_artifacts(
-            second_path,
-            second,
-            dataset_id="ASSIST17",
-            weighted_doa=0.61,
-        )
-        self._advance_unit_launch()
-
-        third_path = self.root / "must-not-issue.json"
+        next_path = self.root / "must-not-issue.json"
         with self.assertRaisesRegex(RuntimeError, "primary cohort is unreachable"):
             authorize_next(
                 state_dir=self.state_dir,
                 repo_root=self.repo_root,
-                output_path=third_path,
+                output_path=next_path,
             )
-        self.assertFalse(third_path.exists())
+        self.assertFalse(next_path.exists())
         state = json.loads((self.state_dir / "state.json").read_text())
-        self.assertEqual(state["cursor"], 2)
+        self.assertEqual(state["cursor"], 1)
         self.assertEqual(state["successes"], 0)
         self.assertTrue(state["blocked"])
 
@@ -1768,25 +1855,62 @@ controller.authorize_next(
         passing = {
             "standard_overall_auc": 0.0,
             "holdout_overall_auc": 0.0,
-            "weighted_doa": 0.0,
+            "weighted_doa": -0.1,
             "zero_auc": 0.001,
             "ordinary_doa": 0.001,
         }
         self.assertTrue(controller_module._joint_gate_success(passing))
-        for field in (
-            "standard_overall_auc",
-            "holdout_overall_auc",
-            "weighted_doa",
-        ):
+        for field in ("standard_overall_auc", "holdout_overall_auc"):
             with self.subTest(field=field, boundary="regression"):
                 deltas = dict(passing)
                 deltas[field] = -1e-12
                 self.assertFalse(controller_module._joint_gate_success(deltas))
-        for field in ("zero_auc", "ordinary_doa"):
+        for field in ("zero_auc",):
             with self.subTest(field=field, boundary="equality"):
                 deltas = dict(passing)
                 deltas[field] = 0.0
                 self.assertFalse(controller_module._joint_gate_success(deltas))
+        for field in ("weighted_doa", "ordinary_doa"):
+            with self.subTest(field=field, boundary="doa-is-ranking-only"):
+                deltas = dict(passing)
+                deltas[field] = -1.0
+                self.assertTrue(controller_module._joint_gate_success(deltas))
+
+    def test_xes_long_fallback_stops_after_three_eligible_a0_candidates(self) -> None:
+        self.assertEqual(
+            controller_module._next_a0_recipe_index(
+                dataset_id="ASSIST17",
+                recipe_index=0,
+                overall_guard_passed=False,
+                eligible_candidates=0,
+            ),
+            1,
+        )
+        self.assertIsNone(
+            controller_module._next_a0_recipe_index(
+                dataset_id="ASSIST17",
+                recipe_index=0,
+                overall_guard_passed=True,
+                eligible_candidates=0,
+            )
+        )
+        self.assertEqual(
+            controller_module._next_a0_recipe_index(
+                dataset_id="XES3G5M",
+                recipe_index=0,
+                overall_guard_passed=False,
+                eligible_candidates=2,
+            ),
+            1,
+        )
+        self.assertIsNone(
+            controller_module._next_a0_recipe_index(
+                dataset_id="XES3G5M",
+                recipe_index=0,
+                overall_guard_passed=False,
+                eligible_candidates=3,
+            )
+        )
 
     def test_final_global_gate_requires_one_zero_delta_at_least_point_001(self) -> None:
         self.initialize()

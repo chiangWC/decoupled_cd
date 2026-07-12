@@ -36,47 +36,42 @@ ELIGIBLE_DATASET_IDS = (
 )
 ASSET_READY_WITHOUT_EXACT_ZERO = ("NIPS34",)
 ARCHITECTURES = {
-    "b0": "prior",
-    "m2": "lowrank",
-    "m2-m3": "lowrank",
+    "a0": ("prior", 0.0),
+    "a1": ("lowrank", 1.0),
 }
 
 
 @dataclass(frozen=True)
 class NumericalRecipe:
+    training_mode: str
     concept_dim: int
     epochs: int
     learning_rate: float
     weight_decay: float
     patience: int
-    training_mode: str
     student_batch_size: int | None = None
     mastery_loss_weight: float = 0.1
 
 
 RECIPES = {
-    "ASSIST09": NumericalRecipe(64, 300, 1e-3, 0.0, 5, "full_batch"),
-    "ASSIST17": NumericalRecipe(64, 300, 1e-3, 0.0, 5, "full_batch"),
-    "MOOCRadar": NumericalRecipe(
-        64,
-        30,
-        1e-3,
-        0.0,
-        5,
-        "student_recompute_minibatch",
-        64,
+    "ASSIST09": (
+        NumericalRecipe("full_batch", 64, 300, 1e-3, 0.0, 5, None),
     ),
-    # The historical XES full-batch recipe is not viable for an S x K x K M2
-    # tensor. This safe starting recipe is fixed before any attempt and is not
-    # an OOM-triggered batch change.
-    "XES3G5M": NumericalRecipe(
-        64,
-        30,
-        1e-3,
-        0.0,
-        5,
-        "student_recompute_minibatch",
-        64,
+    "ASSIST17": (
+        NumericalRecipe("student_recompute_minibatch", 64, 40, 1e-3, 0.0, 5, 64),
+        NumericalRecipe("student_recompute_minibatch", 64, 80, 2e-3, 0.0, 5, 128),
+    ),
+    "NIPS34": (
+        NumericalRecipe("full_batch", 64, 300, 1e-3, 0.0, 5, None),
+    ),
+    "MOOCRadar": (
+        NumericalRecipe("student_recompute_minibatch", 64, 30, 1e-3, 0.0, 5, 64),
+        NumericalRecipe("student_recompute_minibatch", 128, 30, 1e-3, 0.0, 5, 64),
+        NumericalRecipe("student_recompute_minibatch", 256, 30, 1e-3, 0.0, 5, 64),
+    ),
+    "XES3G5M": (
+        NumericalRecipe("student_recompute_minibatch", 64, 30, 1e-3, 0.0, 5, 64),
+        NumericalRecipe("full_batch", 64, 3000, 1e-3, 0.0, 50, None),
     ),
 }
 
@@ -99,7 +94,7 @@ class GpuSnapshot:
 
 def architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
     try:
-        completion = ARCHITECTURES[architecture]
+        completion, _ = ARCHITECTURES[architecture]
     except KeyError as error:
         raise ValueError(f"unknown unified architecture: {architecture}") from error
     return UnifiedArchitectureSpec(completion=completion)
@@ -115,9 +110,10 @@ def _unified_training_flags(
     evidence_loss_weight: float,
     completion_rank: int = 32,
 ) -> list[str]:
-    completion_loss_weight = (
-        evidence_loss_weight if spec.completion == "lowrank" else 0.0
-    )
+    completion_loss_weight = evidence_loss_weight * {
+        "prior": ARCHITECTURES["a0"][1],
+        "lowrank": ARCHITECTURES["a1"][1],
+    }[spec.completion]
     return [
         "--unified-completion",
         spec.completion,
@@ -150,17 +146,15 @@ def parse_gpu_inventory(output: str) -> list[GpuSnapshot]:
 
 
 def select_gpu_index(snapshots: Sequence[GpuSnapshot]) -> int:
-    eligible = [snapshot for snapshot in snapshots if snapshot.memory_fraction < 0.5]
+    eligible = [
+        snapshot
+        for snapshot in snapshots
+        if snapshot.memory_used_mib == 0
+        or snapshot.memory_used_mib * 2 < snapshot.memory_total_mib
+    ]
     if not eligible:
         raise RuntimeError("no GPU is idle or under half memory")
-    eligible.sort(
-        key=lambda item: (
-            not item.idle,
-            item.memory_fraction,
-            item.utilization_percent,
-            item.index,
-        )
-    )
+    eligible.sort(key=lambda item: (item.memory_used_mib, item.index))
     return eligible[0].index
 
 
@@ -182,23 +176,48 @@ def query_gpu_inventory() -> tuple[str, list[GpuSnapshot]]:
 @contextmanager
 def locked_gpu() -> Iterator[tuple[int, list[GpuSnapshot], Path]]:
     _, snapshots = query_gpu_inventory()
-    gpu_index = select_gpu_index(snapshots)
-    lock_path = Path(f"/tmp/unified-v2-gpu-{gpu_index}.lock")
-    with lock_path.open("a+", encoding="utf-8") as lock_handle:
-        fcntl.flock(lock_handle, fcntl.LOCK_EX)
-        _, refreshed = query_gpu_inventory()
-        selected = next(
-            (item for item in refreshed if item.index == gpu_index),
-            None,
-        )
-        if selected is None or selected.memory_fraction >= 0.5:
-            raise RuntimeError(
-                f"selected GPU {gpu_index} became ineligible while acquiring lock"
+    eligible = sorted(
+        (
+            snapshot
+            for snapshot in snapshots
+            if snapshot.memory_used_mib == 0
+            or snapshot.memory_used_mib * 2 < snapshot.memory_total_mib
+        ),
+        key=lambda item: (item.memory_used_mib, item.index),
+    )
+    if not eligible:
+        raise RuntimeError("no GPU is idle or under half memory")
+    saw_ineligible_after_lock = False
+    for candidate in eligible:
+        gpu_index = candidate.index
+        lock_path = Path(f"/tmp/unified-mastery-gpu-{gpu_index}.lock")
+        with lock_path.open("a+", encoding="utf-8") as lock_handle:
+            try:
+                fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            _, refreshed = query_gpu_inventory()
+            selected = next(
+                (item for item in refreshed if item.index == gpu_index),
+                None,
             )
-        try:
-            yield gpu_index, refreshed, lock_path
-        finally:
-            fcntl.flock(lock_handle, fcntl.LOCK_UN)
+            if selected is None or not (
+                selected.memory_used_mib == 0
+                or selected.memory_used_mib * 2 < selected.memory_total_mib
+            ):
+                saw_ineligible_after_lock = True
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+                continue
+            try:
+                yield gpu_index, refreshed, lock_path
+                return
+            finally:
+                fcntl.flock(lock_handle, fcntl.LOCK_UN)
+    if saw_ineligible_after_lock and len(eligible) == 1:
+        raise RuntimeError(
+            f"selected GPU {eligible[0].index} became ineligible while acquiring lock"
+        )
+    raise RuntimeError("no unlocked eligible GPU")
 
 
 def _split_paths(
@@ -239,7 +258,7 @@ def build_train_command(
         split_id=split_id,
         data_root=data_root,
     )
-    selected_recipe = recipe or RECIPES[dataset_id]
+    selected_recipe = recipe or RECIPES[dataset_id][0]
     spec = architecture_spec(architecture)
     command = [
         sys.executable,
@@ -389,6 +408,11 @@ def assemble_candidate_rows(
             cohort_sha256=cohort_sha256,
         )
         fingerprints.add(fingerprint)
+        if (
+            standard.get("recipe_index") != holdout.get("recipe_index")
+            or standard.get("numerical_recipe") != holdout.get("numerical_recipe")
+        ):
+            raise ValueError("validation split summaries use different recipes")
         rows.append(
             {
                 "dataset_id": dataset_id,
@@ -399,6 +423,8 @@ def assemble_candidate_rows(
                 "zero_auc": float(holdout["zero_auc"]),
                 "ordinary_doa": float(standard["ordinary_doa"]),
                 "weighted_doa": float(standard["weighted_doa"]),
+                "recipe_index": standard.get("recipe_index", 0),
+                "numerical_recipe": standard.get("numerical_recipe"),
             }
         )
     unexpected = set(indexed) - {
@@ -579,6 +605,19 @@ def _run_split(args: argparse.Namespace) -> None:
         attempt_dir=_required_attempt_dir(),
     )
     cohort_hash = str(binding["cohort_sha256"])
+    if args.architecture_fingerprint != binding["architecture_fingerprint"]:
+        raise ValueError("command architecture fingerprint mismatch")
+    if args.cohort_sha256 != cohort_hash:
+        raise ValueError("command cohort SHA-256 mismatch")
+    if args.recipe_index != binding["recipe_index"]:
+        raise ValueError("command numerical recipe index mismatch")
+    try:
+        selected_recipe = RECIPES[args.dataset_id][args.recipe_index]
+    except IndexError as error:
+        raise ValueError("command numerical recipe index is out of range") from error
+    frozen_recipe = binding.get("numerical_recipe")
+    if isinstance(frozen_recipe, Mapping) and selected_recipe.__dict__ != frozen_recipe:
+        raise ValueError("A1 numerical recipe differs from frozen A0 recipe")
     output_path = _output_path(args.output).resolve()
     work_dir = output_path.parent / "work"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -623,6 +662,7 @@ def _run_split(args: argparse.Namespace) -> None:
             data_root=args.data_root,
             output=train_summary_path,
             device=device,
+            recipe=selected_recipe,
         )
         _run_checked(command, env=child_env)
 
@@ -661,7 +701,7 @@ def _run_split(args: argparse.Namespace) -> None:
             doa_path=doa_path,
         )
         summary = {
-            "schema_version": 1,
+            "schema_version": 3,
             "dataset_id": args.dataset_id,
             "split_id": args.split_id,
             "architecture": args.architecture,
@@ -689,7 +729,8 @@ def _run_split(args: argparse.Namespace) -> None:
                 "lock_path": None if lock_path is None else str(lock_path),
                 "inventory_after_lock": _gpu_payload(gpu_snapshots),
             },
-            "numerical_recipe": RECIPES[args.dataset_id].__dict__,
+            "recipe_index": args.recipe_index,
+            "numerical_recipe": selected_recipe.__dict__,
         }
         _validate_split_summary(
             summary,
@@ -745,7 +786,7 @@ def _run_smoke(args: argparse.Namespace) -> None:
     for device_kind in devices:
         for architecture in ARCHITECTURES:
             summary_path = root / f"{device_kind}-{architecture}.json"
-            recipe = NumericalRecipe(4, 1, 1e-3, 0.0, 1, "full_batch")
+            recipe = NumericalRecipe("full_batch", 4, 1, 1e-3, 0.0, 1)
             if device_kind == "cpu":
                 gpu_index = None
                 snapshots: list[GpuSnapshot] = []
@@ -818,7 +859,7 @@ def _run_smoke(args: argparse.Namespace) -> None:
     _write_json(
         output_path,
         {
-            "schema_version": 1,
+            "schema_version": 3,
             "seed": 42,
             "synthetic": True,
             "records": records,
@@ -866,7 +907,7 @@ def _controller_init(args: argparse.Namespace) -> None:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run validation-only Unified V2 jobs.")
+    parser = argparse.ArgumentParser(description="Run validation-only Unified V3 jobs.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     controller_init = subparsers.add_parser("controller-init")
@@ -905,6 +946,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     run_split.add_argument("--dataset-id", choices=ELIGIBLE_DATASET_IDS, required=True)
     run_split.add_argument("--split-id", choices=("standard", "holdout"), required=True)
     run_split.add_argument("--architecture", choices=ARCHITECTURES, required=True)
+    run_split.add_argument("--architecture-fingerprint", required=True)
+    run_split.add_argument("--cohort-sha256", required=True)
+    run_split.add_argument("--recipe-index", type=int, required=True)
     run_split.add_argument("--data-root", type=Path, required=True)
     run_split.add_argument("--controller-state-dir", type=Path, required=True)
     run_split.add_argument("--repo-root", type=Path, required=True)

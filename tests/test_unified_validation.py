@@ -10,9 +10,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.run_unified_validation import (
+    ARCHITECTURES,
     DATASET_DIRECTORIES,
     ELIGIBLE_DATASET_IDS,
     GpuSnapshot,
+    NumericalRecipe,
+    RECIPES,
     _split_paths,
     _write_json,
     architecture_fingerprint,
@@ -98,7 +101,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         command = build_train_command(
             dataset_id="ASSIST17",
             split_id="holdout",
-            architecture="b0",
+            architecture="a0",
             data_root=Path("/datasets"),
             output=Path("/artifacts/train-summary.json"),
             device="cuda:0",
@@ -132,7 +135,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         command = build_train_command(
             dataset_id="ASSIST17",
             split_id="standard",
-            architecture="m2",
+            architecture="a1",
             data_root=Path("/datasets"),
             output=Path("/artifacts/train-summary.json"),
             device="cpu",
@@ -147,6 +150,68 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         )
         self.assertNotIn("--unified-mastery-loss-weight", command)
 
+    def test_runner_recognizes_only_a0_and_a1_version_3_completions(self):
+        self.assertEqual(ARCHITECTURES, {"a0": ("prior", 0.0), "a1": ("lowrank", 1.0)})
+        for architecture, completion in (("a0", "prior"), ("a1", "lowrank")):
+            command = build_train_command(
+                dataset_id="ASSIST09",
+                split_id="standard",
+                architecture=architecture,
+                data_root=Path("/datasets"),
+                output=Path("/artifacts/train-summary.json"),
+                device="cpu",
+            )
+            self.assertEqual(command[command.index("--unified-completion") + 1], completion)
+            self.assertEqual(architecture_spec(architecture).manifest()["version"], 3)
+        for removed in ("b0", "m2", "m2-m3"):
+            with self.subTest(architecture=removed), self.assertRaisesRegex(
+                ValueError, "unknown unified architecture"
+            ):
+                architecture_spec(removed)
+
+    def test_registered_recipe_table_is_ordered_and_a1_can_inherit_a0_recipe(self):
+        self.assertEqual(
+            RECIPES["ASSIST17"],
+            (
+                NumericalRecipe("student_recompute_minibatch", 64, 40, 1e-3, 0.0, 5, 64),
+                NumericalRecipe("student_recompute_minibatch", 64, 80, 2e-3, 0.0, 5, 128),
+            ),
+        )
+        self.assertEqual(RECIPES["XES3G5M"][-1].epochs, 3000)
+        selected_a0 = RECIPES["ASSIST17"][1]
+        a0_command = build_train_command(
+            dataset_id="ASSIST17",
+            split_id="standard",
+            architecture="a0",
+            data_root=Path("/datasets"),
+            output=Path("/artifacts/a0.json"),
+            device="cpu",
+            recipe=selected_a0,
+        )
+        a1_command = build_train_command(
+            dataset_id="ASSIST17",
+            split_id="standard",
+            architecture="a1",
+            data_root=Path("/datasets"),
+            output=Path("/artifacts/a1.json"),
+            device="cpu",
+            recipe=selected_a0,
+        )
+        for flag in (
+            "--concept-dim",
+            "--epochs",
+            "--learning-rate",
+            "--weight-decay",
+            "--early-stop-patience",
+            "--training-mode",
+            "--student-batch-size",
+            "--unified-evidence-loss-weight",
+        ):
+            self.assertEqual(
+                a0_command[a0_command.index(flag) + 1],
+                a1_command[a1_command.index(flag) + 1],
+            )
+
     def test_gpu_selection_prefers_idle_then_allows_under_half_memory(self):
         snapshots = parse_gpu_inventory(
             "1, 6000, 24000, 0\n"
@@ -159,10 +224,51 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "under half memory"):
             select_gpu_index([snapshots[3]])
 
+    def test_gpu_memory_eligibility_has_exact_half_open_boundary(self):
+        self.assertEqual(select_gpu_index([GpuSnapshot(4, 49, 100, 99)]), 4)
+        self.assertEqual(select_gpu_index([GpuSnapshot(5, 0, 100, 99)]), 5)
+        with self.assertRaisesRegex(RuntimeError, "under half memory"):
+            select_gpu_index([GpuSnapshot(6, 50, 100, 0)])
+
+    def test_gpu_locks_are_nonblocking_per_physical_device(self):
+        first_index = os.getpid() * 2 + 100_000
+        second_index = first_index + 1
+        snapshots = [
+            GpuSnapshot(first_index, 1, 100, 0),
+            GpuSnapshot(second_index, 2, 100, 0),
+        ]
+        lock_paths = [
+            Path(f"/tmp/unified-mastery-gpu-{snapshot.index}.lock")
+            for snapshot in snapshots
+        ]
+        try:
+            with patch(
+                "scripts.run_unified_validation.query_gpu_inventory",
+                return_value=("inventory", snapshots),
+            ):
+                with locked_gpu() as first:
+                    with locked_gpu() as second:
+                        self.assertEqual(
+                            (first[0], second[0]),
+                            (first_index, second_index),
+                        )
+                    with patch(
+                        "scripts.run_unified_validation.query_gpu_inventory",
+                        return_value=("inventory", [snapshots[0]]),
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "no unlocked eligible GPU"
+                        ):
+                            with locked_gpu():
+                                self.fail("same physical GPU lock must not block")
+        finally:
+            for path in lock_paths:
+                path.unlink(missing_ok=True)
+
     def test_smoke_summary_requires_mastery_loss_fingerprint_and_gpu_peak(self):
-        fingerprint = architecture_fingerprint("m2-m3")
+        fingerprint = architecture_fingerprint("a1")
         summary = {
-            "architecture_manifest": architecture_spec("m2-m3").manifest(),
+            "architecture_manifest": architecture_spec("a1").manifest(),
             "architecture_fingerprint": fingerprint,
             "mastery_shape": [3, 4],
             "final_loss": 0.4,
@@ -190,8 +296,8 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
 
     def test_candidate_rows_require_every_frozen_dataset_and_both_splits(self):
         cohort_hash = "a" * 64
-        fingerprint = architecture_fingerprint("m2")
-        manifest = architecture_spec("m2").manifest()
+        fingerprint = architecture_fingerprint("a1")
+        manifest = architecture_spec("a1").manifest()
         summaries = []
         for dataset_id in ("ASSIST09", "ASSIST17", "MOOCRadar"):
             for split_id, overall_auc in (
@@ -250,7 +356,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         summary = {
             "dataset_id": "ASSIST09",
             "split_id": "standard",
-            "architecture_fingerprint": architecture_fingerprint("m2"),
+            "architecture_fingerprint": architecture_fingerprint("a1"),
             "architecture_manifest": old,
             "cohort_sha256": "a" * 64,
             "seed": 42,
@@ -285,7 +391,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
                         "--split-id",
                         "standard",
                         "--architecture",
-                        "m2",
+                        "a1",
                         "--data-root",
                         str(root / "missing-data"),
                         "--device",
@@ -324,7 +430,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         coverage, doa = build_evaluation_commands(
             dataset_id="ASSIST17",
             split_id="holdout",
-            architecture="m2",
+            architecture="a1",
             data_root=Path("/datasets"),
             train_summary_path=Path("/artifacts/train.json"),
             coverage_path=Path("/artifacts/coverage.json"),
