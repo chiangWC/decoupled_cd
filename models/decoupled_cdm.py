@@ -31,6 +31,10 @@ class DecoupledForwardOutput:
     completion_predictions: torch.Tensor | None = None
     mastery_observed_mask: torch.Tensor | None = None
     cognitive_weight: torch.Tensor | None = None
+    completion_target_mask: torch.Tensor | None = None
+    completion_targets: torch.Tensor | None = None
+    completion_student_state: torch.Tensor | None = None
+    completion_concept_state: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)

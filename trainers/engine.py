@@ -69,6 +69,8 @@ def _forward_model(*, model: DecoupledCDM, **kwargs):
         kwargs.pop("prerequisite_graph", None)
         kwargs.pop("similarity_graph", None)
         kwargs.pop("exercise_evidence", None)
+    else:
+        kwargs.pop("completion_epoch", None)
     return model(**kwargs)
 
 
@@ -91,24 +93,15 @@ def observed_mastery_evidence_loss(
     )
 
 
-def masked_completion_loss(
+def masked_graph_reconstruction_loss(
     output: DecoupledForwardOutput,
-    evidence: torch.Tensor,
-    student_ids: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    if (
-        output.completion_predictions is None
-        or output.mastery_observed_mask is None
-    ):
-        raise ValueError("completion predictions are required")
-    selected = evidence if student_ids is None else evidence[student_ids]
-    attempts, correct = selected[..., :2].unbind(dim=-1)
-    target = (correct + 1.0) / (attempts + 2.0)
-    mask = output.mastery_observed_mask
+    mask = output.completion_target_mask
+    target = output.completion_targets
+    if output.completion_predictions is None or mask is None or target is None:
+        raise ValueError("graph reconstruction outputs are required")
     if not bool(mask.any()):
-        raise ValueError(
-            "at least one observed completion target is required"
-        )
+        raise ValueError("at least one removed graph edge is required")
     return F.binary_cross_entropy(
         output.completion_predictions[mask],
         target[mask],
@@ -167,6 +160,7 @@ def evaluate_model(
                 exercise_evidence=tensors["exercise_evidence"],
                 target_student_ids=tensors["interaction_student_ids"],
                 target_exercise_ids=tensors["interaction_exercise_ids"],
+                completion_epoch=None,
             )
             loss = F.binary_cross_entropy(output.probs, tensors["interaction_labels"])
             probs = output.probs
@@ -201,6 +195,7 @@ def evaluate_model(
                     target_student_ids=tensors["interaction_student_ids"][batch_indices],
                     target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
                     use_student_subset=True,
+                    completion_epoch=None,
                 )
                 total_loss = total_loss + F.binary_cross_entropy(output.probs, batch_labels, reduction="sum")
                 labels_parts.append(batch_labels)
@@ -365,12 +360,12 @@ def train_model(
                 "completion."
             )
         if (
-            model.architecture.completion == "lowrank"
+            model.architecture.completion == "evidence-relational-graph"
             and unified_completion_loss_weight <= 0.0
         ):
             raise ValueError(
                 "unified_completion_loss_weight must be positive for "
-                "lowrank completion."
+                "evidence-relational-graph completion."
             )
         if training_mode not in {"full_batch", "student_recompute_minibatch"}:
             raise ValueError(
@@ -608,6 +603,7 @@ def train_model(
                     model=model,
                     tensors=train_tensors,
                     optimizer=optimizer,
+                    epoch_index=epoch - 1,
                     ukc_consistency_weight=ukc_consistency_weight,
                     ukc_consistency_drop_frac=ukc_consistency_drop_frac,
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
@@ -714,6 +710,7 @@ def train_model(
                     model=model,
                     tensors=train_tensors,
                     optimizer=optimizer,
+                    epoch_index=epoch - 1,
                     student_batch_size=int(student_batch_size),
                     mastery_aux_bce_weight=mastery_aux_bce_weight,
                     unified_evidence_loss_weight=(
@@ -979,6 +976,7 @@ def _train_full_batch_epoch(
     model: DecoupledCDM,
     tensors: dict[str, torch.Tensor | None],
     optimizer: torch.optim.Optimizer,
+    epoch_index: int = 0,
     exercise_evidence_difficulty_regularization_weight: float = 0.0,
     difficulty_prior_target: torch.Tensor | None = None,
     difficulty_prior_mask: torch.Tensor | None = None,
@@ -1029,6 +1027,7 @@ def _train_full_batch_epoch(
         exercise_evidence=forward_tensors["exercise_evidence"],
         target_student_ids=forward_tensors["interaction_student_ids"],
         target_exercise_ids=forward_tensors["interaction_exercise_ids"],
+        completion_epoch=epoch_index,
     )
     loss = F.binary_cross_entropy(output.probs, tensors["interaction_labels"])
     if mastery_aux_bce_weight > 0.0:
@@ -1050,10 +1049,7 @@ def _train_full_batch_epoch(
         loss = (
             loss
             + unified_completion_loss_weight
-            * masked_completion_loss(
-                output,
-                tensors["student_concept_evidence"],
-            )
+            * masked_graph_reconstruction_loss(output)
         )
     if masked_response_weight > 0.0:
         loss = loss + masked_response_weight * _masked_response_loss(
@@ -1258,6 +1254,7 @@ def _train_student_recompute_minibatch_epoch(
     tensors: dict[str, torch.Tensor | None],
     optimizer: torch.optim.Optimizer,
     student_batch_size: int,
+    epoch_index: int = 0,
     exercise_evidence_difficulty_regularization_weight: float = 0.0,
     difficulty_prior_target: torch.Tensor | None = None,
     difficulty_prior_mask: torch.Tensor | None = None,
@@ -1333,6 +1330,7 @@ def _train_student_recompute_minibatch_epoch(
             target_student_ids=tensors["interaction_student_ids"][batch_indices],
             target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
             use_student_subset=True,
+            completion_epoch=epoch_index,
         )
         loss = F.binary_cross_entropy(output.probs, batch_labels)
         if mastery_aux_bce_weight > 0.0:
@@ -1356,19 +1354,13 @@ def _train_student_recompute_minibatch_epoch(
                 )
             )
         if unified_completion_loss_weight > 0.0:
-            completion_student_ids = torch.unique(
-                tensors["interaction_student_ids"][batch_indices],
-                sorted=True,
-            )
-            loss = (
-                loss
-                + unified_completion_loss_weight
-                * masked_completion_loss(
-                    output,
-                    tensors["student_concept_evidence"],
-                    student_ids=completion_student_ids,
+            completion_mask = output.completion_target_mask
+            if completion_mask is not None and bool(completion_mask.any()):
+                loss = (
+                    loss
+                    + unified_completion_loss_weight
+                    * masked_graph_reconstruction_loss(output)
                 )
-            )
         if consistency_weight > 0.0 or contrastive_weight > 0.0:
             if consistency_adaptive:
                 # Tr-2-adaptive: per-student drop scaled by coverage so

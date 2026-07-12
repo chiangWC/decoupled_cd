@@ -72,15 +72,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--unified-completion",
-        choices=("prior", "lowrank"),
+        choices=("prior", "evidence-relational-graph"),
         default="prior",
-        help="Unified V3 missing-mastery completion module.",
+        help="Unified V4 missing-mastery completion module.",
     )
     parser.add_argument(
-        "--unified-completion-rank",
+        "--unified-graph-hidden-dim",
         type=int,
         default=32,
-        help="Rank reserved for the unified A1 low-rank completer.",
+        help="Hidden dimension for the unified A2 graph completer.",
     )
     parser.add_argument(
         "--unified-evidence-loss-weight",
@@ -792,8 +792,8 @@ def validate_model_args(args: argparse.Namespace) -> None:
         UnifiedArchitectureSpec(
             completion=args.unified_completion,
         )
-        if args.unified_completion_rank <= 0:
-            raise ValueError("--unified-completion-rank must be positive.")
+        if args.unified_graph_hidden_dim <= 0:
+            raise ValueError("--unified-graph-hidden-dim must be positive.")
         if (
             not math.isfinite(args.unified_evidence_loss_weight)
             or args.unified_evidence_loss_weight <= 0.0
@@ -819,12 +819,12 @@ def validate_model_args(args: argparse.Namespace) -> None:
                 "completion."
             )
         if (
-            args.unified_completion == "lowrank"
+            args.unified_completion == "evidence-relational-graph"
             and args.unified_completion_loss_weight <= 0.0
         ):
             raise ValueError(
                 "--unified-completion-loss-weight must be positive for "
-                "lowrank completion."
+                "evidence-relational-graph completion."
             )
         if args.training_mode not in {
             "full_batch",
@@ -1096,7 +1096,7 @@ def main() -> None:
             dim=args.concept_dim,
             architecture=architecture,
             initial_mastery_logits=initial_mastery_logits,
-            completion_rank=args.unified_completion_rank,
+            graph_hidden_dim=args.unified_graph_hidden_dim,
         )
     elif args.model == "v2":
         model = DecoupledCDMV2(
@@ -1245,10 +1245,13 @@ def main() -> None:
         "unified_completion": (
             args.unified_completion if args.model == "unified_v2" else None
         ),
-        "unified_completion_rank": (
-            args.unified_completion_rank
+        "unified_graph_hidden_dim": (
+            args.unified_graph_hidden_dim
             if args.model == "unified_v2"
             else None
+        ),
+        "completion_mask_fraction": (
+            0.2 if args.model == "unified_v2" else None
         ),
         "unified_evidence_loss_weight": (
             args.unified_evidence_loss_weight

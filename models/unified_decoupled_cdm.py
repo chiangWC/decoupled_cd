@@ -9,10 +9,10 @@ import torch
 import torch.nn as nn
 
 from .decoupled_cdm import DecoupledForwardOutput
+from .evidence_relation_graph import EvidenceRelationGraphCompleter
 from .unified_v2_components import (
     ConditionalSimplexBehaviorModel,
     GlobalConceptPriorCompleter,
-    LowRankMasteryCompleter,
     MonotonicDiagnosisDecoder,
     ObservedMasteryEstimator,
     assemble_mastery,
@@ -37,12 +37,12 @@ class UnifiedDecoupledCDM(nn.Module):
         dim: int,
         architecture: UnifiedArchitectureSpec,
         initial_mastery_logits: torch.Tensor | None = None,
-        completion_rank: int = 32,
+        graph_hidden_dim: int = 32,
         evidence_cap: float = 20.0,
     ) -> None:
         super().__init__()
-        if type(completion_rank) is not int or completion_rank <= 0:
-            raise ValueError("completion_rank must be a positive integer")
+        if type(graph_hidden_dim) is not int or graph_hidden_dim <= 0:
+            raise ValueError("graph_hidden_dim must be a positive integer")
         self.num_students = num_students
         self.architecture = architecture
         self.register_buffer(
@@ -64,8 +64,8 @@ class UnifiedDecoupledCDM(nn.Module):
             self._text_tensor(architecture.completion),
         )
         self.register_buffer(
-            "_checkpoint_unified_completion_rank",
-            torch.tensor(completion_rank, dtype=torch.int64),
+            "_checkpoint_unified_graph_hidden_dim",
+            torch.tensor(graph_hidden_dim, dtype=torch.int64),
         )
         self.register_buffer(
             "_checkpoint_unified_evidence_loss_weight",
@@ -84,10 +84,10 @@ class UnifiedDecoupledCDM(nn.Module):
         if architecture.completion == "prior":
             self.completer = GlobalConceptPriorCompleter(num_concepts)
         else:
-            self.completer = LowRankMasteryCompleter(
+            self.completer = EvidenceRelationGraphCompleter(
                 num_students=num_students,
                 num_concepts=num_concepts,
-                rank=completion_rank,
+                hidden_dim=graph_hidden_dim,
             )
         self.decoder = MonotonicDiagnosisDecoder(
             num_exercises=num_exercises,
@@ -101,8 +101,8 @@ class UnifiedDecoupledCDM(nn.Module):
         )
 
     @property
-    def completion_rank(self) -> int:
-        return int(self._checkpoint_unified_completion_rank.item())
+    def graph_hidden_dim(self) -> int:
+        return int(self._checkpoint_unified_graph_hidden_dim.item())
 
     def set_checkpoint_loss_weights(
         self,
@@ -144,8 +144,8 @@ class UnifiedDecoupledCDM(nn.Module):
                 "architecture fingerprint"
             ),
             "_checkpoint_unified_completion": "unified completion",
-            "_checkpoint_unified_completion_rank": (
-                "unified completion_rank"
+            "_checkpoint_unified_graph_hidden_dim": (
+                "unified graph_hidden_dim"
             ),
             "_checkpoint_unified_evidence_loss_weight": (
                 "unified evidence_loss_weight"
@@ -202,6 +202,7 @@ class UnifiedDecoupledCDM(nn.Module):
         target_student_ids: torch.Tensor,
         target_exercise_ids: torch.Tensor,
         use_student_subset: bool = False,
+        completion_epoch: int | None = None,
     ) -> DecoupledForwardOutput:
         del (
             concept_graph,
@@ -224,8 +225,23 @@ class UnifiedDecoupledCDM(nn.Module):
         )
         if self.architecture.completion == "prior":
             missing = self.completer(observed.mastery.shape[0])
+            completion_target_mask = None
+            completion_targets = None
+            completion_student_state = None
+            completion_concept_state = None
         else:
-            missing = self.completer(student_ids)
+            completion = self.completer(
+                student_concept_evidence,
+                q_matrix,
+                student_ids=student_ids,
+                epoch=completion_epoch,
+                training=self.training,
+            )
+            missing = completion.mastery
+            completion_target_mask = completion.reconstruction_mask
+            completion_targets = completion.target if self.training else None
+            completion_student_state = completion.student_state
+            completion_concept_state = completion.concept_state
         mastery = assemble_mastery(
             observed.mastery,
             missing,
@@ -271,4 +287,8 @@ class UnifiedDecoupledCDM(nn.Module):
             completion_predictions=missing,
             mastery_observed_mask=observed.observed_mask,
             cognitive_weight=behavior.cognitive_weight,
+            completion_target_mask=completion_target_mask,
+            completion_targets=completion_targets,
+            completion_student_state=completion_student_state,
+            completion_concept_state=completion_concept_state,
         )

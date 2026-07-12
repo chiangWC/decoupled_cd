@@ -12,10 +12,13 @@ from unittest import mock
 
 import torch
 
-from models import UnifiedArchitectureSpec, UnifiedDecoupledCDM
+from models import (
+    EvidenceRelationGraphCompleter,
+    UnifiedArchitectureSpec,
+    UnifiedDecoupledCDM,
+)
 from models.unified_v2_components import (
     GlobalConceptPriorCompleter,
-    LowRankMasteryCompleter,
     smoothed_evidence_logits,
 )
 from scripts import analyze_prediction_slices
@@ -25,7 +28,7 @@ from scripts import train as train_script
 from trainers.engine import (
     _train_full_batch_epoch,
     _train_student_recompute_minibatch_epoch,
-    masked_completion_loss,
+    masked_graph_reconstruction_loss,
     observed_mastery_evidence_loss,
     train_model,
 )
@@ -47,6 +50,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         evidence = torch.zeros(2, 3, 6)
         evidence[0, 0, :2] = torch.tensor([4.0, 3.0])
         evidence[0, 1, :2] = torch.tensor([3.0, 1.0])
+        evidence[1, 0, :2] = torch.tensor([2.0, 1.0])
         evidence[1, 1, :2] = torch.tensor([5.0, 4.0])
         evidence[1, 2, :2] = torch.tensor([3.0, 0.0])
         tkc = (evidence[..., 0] > 0).float()
@@ -96,7 +100,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
     def model(
         *,
         completion: str = "prior",
-        completion_rank: int = 32,
+        graph_hidden_dim: int = 4,
     ) -> UnifiedDecoupledCDM:
         evidence = UnifiedV2TrainingTests.tensors()[
             "student_concept_evidence"
@@ -108,11 +112,15 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             dim=4,
             architecture=UnifiedArchitectureSpec(completion=completion),
             initial_mastery_logits=smoothed_evidence_logits(evidence[..., :2]),
-            completion_rank=completion_rank,
+            graph_hidden_dim=graph_hidden_dim,
         )
 
     @staticmethod
-    def forward(model: UnifiedDecoupledCDM, tensors):
+    def forward(
+        model: UnifiedDecoupledCDM,
+        tensors,
+        completion_epoch: int | None = None,
+    ):
         return model(
             q_matrix=tensors["q_matrix"],
             concept_graph=tensors["concept_graph"],
@@ -123,6 +131,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             student_concept_evidence=tensors["student_concept_evidence"],
             target_student_ids=tensors["interaction_student_ids"],
             target_exercise_ids=tensors["interaction_exercise_ids"],
+            completion_epoch=completion_epoch,
         )
 
     def test_cli_accepts_a0_and_rejects_positive_completion_loss(self) -> None:
@@ -135,7 +144,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             "0",
         )
         self.assertEqual(args.unified_completion, "prior")
-        self.assertEqual(args.unified_completion_rank, 32)
+        self.assertEqual(args.unified_graph_hidden_dim, 32)
         self.assertEqual(args.unified_evidence_loss_weight, 1.0)
         self.assertEqual(args.unified_completion_loss_weight, 0.0)
 
@@ -148,48 +157,55 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 "--unified-completion-loss-weight",
                 "0.1",
             )
-        lowrank = self.parse_and_validate(
+        graph = self.parse_and_validate(
             "--model",
             "unified_v2",
             "--unified-completion",
-            "lowrank",
+            "evidence-relational-graph",
             "--unified-completion-loss-weight",
             "0.1",
         )
-        self.assertEqual(lowrank.unified_completion, "lowrank")
+        self.assertEqual(
+            graph.unified_completion, "evidence-relational-graph"
+        )
         with self.assertRaisesRegex(ValueError, "must be positive"):
             self.parse_and_validate(
                 "--model",
                 "unified_v2",
                 "--unified-completion",
-                "lowrank",
+                "evidence-relational-graph",
                 "--unified-completion-loss-weight",
                 "0",
             )
 
-    def test_a1_rank_is_numeric_and_a0_has_no_low_rank_parameters(self) -> None:
-        a1_rank_two = self.model(completion="lowrank", completion_rank=2)
-        a1_rank_three = self.model(completion="lowrank", completion_rank=3)
+    def test_a2_hidden_dim_is_numeric_and_a0_has_no_graph_parameters(self) -> None:
+        a2_dim_two = self.model(
+            completion="evidence-relational-graph", graph_hidden_dim=2
+        )
+        a2_dim_three = self.model(
+            completion="evidence-relational-graph", graph_hidden_dim=3
+        )
         a0 = self.model(completion="prior")
 
         self.assertEqual(
-            a1_rank_two.architecture.fingerprint(),
-            a1_rank_three.architecture.fingerprint(),
+            a2_dim_two.architecture.fingerprint(),
+            a2_dim_three.architecture.fingerprint(),
         )
-        self.assertIsInstance(a1_rank_two.completer, LowRankMasteryCompleter)
+        self.assertIsInstance(a2_dim_two.completer, EvidenceRelationGraphCompleter)
         self.assertIsInstance(a0.completer, GlobalConceptPriorCompleter)
         self.assertFalse(
             any(
-                "student_factors" in name or "concept_factors" in name
+                name.startswith("completer.student_encoder")
                 for name, _ in a0.named_parameters()
             )
         )
 
-    def test_completion_loss_uses_observed_cells_but_assembly_uses_a1_only_when_missing(self) -> None:
+    def test_a2_uses_graph_only_for_missing_cells(self) -> None:
         tensors = self.tensors()
-        evidence = tensors["student_concept_evidence"]
-        model = self.model(completion="lowrank", completion_rank=2)
-        output = self.forward(model, tensors)
+        model = self.model(
+            completion="evidence-relational-graph", graph_hidden_dim=2
+        )
+        output = self.forward(model, tensors, completion_epoch=0)
 
         self.assertEqual(
             tuple(output.completion_predictions.shape),
@@ -208,15 +224,41 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             )
         )
 
-        loss = masked_completion_loss(output, evidence)
+        loss = masked_graph_reconstruction_loss(output)
         loss.backward()
-        self.assertIsNotNone(model.completer.student_factors.grad)
+        self.assertTrue(
+            any(parameter.grad is not None for parameter in model.completer.parameters())
+        )
+
+    def test_a2_evaluation_uses_all_edges_without_reconstruction_target(self) -> None:
+        model = self.model(completion="evidence-relational-graph")
+        model.eval()
+        output = self.forward(model, self.tensors())
+
+        self.assertFalse(bool(output.completion_target_mask.any()))
+        self.assertIsNone(output.completion_targets)
+        self.assertIsNotNone(output.completion_student_state)
+        self.assertIsNotNone(output.completion_concept_state)
+
+    def test_v3_checkpoint_is_rejected(self) -> None:
+        model = self.model(completion="prior")
+        state = copy.deepcopy(model.state_dict())
+        state["_checkpoint_architecture_manifest"] = model._text_tensor(
+            '{"version":3}'
+        )
+        with self.assertRaisesRegex(
+            ValueError, "architecture manifest mismatch"
+        ):
+            model.load_state_dict(state)
 
     def test_completion_supervision_runs_in_both_training_modes(self) -> None:
         for mode in ("full_batch", "student_recompute_minibatch"):
             with self.subTest(mode=mode):
                 torch.manual_seed(7)
-                model = self.model(completion="lowrank", completion_rank=2)
+                model = self.model(
+                    completion="evidence-relational-graph",
+                    graph_hidden_dim=2,
+                )
                 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
                 tensors = self.tensors()
                 kwargs = {
@@ -225,6 +267,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                     "optimizer": optimizer,
                     "unified_evidence_loss_weight": 0.5,
                     "unified_completion_loss_weight": 0.5,
+                    "epoch_index": 0,
                 }
                 if mode == "full_batch":
                     stats = _train_full_batch_epoch(**kwargs)
@@ -235,7 +278,12 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                     )
                 self.assertTrue(torch.isfinite(torch.tensor(stats.mean_loss)))
                 self.assertGreater(stats.optimizer_steps, 0)
-                self.assertIsNotNone(model.completer.student_factors.grad)
+                self.assertTrue(
+                    any(
+                        parameter.grad is not None
+                        for parameter in model.completer.parameters()
+                    )
+                )
 
     def test_trainable_parameter_count_is_exact_and_excludes_frozen_parameters(self) -> None:
         model = torch.nn.Sequential(
@@ -281,6 +329,10 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         )
         self.assertTrue(torch.equal(output.tkc_states, expected_tkc))
         self.assertTrue(torch.equal(output.ukc_states, expected_ukc))
+        self.assertIsNone(output.completion_target_mask)
+        self.assertIsNone(output.completion_targets)
+        self.assertIsNone(output.completion_student_state)
+        self.assertIsNone(output.completion_concept_state)
 
     def test_observed_loss_ignores_missing_cell_targets(self) -> None:
         tensors = self.tensors()
@@ -545,12 +597,13 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 summary["architecture_manifest"]["cognitive_decoder"],
                 "neuralcdm-monotonic",
             )
-            self.assertEqual(summary["architecture_manifest"]["version"], 3)
+            self.assertEqual(summary["architecture_manifest"]["version"], 4)
             self.assertRegex(
                 summary["architecture_fingerprint"], r"^[0-9a-f]{64}$"
             )
             self.assertEqual(summary["unified_completion"], "prior")
-            self.assertEqual(summary["unified_completion_rank"], 32)
+            self.assertEqual(summary["unified_graph_hidden_dim"], 32)
+            self.assertEqual(summary["completion_mask_fraction"], 0.2)
             self.assertGreater(summary["unified_evidence_loss_weight"], 0.0)
             self.assertEqual(summary["unified_completion_loss_weight"], 0.0)
 
@@ -625,7 +678,8 @@ class UnifiedV2TrainingTests(unittest.TestCase):
                 "architecture_manifest": manifest,
                 "architecture_fingerprint": model.architecture.fingerprint(),
                 "unified_completion": "prior",
-                "unified_completion_rank": 32,
+                "unified_graph_hidden_dim": 4,
+                "completion_mask_fraction": 0.2,
                 "unified_evidence_loss_weight": 1.0,
                 "unified_completion_loss_weight": 0.0,
             }
@@ -666,7 +720,8 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             "architecture_manifest": model.architecture.manifest(),
             "architecture_fingerprint": model.architecture.fingerprint(),
             "unified_completion": "prior",
-            "unified_completion_rank": 32,
+            "unified_graph_hidden_dim": 4,
+            "completion_mask_fraction": 0.2,
             "unified_evidence_loss_weight": 1.0,
             "unified_completion_loss_weight": 0.0,
         }
@@ -700,7 +755,8 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             "architecture_manifest": model.architecture.manifest(),
             "architecture_fingerprint": model.architecture.fingerprint(),
             "unified_completion": "prior",
-            "unified_completion_rank": 32,
+            "unified_graph_hidden_dim": 4,
+            "completion_mask_fraction": 0.2,
             "unified_evidence_loss_weight": 0.5,
             "unified_completion_loss_weight": 0.0,
         }
@@ -754,7 +810,7 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         )
         self.assertEqual(decode("_checkpoint_unified_completion"), "prior")
         self.assertEqual(
-            int(state["_checkpoint_unified_completion_rank"]), 32
+            int(state["_checkpoint_unified_graph_hidden_dim"]), 4
         )
         self.assertEqual(
             float(state["_checkpoint_unified_evidence_loss_weight"]),
@@ -856,7 +912,8 @@ class UnifiedV2TrainingTests(unittest.TestCase):
             "architecture_manifest": manifest,
             "architecture_fingerprint": model.architecture.fingerprint(),
             "unified_completion": "prior",
-            "unified_completion_rank": 32,
+            "unified_graph_hidden_dim": 4,
+            "completion_mask_fraction": 0.2,
             "unified_evidence_loss_weight": 1.0,
             "unified_completion_loss_weight": 0.0,
         }

@@ -104,7 +104,8 @@ def load_model(
         )
         required_settings = (
             "unified_completion",
-            "unified_completion_rank",
+            "unified_graph_hidden_dim",
+            "completion_mask_fraction",
             "unified_evidence_loss_weight",
             "unified_completion_loss_weight",
         )
@@ -117,7 +118,8 @@ def load_model(
                 + ", ".join(missing_settings)
             )
         completion = summary["unified_completion"]
-        completion_rank = summary["unified_completion_rank"]
+        graph_hidden_dim = summary["unified_graph_hidden_dim"]
+        completion_mask_fraction = summary["completion_mask_fraction"]
         evidence_loss_weight = summary["unified_evidence_loss_weight"]
         completion_loss_weight = summary[
             "unified_completion_loss_weight"
@@ -127,12 +129,14 @@ def load_model(
                 "unified_completion does not match architecture_manifest"
             )
         if (
-            type(completion_rank) is not int
-            or completion_rank <= 0
+            type(graph_hidden_dim) is not int
+            or graph_hidden_dim <= 0
         ):
             raise ValueError(
-                "unified_completion_rank must be a positive integer"
+                "unified_graph_hidden_dim must be a positive integer"
             )
+        if completion_mask_fraction != 0.2:
+            raise ValueError("completion_mask_fraction must be 0.2")
         for name, value in (
             ("unified_evidence_loss_weight", evidence_loss_weight),
             ("unified_completion_loss_weight", completion_loss_weight),
@@ -147,9 +151,13 @@ def load_model(
             raise ValueError(
                 "unified_completion_loss_weight must be zero for prior"
             )
-        if completion == "lowrank" and completion_loss_weight <= 0.0:
+        if (
+            completion == "evidence-relational-graph"
+            and completion_loss_weight <= 0.0
+        ):
             raise ValueError(
-                "unified_completion_loss_weight must be positive for lowrank"
+                "unified_completion_loss_weight must be positive for "
+                "evidence-relational-graph"
             )
         model = UnifiedDecoupledCDM(
             num_students=train_bundle.num_students,
@@ -157,7 +165,7 @@ def load_model(
             num_concepts=train_bundle.num_concepts,
             dim=concept_dim,
             architecture=architecture,
-            completion_rank=completion_rank,
+            graph_hidden_dim=graph_hidden_dim,
         )
         model.set_checkpoint_loss_weights(
             evidence_loss_weight=float(evidence_loss_weight),
