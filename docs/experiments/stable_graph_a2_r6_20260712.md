@@ -55,3 +55,9 @@ Failure vector：
 ## 协议边界
 
 没有 retry、reset、batch/recipe 改动、dataset-specific 数值、A2 residual patch、external gate、test、push 或 reference repo 修改。r1–r5 全部只读保留；r5 A2 仍只作为 protocol-invalid evidence。有效 r6 gate FAIL 后，`test` 未打开，external gate remains closed。下一独立机制是 **MNAR / exposure-aware mastery completion**。
+
+## 最终软件验证与审计边界
+
+完整 CPU suite 运行 `359` 项，唯一失败为已知 timing-sensitive `test_sigterm_to_runner_forwards_to_nested_child_process_group`；按记录政策立即隔离重跑该精确用例，`1/1` 通过。完整日志 `audit/final-verification/full-unittest-discover.log` SHA-256 为 `e2e9f193746f6bb313108ea1fc20ed355ebe9ff77546e75bb28e4c72ab1e2fae`；隔离日志 `audit/final-verification/isolated-sigterm-rerun.log` SHA-256 为 `5a860203e4d129be58e7b3e196ee5d19787208995a231c73c4dd5b9299744883`。退出码与 `SHA256SUMS` 同目录归档。`compileall`、`git diff --check`、controller status 均通过；attempt/ledger/decision 受保护文件的聚合 SHA-256 保持 `a9c4e6eddd7da40953eb070d76fca2ebf7f5b1f1f42515eb81a0573cb5ffffbb`。
+
+controller summary 数值交叉校验留给下一独立 campaign，因为任何 controller/summary 实现改动都会改变 r6 implementation identity 并使现有权威链失效。当前 r6 的 preflight、冻结 runner argv 与 checkpoint/summary provenance 已绑定 graph hidden dim `64/256/64`、completion/evidence weights `1.0/0.1`；本次关闭只增加审计日志和文档，没有修改代码、ledger、decision 或 test-closed 状态。

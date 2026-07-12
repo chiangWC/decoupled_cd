@@ -13,6 +13,10 @@ Task 8 在远端 HEAD `325f7e7a4c40549062306bfbe57416073c9e85c2` 各显式调用
 
 因此 external comparator 未执行、test 未打开，不能把 A2 失败描述为整体完成，也不能用 external comparator 覆盖 relative gate。下一阶段仅允许另立 MNAR campaign，同时保留 v4 behavior、同一 mastery/head、冻结 cohort 与 test-closed 协议。
 
+最终完整 CPU 回归按预先记录的例外政策验收：`python -m unittest discover -s tests -v` 共运行 `359` 项，唯一失败是已知 timing-sensitive `test_sigterm_to_runner_forwards_to_nested_child_process_group`；立即隔离重跑该精确用例，`1/1` 通过。完整日志 SHA-256 为 `e2e9f193746f6bb313108ea1fc20ed355ebe9ff77546e75bb28e4c72ab1e2fae`，隔离日志 SHA-256 为 `5a860203e4d129be58e7b3e196ee5d19787208995a231c73c4dd5b9299744883`，均归档在 r6 `audit/final-verification/`。`compileall`、`git diff --check` 与最终 controller status 同时通过。
+
+controller summary 的额外数值交叉校验延后到下一独立 campaign；在 r6 关闭后修改实现代码会改变 implementation identity，使现有 ledger/decision 失效，不能为补充展示性校验而重写权威 campaign。r6 已有 preflight、冻结 runner argv 与 checkpoint/summary provenance 共同绑定 graph hidden dim `64/256/64`、completion weight `1.0` 和 evidence weight `0.1`，因此本次只补审计日志与文档，不改变实现或实验字节。
+
 ---
 
 ## 结论
