@@ -484,6 +484,35 @@ class PrimaryCohortRankingTests(unittest.TestCase):
                     changed, self.baseline_audit, self.audit_rows, path=path
                 )
 
+    def test_read_only_verify_preserves_malformed_cohort_bytes(self) -> None:
+        from scripts.unified_cohort import verify_primary_cohort
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.json"
+            freeze_primary_cohort(
+                self.a0_rows, self.baseline_audit, self.audit_rows, path=path
+            )
+            malformed = b"{malformed immutable cohort\n"
+            path.write_bytes(malformed)
+
+            with self.assertRaises((ValueError, json.JSONDecodeError)):
+                verify_primary_cohort(
+                    self.a0_rows, self.baseline_audit, self.audit_rows, path=path
+                )
+
+            self.assertEqual(path.read_bytes(), malformed)
+
+    def test_read_only_verify_does_not_create_missing_cohort(self) -> None:
+        from scripts.unified_cohort import verify_primary_cohort
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.json"
+            with self.assertRaisesRegex(ValueError, "unreadable"):
+                verify_primary_cohort(
+                    self.a0_rows, self.baseline_audit, self.audit_rows, path=path
+                )
+            self.assertFalse(path.exists())
+
     def test_loader_rejects_comparator_or_audit_hash_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "cohort.json"

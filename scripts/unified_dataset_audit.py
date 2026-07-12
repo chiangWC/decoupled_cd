@@ -151,6 +151,19 @@ def _validation_coverage(
     return counts, exercises, concepts
 
 
+def canonical_split_source_hashes(
+    *, train_path: Path, valid_path: Path, q_path: Path
+) -> dict[str, str]:
+    """Recompute the source bindings stored in a dataset split audit."""
+    history, _, _ = _training_history(train_path)
+    coverage, _, _ = _validation_coverage(valid_path, history)
+    return {
+        "data_sha256": _data_sha256((train_path, valid_path)),
+        "q_sha256": _file_sha256(q_path),
+        "prediction_order_sha256": str(coverage["prediction_order_sha256"]),
+    }
+
+
 def _split_record(path: Path) -> tuple[dict[str, Any], tuple[set[str], set[str]]]:
     q_path = path / "Q_matrix.csv"
     q_exercises, q_concepts = _q_domain(q_path)
@@ -166,8 +179,11 @@ def _split_record(path: Path) -> tuple[dict[str, Any], tuple[set[str], set[str]]
         "valid_path": str((path / "valid.csv").resolve()),
         "test_path": str((path / "test.csv").resolve()),
         "q_path": str(q_path.resolve()),
-        "q_sha256": _file_sha256(q_path),
-        "data_sha256": _data_sha256((path / "train.csv", path / "valid.csv")),
+        **canonical_split_source_hashes(
+            train_path=path / "train.csv",
+            valid_path=path / "valid.csv",
+            q_path=q_path,
+        ),
         "test_sha256": _file_sha256(path / "test.csv"),
         "test_content_hash_only": True,
         "exercise_id_count": len(q_exercises),

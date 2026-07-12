@@ -16,7 +16,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.evaluate_coverage_slice import add_target_coverage, compute_slice_rows
-from scripts.unified_dataset_audit import canonical_sha256
+from scripts.unified_dataset_audit import (
+    canonical_sha256,
+    canonical_split_source_hashes,
+)
 
 
 def _file_sha256(path: Path) -> str:
@@ -111,6 +114,16 @@ def finalize_baseline_rows(
     train_path = Path(str(split["train_path"])).resolve()
     valid_path = Path(str(split["valid_path"])).resolve()
     q_path = Path(str(split["q_path"])).resolve()
+    actual_hashes = canonical_split_source_hashes(
+        train_path=train_path,
+        valid_path=valid_path,
+        q_path=q_path,
+    )
+    for field, actual in actual_hashes.items():
+        if split.get(field) != actual:
+            raise ValueError(
+                f"audited {dataset_id}/{split_id} {field} SHA-256 mismatch"
+            )
     manifest = _load_json(manifest_path)
     if not isinstance(manifest, Mapping):
         raise ValueError("job manifest must be a JSON object")

@@ -426,6 +426,26 @@ def freeze_primary_cohort(
     return cohort
 
 
+def verify_primary_cohort(
+    a0_rows: Sequence[Mapping[str, Any]],
+    comparator_rows: Mapping[str, Any],
+    audit_rows: Mapping[str, Any],
+    *,
+    path: str | Path,
+) -> dict[str, Any]:
+    """Verify an existing primary cohort without mutating its path."""
+    expected = _primary_cohort_record(a0_rows, comparator_rows, audit_rows)
+    existing = load_verified_cohort(
+        path,
+        expected_dataset_ids=expected["dataset_ids"],
+        expected_a0_fingerprints=expected["a0_fingerprints"],
+        expected_comparator_audit_sha256=expected["comparator_audit_sha256"],
+        expected_dataset_audit_sha256=expected["dataset_audit_sha256"],
+    )
+    _verify_existing(existing, expected)
+    return existing
+
+
 def _load_json(path: Path) -> Any:
     with path.open(encoding="utf-8") as handle:
         return json.load(handle)
@@ -454,6 +474,29 @@ def _trusted_freeze(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def _trusted_verify(args: argparse.Namespace) -> dict[str, Any]:
+    a0_payload = _load_json(args.a0_metrics)
+    a0_rows = (
+        a0_payload.get("rows")
+        if isinstance(a0_payload, Mapping)
+        else a0_payload
+    )
+    if not isinstance(a0_rows, list):
+        raise ValueError("A0 metrics must be a row list or an object containing rows")
+    baseline_audit = _load_json(args.baseline_audit)
+    dataset_audit = _load_json(args.dataset_audit)
+    if not isinstance(baseline_audit, Mapping) or not isinstance(
+        dataset_audit, Mapping
+    ):
+        raise ValueError("trusted audits must be JSON objects")
+    return verify_primary_cohort(
+        a0_rows,
+        baseline_audit,
+        dataset_audit,
+        path=args.cohort,
+    )
+
+
 def _print_cohort(payload: Mapping[str, Any]) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
 
@@ -472,7 +515,9 @@ def build_parser() -> argparse.ArgumentParser:
             child.add_argument("--output", type=Path, required=True)
         else:
             child.add_argument("--cohort", type=Path, required=True)
-        child.set_defaults(handler=_trusted_freeze)
+        child.set_defaults(
+            handler=_trusted_freeze if command == "freeze" else _trusted_verify
+        )
     return parser
 
 

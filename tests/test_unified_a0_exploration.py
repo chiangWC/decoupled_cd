@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import hashlib
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scripts.unified_baseline_audit import audit_baseline_rows
 from scripts.unified_dataset_audit import canonical_sha256
@@ -125,7 +125,61 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
         self.assertIn("init", completed.stdout)
         self.assertIn("run-validation", completed.stdout)
 
-    def test_finalization_replays_proofs_and_selects_xes_r0_over_failed_r1(self) -> None:
+    def test_run_validation_without_parallel_flag_uses_sequential_controller_pair(self) -> None:
+        from argparse import Namespace
+        from scripts.unified_a0_exploration import _run_validation
+
+        wrapper = {
+            "controller_state_dir": "/controller",
+            "repo_root": "/repo",
+            "rows_output": "/rows.json",
+        }
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "scripts.unified_a0_exploration._read_json",
+            side_effect=[wrapper, {"complete": False, "issuance_counter": 0}, {"complete": True}],
+        ), patch(
+            "scripts.unified_a0_exploration.authorize_next"
+        ), patch(
+            "scripts.unified_a0_exploration.run_registered_pair"
+        ) as run_pair, patch(
+            "scripts.unified_a0_exploration.finalize_exploration", return_value=[]
+        ), patch("scripts.unified_a0_exploration._exclusive_json"):
+            _run_validation(Namespace(
+                state=Path(directory) / "wrapper.json", parallel_gpus=False
+            ))
+
+        run_pair.assert_called_once_with(
+            state_dir=Path("/controller"), repo_root=Path("/repo"), parallel=False
+        )
+
+    def test_run_validation_parallel_flag_uses_parallel_controller_pair(self) -> None:
+        from argparse import Namespace
+        from scripts.unified_a0_exploration import _run_validation
+
+        wrapper = {
+            "controller_state_dir": "/controller",
+            "repo_root": "/repo",
+            "rows_output": "/rows.json",
+        }
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "scripts.unified_a0_exploration._read_json",
+            side_effect=[wrapper, {"complete": False, "issuance_counter": 0}, {"complete": True}],
+        ), patch(
+            "scripts.unified_a0_exploration.authorize_next"
+        ), patch(
+            "scripts.unified_a0_exploration.run_registered_pair"
+        ) as run_pair, patch(
+            "scripts.unified_a0_exploration.finalize_exploration", return_value=[]
+        ), patch("scripts.unified_a0_exploration._exclusive_json"):
+            _run_validation(Namespace(
+                state=Path(directory) / "wrapper.json", parallel_gpus=True
+            ))
+
+        run_pair.assert_called_once_with(
+            state_dir=Path("/controller"), repo_root=Path("/repo"), parallel=True
+        )
+
+    def test_finalization_rejects_hand_authored_proof_only_inputs(self) -> None:
         from scripts.run_unified_validation import RECIPES
         from scripts.unified_a0_exploration import finalize_exploration
 
@@ -196,16 +250,8 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
                     json.dumps(proof), encoding="utf-8"
                 )
 
-            rows = finalize_exploration(state_dir)
-            finalized = json.loads((state_dir / "state.json").read_text())
-            selected = finalized["selected_recipes"]["XES3G5M"]
-
-            self.assertEqual(selected["recipe_index"], 0)
-            self.assertEqual(rows[0]["recipe_index"], 0)
-            self.assertEqual(selected["recipe_sha256"], rows[0]["recipe_sha256"])
-            self.assertEqual(selected["proof_counter"], 1)
-            proof_bytes = (proofs_dir / "000001-XES3G5M.json").read_bytes()
-            self.assertEqual(selected["proof_sha256"], hashlib.sha256(proof_bytes).hexdigest())
+            with self.assertRaisesRegex(ValueError, "controller replay state|registered"):
+                finalize_exploration(state_dir)
 
 
 if __name__ == "__main__":

@@ -118,3 +118,11 @@ guess + slip < 1。没有 A1 smoke，也没有第二次 A0 smoke。
 
 freeze 与带完整 A0/baseline/dataset 输入的 verify 均通过；冻结排名为
 MOOCRadar、ASSIST17、XES3G5M。
+
+已冻结 bundle 的绝对路径为
+`/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-mastery-20260712/bundles/a0-cohort-756dc99be81b.bundle`，
+文件 SHA-256 为
+`8d9e1c7ff784a46483688850a500ab4e2dd52f35eb06f91758f5273e4b0f6154`。
+该 bundle 包含 commit `756dc99be81b02e71d7079e23aadf8620ce8c3c3`；由于 bundle
+已经在该 commit 上创建，本次补充 checksum 元数据的后续 commit 必然不在这个
+既有 bundle 内。

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +14,7 @@ from scripts.unified_validation_controller import (
     CAMPAIGN_ID,
     authorize_next,
     initialize_controller,
+    replay_registered_exploration_proofs,
     run_registered_pair,
 )
 
@@ -181,39 +181,28 @@ def _init(args: argparse.Namespace) -> None:
 def _validated_ranked_proofs(
     controller_dir: Path,
 ) -> tuple[dict[str, Any], dict[str, Mapping[str, Any]], list[dict[str, Any]]]:
-    state = _read_json(controller_dir / "state.json")
-    if not isinstance(state, dict) or not state.get("complete"):
-        raise ValueError("exploration controller is not complete")
-    if state.get("mode") != "a0_exploration" or state.get("active_pair") is not None:
-        raise ValueError("controller is not in finalizable A0 exploration state")
+    state, replayed = replay_registered_exploration_proofs(controller_dir)
     dataset_ids = state.get("dataset_ids")
     issuance_counter = state.get("issuance_counter")
     if not isinstance(dataset_ids, list) or type(issuance_counter) is not int:
         raise ValueError("exploration controller registry is invalid")
     grouped: dict[str, list[Mapping[str, Any]]] = {}
     proof_registry: list[dict[str, Any]] = []
-    for path in sorted((controller_dir / "proofs").glob("*.json")):
-        proof = _read_json(path)
-        if not isinstance(proof, Mapping):
-            raise ValueError(f"exploration proof is not an object: {path}")
+    for proof in replayed:
         dataset_id = proof.get("dataset_id")
         counter = proof.get("counter")
         if (
             dataset_id not in dataset_ids
             or type(counter) is not int
-            or path.name != f"{counter:06d}-{dataset_id}.json"
         ):
-            raise ValueError(f"exploration proof filename/counter mismatch: {path}")
-        for field in ("controller_id", "route_commit", "baseline_sha256"):
-            if proof.get(field) != state.get(field):
-                raise ValueError(f"exploration proof {field} mismatch: {path}")
+            raise ValueError("replayed exploration proof counter mismatch")
         split_proofs = proof.get("split_proofs")
         if not isinstance(split_proofs, Mapping):
-            raise ValueError(f"exploration split proofs are invalid: {path}")
+            raise ValueError("replayed exploration split proofs are invalid")
         standard = split_proofs.get("standard")
         holdout = split_proofs.get("holdout")
         if not isinstance(standard, Mapping) or not isinstance(holdout, Mapping):
-            raise ValueError(f"exploration split proof pair is incomplete: {path}")
+            raise ValueError("replayed exploration split proof pair is incomplete")
         recipe_index = standard.get("recipe_index")
         numerical_recipe = standard.get("numerical_recipe")
         if (
@@ -224,8 +213,8 @@ def _validated_ranked_proofs(
             or recipe_index >= len(RECIPES[str(dataset_id)])
             or numerical_recipe != RECIPES[str(dataset_id)][recipe_index].__dict__
         ):
-            raise ValueError(f"exploration proof recipe mismatch: {path}")
-        proof_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+            raise ValueError("replayed exploration proof recipe mismatch")
+        proof_sha256 = str(proof["proof_sha256"])
         proof_registry.append({
             "counter": counter,
             "dataset_id": dataset_id,
@@ -336,7 +325,11 @@ def _run_validation(args: argparse.Namespace) -> None:
             repo_root=repo_root,
             output_path=token_path,
         )
-        run_registered_pair(state_dir=controller_dir, repo_root=repo_root)
+        run_registered_pair(
+            state_dir=controller_dir,
+            repo_root=repo_root,
+            parallel=args.parallel_gpus,
+        )
     _exclusive_json(
         Path(str(wrapper["rows_output"])),
         {"rows": finalize_exploration(controller_dir)},

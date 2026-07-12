@@ -170,16 +170,23 @@ class UnifiedValidationControllerTests(unittest.TestCase):
     def _set_unit_launch(
         self, state: dict[str, object], *, dataset_id: str
     ) -> dict[str, object]:
+        commands = {
+            split_id: controller_module._outer_command(
+                state_dir=self.state_dir,
+                repo_root=self.repo_root,
+                state=state,
+                dataset_id=dataset_id,
+                split_id=split_id,
+            )
+            for split_id in ("standard", "holdout")
+        }
         state["launch"] = {
             "phase": "running",
             "launch_id": f"unit-{dataset_id}",
             "counter": state["active_pair"]["counter"],
             "dataset_id": dataset_id,
             "before_attempts": {"standard": [], "holdout": []},
-            "commands": {
-                "standard": ["outer", "--", "unit-standard"],
-                "holdout": ["outer", "--", "unit-holdout"],
-            },
+            "commands": commands,
         }
         (self.state_dir / "state.json").write_text(json.dumps(state))
         return state
@@ -372,7 +379,11 @@ print(attempt_dir)
             status = {
                 "status": "completed",
                 "exit_code": 0,
-                "invocation": {"command": [f"unit-{split_id}"]},
+                "invocation": {
+                    "command": state["launch"]["commands"][split_id][
+                        state["launch"]["commands"][split_id].index("--") + 1 :
+                    ]
+                },
                 "parameters": {"seed": 42, "split_seed": 2024},
                 "code": {"route_commit": record["route_commit"]},
                 "immutable_inputs": {
@@ -413,6 +424,122 @@ print(attempt_dir)
         }
         (self.state_dir / "state.json").write_text(json.dumps(state))
         return records
+
+    def _complete_exploration(self) -> None:
+        external_rows = [
+            {
+                "dataset_id": row["dataset_id"],
+                "cohort_sha256": row["cohort_sha256"],
+                "standard_overall_auc": row["standard_overall_auc"],
+                "holdout_overall_auc": row["holdout_overall_auc"],
+                "zero_auc": row["zero_auc"],
+                "comparator_sources": {
+                    "standard_overall_auc": "/audited/standard.json",
+                    "holdout_overall_auc": "/audited/holdout.json",
+                    "zero_auc": "/audited/zero.json",
+                },
+            }
+            for row in self.baseline_rows
+        ]
+        self.baseline_path.write_text(json.dumps({"rows": external_rows}))
+        self.manifest = UnifiedArchitectureSpec(completion="prior").manifest()
+        self.manifest_path.write_text(json.dumps(self.manifest))
+        initialize_controller(
+            state_dir=self.state_dir,
+            repo_root=self.repo_root,
+            cohort_path=self.cohort_path,
+            manifest_path=self.manifest_path,
+            architecture="a0",
+            baseline_rows_path=self.baseline_path,
+            data_root=self.data_root,
+            artifact_root=self.artifact_root,
+            exploration=True,
+        )
+        while True:
+            state = json.loads((self.state_dir / "state.json").read_text())
+            if state["complete"]:
+                return
+            token_path = self.root / f"replay-{state['issuance_counter'] + 1}.json"
+            token = authorize_next(
+                state_dir=self.state_dir,
+                repo_root=self.repo_root,
+                output_path=token_path,
+            )
+            dataset_id = state["dataset_ids"][state["cursor"]]
+            self._prepare_pair_artifacts(
+                token_path, token, dataset_id=dataset_id, architecture="a0"
+            )
+            self._advance_unit_launch()
+
+    def test_replay_rejects_changed_proof_deltas(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        proof_path = sorted((self.state_dir / "proofs").glob("*.json"))[0]
+        proof = json.loads(proof_path.read_text())
+        proof["deltas"]["zero_auc"] += 0.25
+        proof_path.write_text(json.dumps(proof))
+        with self.assertRaisesRegex(ValueError, "raw proof|SHA-256"):
+            finalize_exploration(self.state_dir)
+
+    def test_replay_rejects_changed_proof_bytes(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        proof_path = sorted((self.state_dir / "proofs").glob("*.json"))[0]
+        proof_path.write_bytes(proof_path.read_bytes() + b" \n")
+        with self.assertRaisesRegex(ValueError, "raw proof SHA-256"):
+            finalize_exploration(self.state_dir)
+
+    def test_replay_rejects_changed_split_summary(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        consumption = json.loads(sorted((self.state_dir / "consumed").glob("*.json"))[0].read_text())
+        summary_path = Path(consumption["summary_path"])
+        summary = json.loads(summary_path.read_text())
+        summary["overall_auc"] += 0.1
+        summary_path.write_text(json.dumps(summary))
+        with self.assertRaisesRegex(ValueError, "validation summary"):
+            finalize_exploration(self.state_dir)
+
+    def test_replay_rejects_changed_outer_status(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        consumption = json.loads(sorted((self.state_dir / "consumed").glob("*.json"))[0].read_text())
+        status_path = Path(consumption["attempt_dir"]) / "status.json"
+        status = json.loads(status_path.read_text())
+        status["status"] = "failed"
+        status_path.write_text(json.dumps(status))
+        with self.assertRaisesRegex(ValueError, "did not complete"):
+            finalize_exploration(self.state_dir)
+
+    def test_replay_rejects_missing_consumed_issuance(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        sorted((self.state_dir / "consumed").glob("*.json"))[0].unlink()
+        with self.assertRaisesRegex(ValueError, "issuance"):
+            finalize_exploration(self.state_dir)
+
+    def test_replay_rejects_recipe_mismatch(self) -> None:
+        from scripts.unified_a0_exploration import finalize_exploration
+
+        self._complete_exploration()
+        consumption = json.loads(sorted((self.state_dir / "consumed").glob("*.json"))[0].read_text())
+        summary_path = Path(consumption["summary_path"])
+        summary = json.loads(summary_path.read_text())
+        summary["numerical_recipe"] = {**summary["numerical_recipe"], "epochs": 999}
+        summary_path.write_text(json.dumps(summary))
+        status_path = Path(consumption["attempt_dir"]) / "status.json"
+        status = json.loads(status_path.read_text())
+        status["output_hashes"]["validation-summary.json"].update(
+            self._fingerprint(summary_path)
+        )
+        status_path.write_text(json.dumps(status))
+        with self.assertRaisesRegex(ValueError, "raw proof|recipe"):
+            finalize_exploration(self.state_dir)
 
     def test_initialization_copies_and_binds_registered_inputs(self) -> None:
         state = self.initialize()

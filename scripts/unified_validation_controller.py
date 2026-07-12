@@ -819,6 +819,7 @@ def initialize_controller(
             "zero_delta_threshold_seen": False,
             "split_seed": 2024,
             "issuance_counter": 0,
+            "proof_sha256_by_counter": {},
             "active_pair": None,
             "pending_issuance": None,
             "launch": None,
@@ -1078,6 +1079,239 @@ def _verify_split_proof(
     }
 
 
+def _validated_replay_invocation(
+    *, state_dir: Path, state: Mapping[str, Any], consumption: Mapping[str, Any]
+) -> list[str]:
+    status, _ = _snapshot_json(
+        Path(str(consumption["attempt_dir"])) / "status.json",
+        label=f"{consumption['split_id']} replay outer status",
+    )
+    invocation = status.get("invocation")
+    command = invocation.get("command") if isinstance(invocation, Mapping) else None
+    if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+        raise ValueError("replay outer status command is invalid")
+    if len(command) < 3 or Path(command[1]).name != "run_unified_validation.py":
+        raise ValueError("replay outer status command is not the registered runner")
+    repo_root = Path(command[1]).resolve().parents[1]
+    capability = command[command.index("--capability") + 1] if "--capability" in command else ""
+    expected = [
+        command[0],
+        str(repo_root / "scripts" / "run_unified_validation.py"),
+        "run-split",
+        "--dataset-id", str(consumption["dataset_id"]),
+        "--split-id", str(consumption["split_id"]),
+        "--architecture", str(state["architecture"]),
+        "--architecture-fingerprint", str(state["architecture_fingerprint"]),
+        "--cohort-sha256", str(state["cohort_sha256"]),
+        "--recipe-index", str(consumption["recipe_index"]),
+        "--data-root", str(Path(str(state["data_root"])).resolve()),
+        "--controller-state-dir", str(state_dir.resolve()),
+        "--repo-root", str(repo_root),
+        "--capability", capability,
+        "--output", "validation-summary.json",
+    ]
+    if command != expected:
+        raise ValueError("replay outer status command binding mismatch")
+    return command
+
+
+def _verified_replay_state(
+    state_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Mapping[str, Any]]]:
+    state = _load_json(state_dir / "state.json", label="controller replay state")
+    if (
+        state.get("schema_version") != CONTROLLER_SCHEMA_VERSION
+        or state.get("campaign_id") != CAMPAIGN_ID
+        or state.get("mode") != "a0_exploration"
+        or state.get("complete") is not True
+        or state.get("active_pair") is not None
+        or state.get("launch") is not None
+        or state.get("split_seed") != 2024
+    ):
+        raise ValueError("controller replay state is not a completed exploration")
+    cohort = load_verified_cohort(state_dir / "cohort.json")
+    manifest = _load_json(state_dir / "manifest.json", label="replay manifest")
+    baseline = _load_json(state_dir / "baseline.json", label="replay baseline")
+    if (
+        cohort.get("cohort_sha256") != state.get("cohort_sha256")
+        or cohort.get("dataset_ids") != state.get("dataset_ids")
+        or canonical_sha256(manifest) != state.get("manifest_sha256")
+        or _architecture_spec(str(state.get("architecture"))).manifest() != manifest
+        or _architecture_spec(str(state.get("architecture"))).fingerprint()
+        != state.get("architecture_fingerprint")
+        or canonical_sha256(baseline) != state.get("baseline_sha256")
+    ):
+        raise ValueError("controller replay registered state artifact mismatch")
+    validation_data = state.get("validation_data")
+    if (
+        not isinstance(validation_data, Mapping)
+        or canonical_sha256(validation_data) != state.get("validation_data_sha256")
+    ):
+        raise ValueError("controller replay validation registry mismatch")
+    for records in validation_data.values():
+        if not isinstance(records, list):
+            raise ValueError("controller replay validation records are invalid")
+        for record in records:
+            if not isinstance(record, Mapping):
+                raise ValueError("controller replay validation record is invalid")
+            _verify_snapshot_record(
+                record,
+                _snapshot_file(Path(str(record.get("path")))),
+                label="replay validation data",
+            )
+    baseline_rows = baseline.get("rows")
+    if not isinstance(baseline_rows, list):
+        raise ValueError("controller replay baseline rows are invalid")
+    return state, {
+        str(row["dataset_id"]): row
+        for row in baseline_rows
+        if isinstance(row, Mapping)
+    }
+
+
+def _registered_replay_pairs(
+    state_dir: Path, state: Mapping[str, Any]
+) -> dict[int, dict[str, dict[str, Any]]]:
+    grouped: dict[int, dict[str, dict[str, Any]]] = {}
+    for path in sorted((state_dir / "consumed").glob("*.json")):
+        consumption = _load_json(path, label="replay consumed capability")
+        if not isinstance(consumption, dict):
+            raise ValueError("replay consumed capability is not an object")
+        counter = consumption.get("counter")
+        split_id = consumption.get("split_id")
+        dataset_id = consumption.get("dataset_id")
+        state_fields = (
+            "controller_id",
+            "route_commit",
+            "architecture",
+            "architecture_fingerprint",
+            "cohort_sha256",
+            "split_seed",
+        )
+        if (
+            type(counter) is not int
+            or split_id not in {"standard", "holdout"}
+            or dataset_id not in state.get("dataset_ids", [])
+            or path.name != _capability_path(state_dir, consumption).name
+            or any(consumption.get(field) != state.get(field) for field in state_fields)
+            or consumption.get("data_paths") != _expected_data_paths(
+                dataset_id=str(dataset_id),
+                split_id=str(split_id),
+                data_root=Path(str(state["data_root"])),
+            )
+        ):
+            raise ValueError("replay consumed capability registration mismatch")
+        grouped.setdefault(counter, {})[str(split_id)] = consumption
+    issuance_counter = state.get("issuance_counter")
+    if (
+        type(issuance_counter) is not int
+        or sorted(grouped) != list(range(1, issuance_counter + 1))
+    ):
+        raise ValueError("replay issuance registry is missing or non-contiguous")
+    return grouped
+
+
+def replay_registered_exploration_proofs(
+    state_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Rebuild exploration proofs from controller registrations and outer artifacts."""
+    from scripts.run_unified_validation import RECIPES
+
+    state_dir = state_dir.resolve()
+    state, baseline_by_dataset = _verified_replay_state(state_dir)
+    grouped = _registered_replay_pairs(state_dir, state)
+    issuance_counter = state.get("issuance_counter")
+    assert isinstance(issuance_counter, int)
+    registered_hashes = state.get("proof_sha256_by_counter")
+    if not isinstance(registered_hashes, Mapping):
+        registered_hashes = {}
+    replayed: list[dict[str, Any]] = []
+    raw_registry: dict[str, str] = {}
+    for counter in range(1, issuance_counter + 1):
+        pair = grouped[counter]
+        if set(pair) != {"standard", "holdout"}:
+            raise ValueError("replay issuance split pair is incomplete")
+        dataset_id = str(pair["standard"]["dataset_id"])
+        if pair["holdout"]["dataset_id"] != dataset_id:
+            raise ValueError("replay issuance dataset pair mismatch")
+        commands = {
+            split_id: _validated_replay_invocation(
+                state_dir=state_dir, state=state, consumption=pair[split_id]
+            )
+            for split_id in ("standard", "holdout")
+        }
+        replay_state = dict(state)
+        replay_state["launch"] = {"commands": {key: ["outer", "--", *value] for key, value in commands.items()}}
+        split_proofs = {
+            split_id: _verify_split_proof(
+                state_dir=state_dir,
+                state=replay_state,
+                consumption=pair[split_id],
+            )
+            for split_id in ("standard", "holdout")
+        }
+        if (
+            split_proofs["standard"]["recipe_index"] != split_proofs["holdout"]["recipe_index"]
+            or split_proofs["standard"]["numerical_recipe"] != split_proofs["holdout"]["numerical_recipe"]
+            or split_proofs["standard"]["parameter_count"] != split_proofs["holdout"]["parameter_count"]
+        ):
+            raise ValueError("replayed split recipe or parameter binding mismatch")
+        recipe_index = split_proofs["standard"]["recipe_index"]
+        if (
+            type(recipe_index) is not int
+            or recipe_index < 0
+            or recipe_index >= len(RECIPES[dataset_id])
+            or split_proofs["standard"]["numerical_recipe"]
+            != RECIPES[dataset_id][recipe_index].__dict__
+        ):
+            raise ValueError("replayed numerical recipe does not match registry")
+        guard = baseline_by_dataset.get(dataset_id)
+        if not isinstance(guard, Mapping):
+            raise ValueError("replay external guard is missing")
+        standard_metrics = split_proofs["standard"]["metrics"]
+        holdout_metrics = split_proofs["holdout"]["metrics"]
+        deltas = {
+            "standard_overall_auc": standard_metrics["overall_auc"] - guard["standard_overall_auc"],
+            "holdout_overall_auc": holdout_metrics["overall_auc"] - guard["holdout_overall_auc"],
+            "zero_auc": holdout_metrics["zero_auc"] - guard["zero_auc"],
+        }
+        proof_path = state_dir / "proofs" / f"{counter:06d}-{dataset_id}.json"
+        raw_proof = _load_json(proof_path, label="replay raw proof")
+        if not isinstance(raw_proof, Mapping):
+            raise ValueError("replay raw proof is not an object")
+        expected_fields = {
+            "schema_version", "split_seed", "controller_id", "route_commit", "counter",
+            "dataset_id", "baseline_sha256", "split_proofs", "deltas", "joint_success",
+            "zero_delta_at_least_0.001", "launch",
+        }
+        if (
+            set(raw_proof) != expected_fields
+            or any(raw_proof.get(field) != state.get(field) for field in ("controller_id", "route_commit", "baseline_sha256", "split_seed"))
+            or raw_proof.get("counter") != counter
+            or raw_proof.get("dataset_id") != dataset_id
+            or raw_proof.get("split_proofs") != split_proofs
+            or raw_proof.get("deltas") != deltas
+            or raw_proof.get("joint_success") != _joint_gate_success(deltas)
+            or raw_proof.get("zero_delta_at_least_0.001") != (deltas["zero_auc"] >= 0.001)
+        ):
+            raise ValueError("raw proof does not match controller-owned replay")
+        raw_sha = hashlib.sha256(proof_path.read_bytes()).hexdigest()
+        if registered_hashes and registered_hashes.get(str(counter)) != raw_sha:
+            raise ValueError("registered raw proof SHA-256 mismatch")
+        raw_registry[str(counter)] = raw_sha
+        replayed.append({
+            "counter": counter,
+            "dataset_id": dataset_id,
+            "split_proofs": split_proofs,
+            "deltas": deltas,
+            "proof_sha256": raw_sha,
+        })
+    if not registered_hashes:
+        state["proof_sha256_by_counter"] = raw_registry
+        _atomic_json(state_dir / "state.json", state)
+    return state, replayed
+
+
 def _joint_gate_success(deltas: Mapping[str, float]) -> bool:
     return (
         deltas["standard_overall_auc"] >= 0.0
@@ -1201,6 +1435,12 @@ def _advance_active_pair(
             raise ValueError("existing progress proof does not match outer artifacts")
     else:
         _exclusive_json(proof_path, proof)
+    proof_hashes = state.get("proof_sha256_by_counter")
+    if not isinstance(proof_hashes, dict):
+        raise ValueError("controller raw proof SHA registry is invalid")
+    proof_hashes[str(active_pair["counter"])] = hashlib.sha256(
+        proof_path.read_bytes()
+    ).hexdigest()
     state["cursor"] = cursor + 1
     recipe_indices = state.get("recipe_indices")
     if not isinstance(recipe_indices, dict):
@@ -1635,6 +1875,7 @@ def run_registered_pair(
     *,
     state_dir: Path,
     repo_root: Path,
+    parallel: bool = True,
 ) -> dict[str, Any]:
     state_dir = state_dir.resolve()
     repo_root = repo_root.resolve()
@@ -1689,32 +1930,51 @@ def run_registered_pair(
     new_attempts: dict[str, str] = {}
     try:
         processes: dict[str, subprocess.Popen[str]] = {}
+        results: dict[str, tuple[str, str]] = {}
+        failed_split: str | None = None
         try:
-            for split_id in ("standard", "holdout"):
-                processes[split_id] = subprocess.Popen(
-                    commands[split_id],
-                    cwd=repo_root,
-                    env=_sanitized_subprocess_env(),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
+            if parallel:
+                for split_id in ("standard", "holdout"):
+                    processes[split_id] = subprocess.Popen(
+                        commands[split_id],
+                        cwd=repo_root,
+                        env=_sanitized_subprocess_env(),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                with ThreadPoolExecutor(max_workers=len(processes)) as executor:
+                    futures = {
+                        executor.submit(process.communicate): split_id
+                        for split_id, process in processes.items()
+                    }
+                    for future in as_completed(futures):
+                        split_id = futures[future]
+                        results[split_id] = future.result()
+                        if (
+                            processes[split_id].returncode != 0
+                            and failed_split is None
+                        ):
+                            failed_split = split_id
+                            _terminate_started_processes(processes)
+            else:
+                for split_id in ("standard", "holdout"):
+                    process = subprocess.Popen(
+                        commands[split_id],
+                        cwd=repo_root,
+                        env=_sanitized_subprocess_env(),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    processes[split_id] = process
+                    results[split_id] = process.communicate()
+                    if process.returncode != 0:
+                        failed_split = split_id
+                        break
         except BaseException:
             _terminate_started_processes(processes)
             raise
-        results: dict[str, tuple[str, str]] = {}
-        failed_split: str | None = None
-        with ThreadPoolExecutor(max_workers=len(processes)) as executor:
-            futures = {
-                executor.submit(process.communicate): split_id
-                for split_id, process in processes.items()
-            }
-            for future in as_completed(futures):
-                split_id = futures[future]
-                results[split_id] = future.result()
-                if processes[split_id].returncode != 0 and failed_split is None:
-                    failed_split = split_id
-                    _terminate_started_processes(processes)
         if failed_split is not None:
             split_id = failed_split
             _, stderr = results[split_id]
