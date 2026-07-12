@@ -274,16 +274,11 @@ class EvidenceRelationGraphTests(unittest.TestCase):
         torch.testing.assert_close(subset.concept_state, full.concept_state)
 
         subset.mastery.sum().backward()
-        self.assertTrue(
-            all(parameter.grad is not None for parameter in model.parameters())
-        )
-        self.assertTrue(
-            all(
-                bool(torch.isfinite(parameter.grad).all())
-                for parameter in model.parameters()
-                if parameter.grad is not None
-            )
-        )
+        for name, parameter in model.named_parameters():
+            with self.subTest(parameter=name):
+                self.assertIsNotNone(parameter.grad)
+                self.assertTrue(bool(torch.isfinite(parameter.grad).all()))
+                self.assertGreater(float(parameter.grad.abs().sum()), 0.0)
 
     def test_positive_and_negative_relations_change_predictions(self) -> None:
         torch.manual_seed(11)
@@ -313,33 +308,97 @@ class EvidenceRelationGraphTests(unittest.TestCase):
 
         self.assertFalse(torch.equal(positive, negative))
 
-    def test_relation_layer_uses_directed_degree_normalized_messages(
+    def test_relation_layer_distinguishes_controlled_relation_channels(
         self,
     ) -> None:
         layer = RelationMessageLayer(hidden_dim=2)
         with torch.no_grad():
             layer.positive.weight.copy_(torch.eye(2))
-            layer.negative.weight.copy_(2.0 * torch.eye(2))
-        positive = torch.tensor(
-            [[2.0, 0.0, 1.0], [0.0, 1.0, 0.0]]
-        )
-        negative = torch.tensor(
-            [[0.0, 1.0, 0.0], [3.0, 0.0, 1.0]]
-        )
-        source = torch.tensor(
-            [[1.0, 2.0], [4.0, 1.0], [2.0, 3.0]]
-        )
+            layer.negative.weight.copy_(
+                torch.tensor([[0.0, 1.0], [0.0, 0.0]])
+            )
+        source = torch.tensor([[1.0, 2.0]])
+        present = torch.ones(1, 1)
+        absent = torch.zeros(1, 1)
 
-        actual = layer((positive, negative), source)
+        positive = layer((present, absent), source)
+        negative = layer((absent, present), source)
 
-        degree = (
-            (positive + negative).sum(dim=-1, keepdim=True).clamp_min(1.0)
+        expected_positive = layer.norm(torch.tensor([[1.0, 2.0]]))
+        expected_negative = layer.norm(torch.tensor([[2.0, 0.0]]))
+        torch.testing.assert_close(positive, expected_positive)
+        torch.testing.assert_close(negative, expected_negative)
+        self.assertFalse(torch.equal(positive, negative))
+
+    def test_relation_layer_returns_exact_zero_for_zero_degree_row(
+        self,
+    ) -> None:
+        layer = RelationMessageLayer(hidden_dim=3)
+        adjacency = (torch.zeros(2, 4), torch.zeros(2, 4))
+        source = torch.randn(4, 3)
+
+        actual = layer(adjacency, source)
+
+        torch.testing.assert_close(actual, torch.zeros(2, 3), rtol=0, atol=0)
+
+    def test_completer_uses_two_synchronous_directed_rounds(self) -> None:
+        torch.manual_seed(13)
+        model = EvidenceRelationGraphCompleter(3, 2, hidden_dim=4)
+        evidence = torch.tensor(
+            [
+                [[4.0, 4.0], [2.0, 0.0]],
+                [[3.0, 1.0], [5.0, 4.0]],
+                [[2.0, 2.0], [4.0, 1.0]],
+            ]
         )
-        expected_message = (
-            positive @ source + negative @ (2.0 * source)
-        ) / degree
-        expected = layer.norm(torch.relu(expected_message))
-        torch.testing.assert_close(actual, expected)
+        q_matrix = torch.tensor([[1.0, 0.0], [1.0, 1.0]])
+        inputs: dict[str, list[torch.Tensor]] = {"c2s": [], "s2c": []}
+        outputs: dict[str, list[torch.Tensor]] = {"c2s": [], "s2c": []}
+        handles = []
+
+        def capture(direction: str):
+            def hook(_module, args, output) -> None:
+                inputs[direction].append(args[1].detach().clone())
+                outputs[direction].append(output.detach().clone())
+
+            return hook
+
+        for layer in model.c2s:
+            handles.append(layer.register_forward_hook(capture("c2s")))
+        for layer in model.s2c:
+            handles.append(layer.register_forward_hook(capture("s2c")))
+        try:
+            state = model(evidence, q_matrix)
+        finally:
+            for handle in handles:
+                handle.remove()
+
+        student_features, concept_features = node_summary_features(
+            evidence, q_matrix
+        )
+        initial_students = model.student_encoder(student_features)
+        initial_concepts = model.concept_encoder(concept_features)
+        self.assertEqual(len(model.c2s), 2)
+        self.assertEqual(len(model.s2c), 2)
+        torch.testing.assert_close(inputs["c2s"][0], initial_concepts)
+        torch.testing.assert_close(inputs["s2c"][0], initial_students)
+        torch.testing.assert_close(inputs["c2s"][1], outputs["s2c"][0])
+        torch.testing.assert_close(inputs["s2c"][1], outputs["c2s"][0])
+        torch.testing.assert_close(state.student_state, outputs["c2s"][1])
+        torch.testing.assert_close(state.concept_state, outputs["s2c"][1])
+
+    def test_completer_rejects_evidence_shape_mismatching_constructor(
+        self,
+    ) -> None:
+        model = EvidenceRelationGraphCompleter(3, 2, hidden_dim=4)
+        q_matrix = torch.eye(2)
+
+        for shape in ((4, 2, 2), (3, 3, 2)):
+            with self.subTest(shape=shape):
+                with self.assertRaisesRegex(
+                    ValueError, "configured for 3 students and 2 concepts"
+                ):
+                    model(torch.zeros(shape), q_matrix)
 
 
 if __name__ == "__main__":

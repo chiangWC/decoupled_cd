@@ -198,6 +198,13 @@ class EvidenceRelationGraphCompleter(nn.Module):
         epoch: int | None = None,
         training: bool = False,
     ) -> GraphCompletionState:
+        expected_shape = (self.num_students, self.num_concepts)
+        if tuple(evidence.shape[:2]) != expected_shape:
+            raise ValueError(
+                "evidence shape does not match model configured for "
+                f"{self.num_students} students and "
+                f"{self.num_concepts} concepts"
+            )
         graph = build_relation_graph(
             evidence,
             epoch=epoch,
@@ -212,17 +219,18 @@ class EvidenceRelationGraphCompleter(nn.Module):
         for concept_to_student, student_to_concept in zip(
             self.c2s, self.s2c
         ):
-            students = students + concept_to_student(
+            next_students = concept_to_student(
                 (graph.positive_weight, graph.negative_weight),
                 concepts,
             )
-            concepts = concepts + student_to_concept(
+            next_concepts = student_to_concept(
                 (
                     graph.positive_weight.T,
                     graph.negative_weight.T,
                 ),
                 students,
             )
+            students, concepts = next_students, next_concepts
 
         logits = students @ self.bilinear @ concepts.T
         logits = (
