@@ -95,6 +95,16 @@ VALIDATION_SOURCE_SUFFIXES = tuple(
     for split in ("standard", "holdout")
     for name in ("train-summary.json", "coverage-valid.json", "doa-valid.json")
 )
+TEST_SOURCE_SUFFIXES = tuple(
+    f"stable-test-work/{dataset}/{name}"
+    for dataset in sorted(FROZEN_RECIPES)
+    for name in ("train-summary.json", "coverage-test.json", "doa-test.json")
+)
+TEST_SOURCE_POLICIES = {
+    "aggregate-only", "validation-fixed-sources", "test-fixed-sources",
+    "all-fixed-sources"
+}
+PRODUCTION_SOURCE_POLICY = "production-fixed-sources"
 
 
 class CampaignStore:
@@ -430,6 +440,7 @@ class CampaignDependencies:
         _authority: object | None = None,
         failure_hook: Callable[[str], None] | None = None,
         race_hook: Callable[[str], None] | None = None,
+        source_policy: str | None = None,
     ) -> None:
         if _authority not in {_PRODUCTION_AUTHORITY, _TEST_AUTHORITY}:
             raise ValueError("CampaignDependencies require internal authority")
@@ -445,6 +456,7 @@ class CampaignDependencies:
         if _authority is _PRODUCTION_AUTHORITY and (
             runner is not _subprocess_runner or route_root.absolute() != PROJECT_ROOT
             or route_commit is not None or test_only
+            or source_policy != PRODUCTION_SOURCE_POLICY
         ):
             raise ValueError("production dependencies cannot inject runner or route")
         self.campaign_root = root
@@ -453,6 +465,9 @@ class CampaignDependencies:
         self.route_commit = route_commit
         self.test_only = _authority is _TEST_AUTHORITY
         self.failure_hook = failure_hook
+        if self.test_only and source_policy not in TEST_SOURCE_POLICIES:
+            raise ValueError("test dependencies require an explicit exact fixture source policy")
+        self.source_policy = source_policy
         self.store = CampaignStore(root)
         if self.test_only:
             sentinel = _TEST_SENTINEL_NAME
@@ -473,6 +488,7 @@ class CampaignDependencies:
         route_commit: str | None = None,
         failure_hook: Callable[[str], None] | None = None,
         race_hook: Callable[[str], None] | None = None,
+        source_policy: str,
     ) -> CampaignDependencies:
         if route_commit is not None and (type(route_commit) is not str or len(route_commit) != 40):
             raise ValueError("test route commit must be 40-hex")
@@ -481,6 +497,7 @@ class CampaignDependencies:
             _authority=_TEST_AUTHORITY,
             failure_hook=failure_hook,
             race_hook=race_hook,
+            source_policy=source_policy,
         )
 
     def current_route(self) -> str:
@@ -531,6 +548,7 @@ def _production_dependencies() -> CampaignDependencies:
     return CampaignDependencies(
         DEFAULT_CAMPAIGN_ROOT, PROJECT_ROOT, _subprocess_runner,
         _authority=_PRODUCTION_AUTHORITY,
+        source_policy=PRODUCTION_SOURCE_POLICY,
     )
 
 
@@ -782,19 +800,55 @@ def _canonical_attempt_proof(
     })
 
 
-def _collect_metric_sources(
+def _required_source_suffixes(
+    dependencies: CampaignDependencies, kind: str
+) -> tuple[str, ...]:
+    policy = dependencies.source_policy
+    if kind == "validation" and policy in {
+        PRODUCTION_SOURCE_POLICY, "validation-fixed-sources", "all-fixed-sources"
+    }:
+        return VALIDATION_SOURCE_SUFFIXES
+    if kind == "test" and policy in {
+        PRODUCTION_SOURCE_POLICY, "test-fixed-sources", "all-fixed-sources"
+    }:
+        return TEST_SOURCE_SUFFIXES
+    return ()
+
+
+def _discover_source_artifacts(
     dependencies: CampaignDependencies, attempt_dir: str, kind: str
 ) -> list[dict[str, object]]:
-    if kind != "validation":
+    required = _required_source_suffixes(dependencies, kind)
+    known = VALIDATION_SOURCE_SUFFIXES if kind == "validation" else TEST_SOURCE_SUFFIXES
+    if not required:
+        unexpected = [
+            suffix for suffix in known
+            if dependencies.store.exists(f"{attempt_dir}/{suffix}")
+        ]
+        if unexpected:
+            raise ValueError("test fixture source policy forbids discovered source artifacts")
         return []
-    paths = [f"{attempt_dir}/{suffix}" for suffix in VALIDATION_SOURCE_SUFFIXES]
-    present = [dependencies.store.exists(path) for path in paths]
-    if not any(present):
-        return []
-    if not all(present):
-        raise ValueError("validation metric source artifact set is incomplete")
+    paths = [f"{attempt_dir}/{suffix}" for suffix in required]
+    missing = [path for path in paths if not dependencies.store.exists(path)]
+    if missing:
+        raise ValueError(f"required fixed source artifacts are missing: {missing}")
+    fixed_root = f"{attempt_dir}/stable-{kind}-work"
+    expected_children = (
+        {"standard", "holdout"}
+        if kind == "validation"
+        else set(FROZEN_RECIPES)
+    )
+    if set(dependencies.store.listdir(fixed_root)) != expected_children:
+        raise ValueError("fixed source root has missing or extra entries")
+    expected_by_parent: dict[str, set[str]] = {}
+    for path in paths:
+        parent, name = str(Path(path).parent), Path(path).name
+        expected_by_parent.setdefault(parent, set()).add(name)
+    for parent, expected_names in expected_by_parent.items():
+        if set(dependencies.store.listdir(parent)) != expected_names:
+            raise ValueError("fixed source directory has missing or extra artifacts")
     return [
-        dependencies.store.read_regular(path, label="validation metric source")[1]
+        dependencies.store.read_regular(path, label=f"{kind} source artifact")[1]
         for path in paths
     ]
 
@@ -807,15 +861,17 @@ def _validate_metric_sources(
     result: Mapping[str, object],
     artifacts: Sequence[Mapping[str, object]],
 ) -> None:
+    required = _required_source_suffixes(dependencies, kind)
     if kind != "validation":
         if artifacts:
-            raise ValueError("non-validation attempt has unexpected metric sources")
+            if tuple(str(item.get("path", "")).removeprefix(f"{attempt_dir}/") for item in artifacts) != required:
+                raise ValueError("non-validation attempt source registry mismatch")
         return
-    if not artifacts:
-        return
-    expected_paths = [f"{attempt_dir}/{suffix}" for suffix in VALIDATION_SOURCE_SUFFIXES]
+    expected_paths = [f"{attempt_dir}/{suffix}" for suffix in required]
     if len(artifacts) != len(expected_paths):
         raise ValueError("validation metric source artifact count mismatch")
+    if not expected_paths:
+        return
     for artifact, path in zip(artifacts, expected_paths, strict=True):
         if set(artifact) != ARTIFACT_FIELDS or artifact.get("path") != path:
             raise ValueError("validation metric source artifact registry mismatch")
@@ -858,6 +914,61 @@ def _validate_metric_sources(
         raise ValueError("validation metric source differs from recomputed runner result")
 
 
+def _validate_test_sources(
+    dependencies: CampaignDependencies,
+    result: Mapping[str, object],
+    artifacts: Sequence[Mapping[str, object]],
+) -> None:
+    required = _required_source_suffixes(dependencies, "test")
+    if not required:
+        if artifacts:
+            raise ValueError("aggregate-only test fixture has unexpected sources")
+        return
+    expected_paths = [f"attempts/test-once/{suffix}" for suffix in required]
+    if [item.get("path") for item in artifacts] != expected_paths:
+        raise ValueError("test source artifact registry mismatch")
+    rows = result.get("rows")
+    assert isinstance(rows, Mapping)
+    for dataset in sorted(FROZEN_RECIPES):
+        base = f"attempts/test-once/stable-test-work/{dataset}"
+        train = dependencies.store.read_json(
+            f"{base}/train-summary.json", label="test train source"
+        )
+        if (
+            train.get("architecture_manifest") != result.get("architecture_manifest")
+            or train.get("architecture_fingerprint") != result.get("architecture_fingerprint")
+        ):
+            raise ValueError("test train source architecture mismatch")
+        coverage = dependencies.store.read_json(
+            f"{base}/coverage-test.json", label="test coverage source"
+        )
+        slices = coverage.get("slices")
+        if type(slices) is not list:
+            raise ValueError("test coverage source is invalid")
+        by_scope = {
+            row.get("scope"): row.get("auc")
+            for row in slices if type(row) is dict
+        }
+        doa = dependencies.store.read_json(
+            f"{base}/doa-test.json", label="test DOA source"
+        )
+        doa_rows = doa.get("rows")
+        if type(doa_rows) is not list or len(doa_rows) != 1 or type(doa_rows[0]) is not dict:
+            raise ValueError("test DOA source is invalid")
+        recomputed = {
+            "overall_auc": by_scope.get("overall"),
+            "zero_auc": by_scope.get("bucket:zero"),
+            "ordinary_doa": doa_rows[0].get("doa"),
+            "weighted_doa": doa_rows[0].get("doa_weighted"),
+        }
+        for value in recomputed.values():
+            if type(value) is not float or not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError("test source metric must be an exact finite float")
+        result_row = rows[dataset]
+        if any(result_row.get(field) != value for field, value in recomputed.items()):
+            raise ValueError("test source metric differs from recomputed result")
+
+
 def _run_registered(dependencies: CampaignDependencies, *, kind: str, architecture: str, dataset: str | None = None) -> dict[str, Any]:
     architecture_spec(architecture)
     store = dependencies.store
@@ -895,7 +1006,7 @@ def _run_registered(dependencies: CampaignDependencies, *, kind: str, architectu
     argv = _runner_argv(kind, architecture, attempt_dir, dataset)
     try:
         result = _validate_runner_result(kind, architecture, dataset, dependencies.runner(argv, attempt_dir))
-        source_artifacts = _collect_metric_sources(
+        source_artifacts = _discover_source_artifacts(
             dependencies, attempt_relative, kind
         )
         store.exclusive_json(f"{attempt_relative}/runner-result.json", result)
@@ -949,16 +1060,17 @@ def _verify_attempts(dependencies: CampaignDependencies) -> tuple[dict[str, Any]
         artifacts = proof.get("artifacts")
         if type(artifacts) is not list or not artifacts:
             raise ValueError("attempt artifact registry is invalid")
-        current_artifacts: list[dict[str, object]] = []
-        for artifact in artifacts:
-            if type(artifact) is not dict or set(artifact) != ARTIFACT_FIELDS:
-                raise ValueError("attempt artifact field set mismatch")
-            artifact_path = str(artifact.get("path"))
-            _, current = store.read_regular(artifact_path, label="runner artifact")
-            if current != artifact:
-                raise ValueError("runner artifact identity/SHA mismatch")
-            current_artifacts.append(current)
-        result = store.read_json(str(artifacts[0]["path"]), label="runner artifact")
+        aggregate_path = f"{attempt_relative}/runner-result.json"
+        _, aggregate = store.read_regular(aggregate_path, label="runner artifact")
+        sources = _discover_source_artifacts(
+            dependencies, attempt_relative, str(entry["kind"])
+        )
+        current_artifacts = [aggregate, *sources]
+        if artifacts != current_artifacts:
+            raise ValueError(
+                "proof artifact registry mismatch with fixed discovered artifacts"
+            )
+        result = store.read_json(aggregate_path, label="runner artifact")
         expected = _canonical_attempt_proof(
             dependencies, ledger, entry, result, current_artifacts
         )
@@ -1019,7 +1131,11 @@ def _expected_replay(
         "counters": [proof["counter"] for proof in selected],
         "nonces": [proof["nonce"] for proof in selected],
         "proof_sha256s": [proof["proof_sha256"] for proof in selected],
-        "artifact_sha256s": [proof["artifacts"][0]["sha256"] for proof in selected],
+        "artifact_sha256s": [
+            artifact["sha256"]
+            for proof in selected
+            for artifact in proof["artifacts"]
+        ],
         "rows": {proof["dataset_id"]: proof["runner_result"] for proof in selected},
     }
 
@@ -1317,7 +1433,7 @@ def _command_test(args: argparse.Namespace, deps: CampaignDependencies) -> int:
     state = "failed"
     argv: list[str] | None = None
     result: dict[str, Any] | None = None
-    artifact: dict[str, object] | None = None
+    artifacts: list[dict[str, object]] | None = None
     error_text: str | None = None
     try:
         deps.fail("mkdir")
@@ -1328,15 +1444,20 @@ def _command_test(args: argparse.Namespace, deps: CampaignDependencies) -> int:
         deps.fail("runner")
         result = _validate_runner_result("test", "a2", None, deps.runner(argv, attempt_dir))
         deps.fail("artifact")
+        source_artifacts = _discover_source_artifacts(
+            deps, "attempts/test-once", "test"
+        )
         deps.store.exclusive_json("attempts/test-once/runner-result.json", result)
-        _, artifact = deps.store.read_regular(
+        _, aggregate_artifact = deps.store.read_regular(
             "attempts/test-once/runner-result.json", label="test runner result"
         )
+        artifacts = [aggregate_artifact, *source_artifacts]
+        _validate_test_sources(deps, result, source_artifacts)
         state = "succeeded"
     except BaseException as error:
         error_text = f"{type(error).__name__}: {error}"
         result = None
-        artifact = None
+        artifacts = None
     finally:
         finalized = _seal({
             "schema_version": 3,
@@ -1355,10 +1476,39 @@ def _command_test(args: argparse.Namespace, deps: CampaignDependencies) -> int:
             "external_proof_sha256": external["proof_sha256"],
             "runner_argv": argv,
             "runner_result": result,
-            "artifact": artifact,
+            "artifacts": artifacts,
             "error": error_text,
         })
-        deps.store.atomic_json("decisions/test-once.json", finalized)
+        try:
+            deps.fail("finalize")
+            deps.store.atomic_json("decisions/test-once.json", finalized)
+        except BaseException as final_error:
+            state = "failed"
+            error_text = f"{type(final_error).__name__}: {final_error}"
+            finalized = _seal({
+                "schema_version": 3,
+                "campaign_id": CAMPAIGN_ID,
+                "cohort_sha256": FROZEN_COHORT_SHA256,
+                "state": state,
+                "nonce": nonce,
+                "route_commit": route_commit,
+                "implementation_code_sha256": implementation_hash,
+                "architecture": "a2",
+                "split_id": "test",
+                "architecture_manifest": architecture_spec("a2").manifest(),
+                "architecture_fingerprint": architecture_fingerprint("a2"),
+                "recipes": dict(FROZEN_RECIPES),
+                "relative_proof_sha256": relative["proof_sha256"],
+                "external_proof_sha256": external["proof_sha256"],
+                "runner_argv": argv,
+                "runner_result": None,
+                "artifacts": None,
+                "error": error_text,
+            })
+            try:
+                deps.store.atomic_json("decisions/test-once.json", finalized)
+            except BaseException:
+                pass
     if state == "failed":
         raise RuntimeError(error_text)
     print(json.dumps(finalized, sort_keys=True))
@@ -1373,7 +1523,7 @@ def _verified_test_record(deps: CampaignDependencies) -> dict[str, Any]:
         "split_id",
         "architecture_manifest", "architecture_fingerprint", "recipes",
         "relative_proof_sha256", "external_proof_sha256", "runner_argv",
-        "runner_result", "artifact", "error", "proof_sha256",
+        "runner_result", "artifacts", "error", "proof_sha256",
     }
     if set(record) != expected_fields:
         raise ValueError("test-once record field set mismatch")
@@ -1404,7 +1554,7 @@ def _verified_test_record(deps: CampaignDependencies) -> dict[str, Any]:
         raise ValueError("test-once identity/proof chain mismatch")
     state = record.get("state")
     if state == "failed":
-        if record.get("runner_result") is not None or record.get("artifact") is not None or type(record.get("error")) is not str:
+        if record.get("runner_result") is not None or record.get("artifacts") is not None or type(record.get("error")) is not str:
             raise ValueError("failed test-once record contains a forged result/artifact")
         argv = record.get("runner_argv")
         if argv is not None and (type(argv) is not list or any(type(item) is not str for item in argv)):
@@ -1417,14 +1567,18 @@ def _verified_test_record(deps: CampaignDependencies) -> dict[str, Any]:
     )
     if record.get("runner_argv") != expected_argv or record.get("error") is not None:
         raise ValueError("succeeded test-once argv/error mismatch")
-    artifact = record.get("artifact")
-    if type(artifact) is not dict or set(artifact) != ARTIFACT_FIELDS or artifact.get("path") != "attempts/test-once/runner-result.json":
+    registered = record.get("artifacts")
+    if type(registered) is not list or not registered:
         raise ValueError("succeeded test result artifact registry is invalid")
-    _, current = deps.store.read_regular(str(artifact["path"]), label="test result artifact")
-    if current != artifact:
-        raise ValueError("test result artifact identity/SHA mismatch")
-    result = deps.store.read_json(str(artifact["path"]), label="test result artifact")
+    aggregate_path = "attempts/test-once/runner-result.json"
+    _, aggregate = deps.store.read_regular(aggregate_path, label="test result artifact")
+    sources = _discover_source_artifacts(deps, "attempts/test-once", "test")
+    current_artifacts = [aggregate, *sources]
+    if registered != current_artifacts:
+        raise ValueError("test proof artifacts differ from fixed discovered artifacts")
+    result = deps.store.read_json(aggregate_path, label="test result artifact")
     normalized = _validate_runner_result("test", "a2", None, result)
+    _validate_test_sources(deps, normalized, sources)
     if normalized != record.get("runner_result"):
         raise ValueError("test result differs from recomputed artifact")
     return record

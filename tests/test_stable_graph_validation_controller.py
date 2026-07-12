@@ -16,12 +16,19 @@ from scripts.unified_dataset_audit import canonical_sha256
 
 
 class StableGraphValidationControllerTests(unittest.TestCase):
-    def dependencies(self, root: Path, runner, route: str = "a" * 40):
+    def dependencies(
+        self,
+        root: Path,
+        runner,
+        route: str = "a" * 40,
+        source_policy: str = "aggregate-only",
+    ):
         return controller.CampaignDependencies.for_test(
             campaign_root=root,
             route_root=Path.cwd(),
             runner=runner,
             route_commit=route,
+            source_policy=source_policy,
         )
 
     def test_test_dependencies_cannot_alias_or_construct_production_authority(self) -> None:
@@ -31,6 +38,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                 route_root=Path.cwd(),
                 runner=self.validation_runner(),
                 route_commit="a" * 40,
+                source_policy="aggregate-only",
             )
         with self.assertRaisesRegex(ValueError, "internal authority"):
             controller.CampaignDependencies(
@@ -55,8 +63,12 @@ class StableGraphValidationControllerTests(unittest.TestCase):
 
         return runner
 
-    def prepare_relative_gate(self, root: Path, runner=None):
-        deps = self.dependencies(root, runner or self.validation_runner())
+    def prepare_relative_gate(
+        self, root: Path, runner=None, source_policy: str = "aggregate-only"
+    ):
+        deps = self.dependencies(
+            root, runner or self.validation_runner(), source_policy=source_policy
+        )
         for architecture in ("a0v4", "a2"):
             for dataset in controller.FROZEN_RECIPES:
                 controller.execute(
@@ -132,7 +144,9 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                     "parameter_count": 12,
                 }
 
-            deps = self.dependencies(root, runner)
+            deps = self.dependencies(
+                root, runner, source_policy="validation-fixed-sources"
+            )
             controller.execute(["smoke", "--architecture", "a2"], dependencies=deps)
             self.assertEqual(len(calls), 1)
             argv, attempt_dir = calls[0]
@@ -336,12 +350,92 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                     }))
                 return result
 
-            deps = self.dependencies(root, runner)
+            deps = self.dependencies(
+                root, runner, source_policy="validation-fixed-sources"
+            )
             with self.assertRaisesRegex(ValueError, "metric source|recomputed"):
                 controller.execute(
                     ["run-validation", "--architecture", "a2", "--dataset", "ASSIST17"],
                     dependencies=deps,
                 )
+
+    def test_valid_forged_aggregate_cannot_omit_fixed_production_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / controller.CAMPAIGN_ID
+            root.mkdir()
+
+            def runner(argv, attempt_dir):
+                architecture = argv[argv.index("--architecture") + 1]
+                dataset = argv[argv.index("--dataset") + 1]
+                result = controller.fake_validation_result(architecture, dataset)
+                for split in ("standard", "holdout"):
+                    work = attempt_dir / "stable-validation-work" / split
+                    work.mkdir(parents=True)
+                    (work / "coverage-valid.json").write_text(json.dumps({
+                        "slices": [
+                            {"scope": "overall", "auc": 0.5},
+                            {"scope": "bucket:zero", "auc": 0.5},
+                        ]
+                    }))
+                    (work / "doa-valid.json").write_text(json.dumps({
+                        "rows": [{"doa": 0.5, "doa_weighted": 0.5}]
+                    }))
+                    (work / "train-summary.json").write_text(json.dumps({
+                        "architecture_manifest": controller.architecture_spec(architecture).manifest(),
+                        "architecture_fingerprint": controller.architecture_fingerprint(architecture),
+                    }))
+                return result
+
+            deps = self.dependencies(
+                root, runner, source_policy="validation-fixed-sources"
+            )
+            for dataset in controller.FROZEN_RECIPES:
+                controller.execute(
+                    ["run-validation", "--architecture", "a2", "--dataset", dataset],
+                    dependencies=deps,
+                )
+            ledger_path = root / "issuance-ledger.json"
+            ledger = json.loads(ledger_path.read_text())
+            attempt = root / ledger["entries"][0]["attempt_dir"]
+            extra = (
+                attempt
+                / "stable-validation-work"
+                / "standard"
+                / "unexpected.json"
+            )
+            extra.write_text("{}")
+            with self.assertRaisesRegex(ValueError, "missing or extra"):
+                controller.execute(["replay", "--architecture", "a2"], dependencies=deps)
+            extra.unlink()
+            for split in ("standard", "holdout"):
+                work = attempt / "stable-validation-work" / split
+                for path in work.iterdir():
+                    path.unlink()
+                work.rmdir()
+            (attempt / "stable-validation-work").rmdir()
+            result_path = attempt / "runner-result.json"
+            forged = json.loads(result_path.read_text())
+            forged["zero_auc"] = 0.6
+            result_path.write_text(json.dumps(forged))
+            _, aggregate = deps.store.read_regular(
+                f"{ledger['entries'][0]['attempt_dir']}/runner-result.json",
+                label="forged aggregate",
+            )
+            proof_path = attempt / "proof.json"
+            proof = json.loads(proof_path.read_text())
+            proof["runner_result"] = forged
+            proof["artifacts"] = [aggregate]
+            proof.pop("proof_sha256")
+            proof["proof_sha256"] = canonical_sha256(proof)
+            proof_path.write_text(json.dumps(proof))
+            _, proof_record = deps.store.read_regular(
+                f"{ledger['entries'][0]['attempt_dir']}/proof.json",
+                label="forged proof",
+            )
+            ledger["entries"][0]["proof_file_sha256"] = proof_record["sha256"]
+            ledger_path.write_text(json.dumps(ledger))
+            with self.assertRaisesRegex(ValueError, "required.*source|missing.*source"):
+                controller.execute(["replay", "--architecture", "a2"], dependencies=deps)
 
     def test_docs_only_route_progresses_but_code_change_stales_campaign(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -360,7 +454,10 @@ class StableGraphValidationControllerTests(unittest.TestCase):
             root = base / controller.CAMPAIGN_ID
             root.mkdir()
             deps = controller.CampaignDependencies.for_test(
-                campaign_root=root, route_root=route, runner=self.validation_runner()
+                campaign_root=root,
+                route_root=route,
+                runner=self.validation_runner(),
+                source_policy="aggregate-only",
             )
             controller.execute(
                 ["run-validation", "--architecture", "a0v4", "--dataset", "ASSIST17"],
@@ -416,22 +513,56 @@ class StableGraphValidationControllerTests(unittest.TestCase):
 
             def runner(argv, attempt_dir):
                 if "stable-test" in argv:
-                    return controller.fake_test_result()
+                    result = controller.fake_test_result()
+                    for dataset in controller.FROZEN_RECIPES:
+                        work = attempt_dir / "stable-test-work" / dataset
+                        work.mkdir(parents=True)
+                        (work / "coverage-test.json").write_text(json.dumps({
+                            "slices": [
+                                {"scope": "overall", "auc": 0.5},
+                                {"scope": "bucket:zero", "auc": 0.5},
+                            ]
+                        }))
+                        (work / "doa-test.json").write_text(json.dumps({
+                            "rows": [{"doa": 0.5, "doa_weighted": 0.5}]
+                        }))
+                        (work / "train-summary.json").write_text(json.dumps({
+                            "architecture_manifest": controller.architecture_spec("a2").manifest(),
+                            "architecture_fingerprint": controller.architecture_fingerprint("a2"),
+                        }))
+                    return result
                 return self.validation_runner()(argv, attempt_dir)
 
-            deps = self.prepare_relative_gate(root, runner)
+            deps = self.prepare_relative_gate(
+                root, runner, source_policy="test-fixed-sources"
+            )
             audit_path = Path(temporary) / "audit.json"
             audit = self.write_audit(audit_path)
             with mock.patch.object(controller, "FROZEN_COMPARATOR_AUDIT_SHA256", audit["audit_sha256"]):
                 controller.execute(["external-gate", "--comparator-audit", str(audit_path)], dependencies=deps)
                 controller.execute(["run-test-once", "--architecture", "a2"], dependencies=deps)
                 controller.execute(["status"], dependencies=deps)
-            record = json.loads((root / "decisions" / "test-once.json").read_text())
-            self.assertEqual(record["state"], "succeeded")
-            self.assertEqual(record["cohort_sha256"], controller.FROZEN_COHORT_SHA256)
-            self.assertEqual(record["recipes"], controller.FROZEN_RECIPES)
-            self.assertEqual(record["artifact"]["path"], "attempts/test-once/runner-result.json")
-            self.assertEqual(set(record["runner_result"]["rows"]), set(controller.FROZEN_RECIPES))
+                path = root / "decisions" / "test-once.json"
+                record = json.loads(path.read_text())
+                self.assertEqual(record["state"], "succeeded")
+                self.assertEqual(record["cohort_sha256"], controller.FROZEN_COHORT_SHA256)
+                self.assertEqual(record["recipes"], controller.FROZEN_RECIPES)
+                self.assertEqual(
+                    record["artifacts"][0]["path"],
+                    "attempts/test-once/runner-result.json",
+                )
+                self.assertEqual(
+                    set(record["runner_result"]["rows"]),
+                    set(controller.FROZEN_RECIPES),
+                )
+                record["artifacts"] = [record["artifacts"][0]]
+                record.pop("proof_sha256")
+                record["proof_sha256"] = canonical_sha256(record)
+                path.write_text(json.dumps(record))
+                with self.assertRaisesRegex(
+                    ValueError, "fixed discovered artifacts"
+                ):
+                    controller.execute(["status"], dependencies=deps)
 
     def test_test_result_rejects_missing_extra_and_non_float_metrics(self) -> None:
         cases = {}
@@ -450,7 +581,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                 controller._validate_runner_result("test", "a2", None, payload)
 
     def test_every_post_consumption_failure_finalizes_failed(self) -> None:
-        for stage in ("mkdir", "argv", "runner", "artifact"):
+        for stage in ("mkdir", "argv", "runner", "artifact", "finalize"):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary) / controller.CAMPAIGN_ID
                 root.mkdir()
@@ -472,6 +603,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                     runner=trusted_runner,
                     route_commit="a" * 40,
                     failure_hook=hook,
+                    source_policy="aggregate-only",
                 )
                 audit_path = Path(temporary) / "audit.json"
                 audit = self.write_audit(audit_path)
@@ -500,6 +632,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                 runner=self.validation_runner(),
                 route_commit="a" * 40,
                 race_hook=race,
+                source_policy="aggregate-only",
             )
             with self.assertRaisesRegex(ValueError, "root identity|parent swap"):
                 controller.execute(
