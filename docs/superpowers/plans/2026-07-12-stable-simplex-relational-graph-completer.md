@@ -6,7 +6,7 @@
 
 **Architecture:** version 4 用固定 `2^-20` cognitive mass 下界替换 v3 普通 softmax；A2 只替换 missing-mastery completer，以 train-only 学生–概念证据二部图、正负关系消息传递和共享双线性解码器补全未观测 mastery。A0v4 与 A2 共用 evidence estimator、NeuralCDM monotone decoder、行为通道、划分协议及冻结 cohort。
 
-**Tech Stack:** Python 3.10、PyTorch、标准库 `unittest`、现有不可覆盖 campaign runner/controller、Conda `cdresearch`、CUDA GPU。
+**Tech Stack:** Python、PyTorch、标准库 `unittest`、现有不可覆盖 campaign runner/controller、远端 Conda `decoupled_cd`、CUDA GPU。Python/Torch/CUDA 精确版本由 campaign runner 记录。
 
 ## Global Constraints
 
@@ -487,7 +487,7 @@ git commit -m "feat: gate stable graph validation campaign"
 
 ```bash
 cd /home/xph/jwc/research/decoupled_cd_codex_worktrees/complete_model
-conda run -n cdresearch python -m unittest discover -s tests -v
+conda run -n decoupled_cd python -m unittest discover -s tests -v
 git status --short
 ```
 
@@ -496,7 +496,7 @@ Expected: all tests PASS，worktree clean。失败时先用 `systematic-debuggin
 - [ ] **Step 2: 动态选卡并只运行一次 A0v4 smoke**
 
 ```bash
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py smoke --architecture a0v4 --seed 42 --epochs 1 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py smoke --architecture a0v4 --seed 42 --epochs 1 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
 ```
 
 Expected: `smoke/a0v4/attempt-001` 记录 GPU UUID、峰值显存、route、manifest/fingerprint、mastery shape、有限 loss；再次调用必须拒绝覆盖。
@@ -504,9 +504,9 @@ Expected: `smoke/a0v4/attempt-001` 记录 GPU UUID、峰值显存、route、mani
 - [ ] **Step 3: 运行三个冻结 A0v4 validation job**
 
 ```bash
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset MOOCRadar --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset ASSIST17 --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset XES3G5M --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset MOOCRadar --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset ASSIST17 --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a0v4 --dataset XES3G5M --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
 ```
 
 Controller 从 `FROZEN_RECIPES` 注入 recipe，不接受 CLI 改 epochs/dim/LR/batch。可让不同 GPU 并行不同数据集，但同 dataset 的 standard/holdout 是不可分割 proof，同卡以 flock 排他。
@@ -514,8 +514,8 @@ Controller 从 `FROZEN_RECIPES` 注入 recipe，不接受 CLI 改 epochs/dim/LR/
 - [ ] **Step 4: replay、冻结、写报告并归档**
 
 ```bash
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py replay --architecture a0v4
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py freeze-a0v4
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py replay --architecture a0v4
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py freeze-a0v4
 git add docs/experiments/stable_graph_a0v4_20260712.md
 git commit -m "docs: freeze stable unified v4 baseline"
 head=$(git rev-parse --short=12 HEAD)
@@ -537,7 +537,7 @@ Expected: 三数据集各有唯一 standard/holdout 指标、fingerprint 相同�
 - [ ] **Step 1: 只运行一次 A2 smoke**
 
 ```bash
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py smoke --architecture a2 --seed 42 --epochs 1 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py smoke --architecture a2 --seed 42 --epochs 1 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
 ```
 
 Expected: `smoke/a2/attempt-001`；masked edge count > 0，graph 梯度有限，observed mastery hard assembly 相等，未 OOM。
@@ -545,9 +545,9 @@ Expected: `smoke/a2/attempt-001`；masked edge count > 0，graph 梯度有限，
 - [ ] **Step 2: 运行三个冻结 A2 validation job**
 
 ```bash
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset MOOCRadar --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset ASSIST17 --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset XES3G5M --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset MOOCRadar --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset ASSIST17 --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-validation --architecture a2 --dataset XES3G5M --seed 42 --split-seed 2024 --campaign-root /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712
 ```
 
 首轮 completion loss weight 固定 `1.0`，graph hidden dim 等于 recipe concept dim。不得看完 validation 后改变模块语义或加入 dataset-specific 数值。
@@ -555,8 +555,8 @@ conda run -n cdresearch python scripts/stable_graph_validation_controller.py run
 - [ ] **Step 3: replay 并执行相对门**
 
 ```bash
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py replay --architecture a2
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py relative-gate
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py replay --architecture a2
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py relative-gate
 ```
 
 Expected: 每个数据集输出 standard/holdout/zero/ordinary DOA/weighted DOA delta 和五项门。任何 overall delta < 0 都 fail，不能用较弱外部基线掩盖同架构回退。
@@ -585,7 +585,7 @@ git bundle create "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/u
 - [ ] **Step 1: 仅在 relative pass 后动态重建外部门**
 
 ```bash
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py external-gate --comparator-audit /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-mastery-20260712/audit/comparator-audit.json
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py external-gate --comparator-audit /home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-mastery-20260712/audit/comparator-audit.json
 ```
 
 Expected: 动态选择同 protocol strongest comparator；三个数据集 zero AUC 均胜出且 standard/holdout overall 守门。relative fail 时命令拒绝。
@@ -593,7 +593,7 @@ Expected: 动态选择同 protocol strongest comparator；三个数据集 zero A
 - [ ] **Step 2: 外部门通过才执行唯一 test-once**
 
 ```bash
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py run-test-once --architecture a2
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py run-test-once --architecture a2
 ```
 
 Expected: external pass nonce、完整 replay、clean route 和未使用 test nonce 同时成立才运行；完成后原子消费 nonce，再调用必须拒绝。
@@ -601,8 +601,8 @@ Expected: external pass nonce、完整 replay、clean route 和未使用 test no
 - [ ] **Step 3: 最终验证与安全归档**
 
 ```bash
-conda run -n cdresearch python -m unittest discover -s tests -v
-conda run -n cdresearch python scripts/stable_graph_validation_controller.py status
+conda run -n decoupled_cd python -m unittest discover -s tests -v
+conda run -n decoupled_cd python scripts/stable_graph_validation_controller.py status
 git status --short
 head=$(git rev-parse --short=12 HEAD)
 git bundle create "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/unified-ergc-20260712/bundles/final-$head.bundle" HEAD
