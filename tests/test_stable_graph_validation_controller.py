@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -21,6 +23,23 @@ class StableGraphValidationControllerTests(unittest.TestCase):
             runner=runner,
             route_commit=route,
         )
+
+    def test_test_dependencies_cannot_alias_or_construct_production_authority(self) -> None:
+        with self.assertRaisesRegex(ValueError, "production campaign root"):
+            controller.CampaignDependencies.for_test(
+                campaign_root=controller.DEFAULT_CAMPAIGN_ROOT,
+                route_root=Path.cwd(),
+                runner=self.validation_runner(),
+                route_commit="a" * 40,
+            )
+        with self.assertRaisesRegex(ValueError, "internal authority"):
+            controller.CampaignDependencies(
+                controller.DEFAULT_CAMPAIGN_ROOT,
+                Path.cwd(),
+                self.validation_runner(),
+                "a" * 40,
+                True,
+            )
 
     @staticmethod
     def validation_runner(offsets=None):
@@ -252,6 +271,205 @@ class StableGraphValidationControllerTests(unittest.TestCase):
             replay_path.write_text(json.dumps(replay))
             with self.assertRaisesRegex(ValueError, "forged|resealed"):
                 controller.execute(["relative-gate"], dependencies=deps)
+
+    def test_forged_ledger_artifact_and_resealed_attempt_is_recomputed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / controller.CAMPAIGN_ID
+            root.mkdir()
+            deps = self.dependencies(root, self.validation_runner())
+            for dataset in controller.FROZEN_RECIPES:
+                controller.execute(
+                    ["run-validation", "--architecture", "a2", "--dataset", dataset],
+                    dependencies=deps,
+                )
+            ledger_path = root / "issuance-ledger.json"
+            ledger = json.loads(ledger_path.read_text())
+            attempt = root / ledger["entries"][0]["attempt_dir"]
+            result_path = attempt / "runner-result.json"
+            result = json.loads(result_path.read_text())
+            result["forged_metric"] = 0.9
+            result_path.write_text(json.dumps(result))
+            _, artifact = deps.store.read_regular(
+                "attempts/attempt-001/runner-result.json", label="attack artifact"
+            )
+            proof_path = attempt / "proof.json"
+            proof = json.loads(proof_path.read_text())
+            proof["runner_result"] = result
+            proof["artifacts"] = [artifact]
+            proof.pop("proof_sha256")
+            proof["proof_sha256"] = canonical_sha256(proof)
+            proof_path.write_text(json.dumps(proof))
+            _, proof_record = deps.store.read_regular(
+                "attempts/attempt-001/proof.json", label="attack proof"
+            )
+            ledger["entries"][0]["proof_file_sha256"] = proof_record["sha256"]
+            ledger_path.write_text(json.dumps(ledger))
+            with self.assertRaisesRegex(ValueError, "canonical|recomputed|immutable|field set"):
+                controller.execute(["replay", "--architecture", "a2"], dependencies=deps)
+
+    def test_docs_only_route_progresses_but_code_change_stales_campaign(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            route = base / "route"
+            route.mkdir()
+            for directory in controller.IMPLEMENTATION_DIRECTORIES:
+                (route / directory).mkdir()
+            (route / "scripts" / "stable.py").write_text("VALUE = 1\n")
+            (route / "docs").mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=route, check=True)
+            subprocess.run(["git", "config", "user.email", "fixture@example.com"], cwd=route, check=True)
+            subprocess.run(["git", "config", "user.name", "Fixture"], cwd=route, check=True)
+            subprocess.run(["git", "add", "."], cwd=route, check=True)
+            subprocess.run(["git", "commit", "-qm", "code"], cwd=route, check=True)
+            root = base / controller.CAMPAIGN_ID
+            root.mkdir()
+            deps = controller.CampaignDependencies.for_test(
+                campaign_root=root, route_root=route, runner=self.validation_runner()
+            )
+            controller.execute(
+                ["run-validation", "--architecture", "a0v4", "--dataset", "ASSIST17"],
+                dependencies=deps,
+            )
+            (route / "docs" / "report.md").write_text("report\n")
+            subprocess.run(["git", "add", "docs/report.md"], cwd=route, check=True)
+            subprocess.run(["git", "commit", "-qm", "docs"], cwd=route, check=True)
+            for dataset in controller.FROZEN_RECIPES:
+                controller.execute(
+                    ["run-validation", "--architecture", "a2", "--dataset", dataset],
+                    dependencies=deps,
+                )
+            controller.execute(["replay", "--architecture", "a2"], dependencies=deps)
+            (route / "scripts" / "stable.py").write_text("VALUE = 2\n")
+            subprocess.run(["git", "add", "scripts/stable.py"], cwd=route, check=True)
+            subprocess.run(["git", "commit", "-qm", "code drift"], cwd=route, check=True)
+            with self.assertRaisesRegex(ValueError, "implementation.*stale|code tree"):
+                controller.execute(["status"], dependencies=deps)
+
+    def test_strict_test_schema_and_resealed_success_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / controller.CAMPAIGN_ID
+            root.mkdir()
+
+            def runner(argv, attempt_dir):
+                if "stable-test" in argv:
+                    result = controller.fake_test_result()
+                    result["extra"] = True
+                    return result
+                return self.validation_runner()(argv, attempt_dir)
+
+            deps = self.prepare_relative_gate(root, runner)
+            audit_path = Path(temporary) / "audit.json"
+            audit = self.write_audit(audit_path)
+            with mock.patch.object(controller, "FROZEN_COMPARATOR_AUDIT_SHA256", audit["audit_sha256"]):
+                controller.execute(["external-gate", "--comparator-audit", str(audit_path)], dependencies=deps)
+                with self.assertRaisesRegex(RuntimeError, "field set|schema"):
+                    controller.execute(["run-test-once", "--architecture", "a2"], dependencies=deps)
+                path = root / "decisions" / "test-once.json"
+                record = json.loads(path.read_text())
+                record["state"] = "succeeded"
+                record.pop("proof_sha256")
+                record["proof_sha256"] = canonical_sha256(record)
+                path.write_text(json.dumps(record))
+                with self.assertRaisesRegex(ValueError, "test.*artifact|recomputed|succeeded"):
+                    controller.execute(["status"], dependencies=deps)
+
+    def test_successful_test_binds_strict_result_artifact_and_status_recomputes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / controller.CAMPAIGN_ID
+            root.mkdir()
+
+            def runner(argv, attempt_dir):
+                if "stable-test" in argv:
+                    return controller.fake_test_result()
+                return self.validation_runner()(argv, attempt_dir)
+
+            deps = self.prepare_relative_gate(root, runner)
+            audit_path = Path(temporary) / "audit.json"
+            audit = self.write_audit(audit_path)
+            with mock.patch.object(controller, "FROZEN_COMPARATOR_AUDIT_SHA256", audit["audit_sha256"]):
+                controller.execute(["external-gate", "--comparator-audit", str(audit_path)], dependencies=deps)
+                controller.execute(["run-test-once", "--architecture", "a2"], dependencies=deps)
+                controller.execute(["status"], dependencies=deps)
+            record = json.loads((root / "decisions" / "test-once.json").read_text())
+            self.assertEqual(record["state"], "succeeded")
+            self.assertEqual(record["cohort_sha256"], controller.FROZEN_COHORT_SHA256)
+            self.assertEqual(record["recipes"], controller.FROZEN_RECIPES)
+            self.assertEqual(record["artifact"]["path"], "attempts/test-once/runner-result.json")
+            self.assertEqual(set(record["runner_result"]["rows"]), set(controller.FROZEN_RECIPES))
+
+    def test_test_result_rejects_missing_extra_and_non_float_metrics(self) -> None:
+        cases = {}
+        missing = controller.fake_test_result()
+        missing.pop("recipes")
+        cases["missing"] = missing
+        extra = controller.fake_test_result()
+        extra["extra"] = None
+        cases["extra"] = extra
+        for label, value in (("bool", True), ("int", 1), ("nan", float("nan"))):
+            payload = controller.fake_test_result()
+            payload["rows"]["ASSIST17"]["zero_auc"] = value
+            cases[label] = payload
+        for label, payload in cases.items():
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, "field set|finite float|schema"):
+                controller._validate_runner_result("test", "a2", None, payload)
+
+    def test_every_post_consumption_failure_finalizes_failed(self) -> None:
+        for stage in ("mkdir", "argv", "runner", "artifact"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary) / controller.CAMPAIGN_ID
+                root.mkdir()
+
+                def hook(current):
+                    if current == stage:
+                        raise RuntimeError(f"forced {stage}")
+
+                deps = self.prepare_relative_gate(root)
+
+                def trusted_runner(argv, attempt_dir):
+                    if "stable-test" in argv:
+                        return controller.fake_test_result()
+                    return self.validation_runner()(argv, attempt_dir)
+
+                deps = controller.CampaignDependencies.for_test(
+                    campaign_root=root,
+                    route_root=Path.cwd(),
+                    runner=trusted_runner,
+                    route_commit="a" * 40,
+                    failure_hook=hook,
+                )
+                audit_path = Path(temporary) / "audit.json"
+                audit = self.write_audit(audit_path)
+                with mock.patch.object(controller, "FROZEN_COMPARATOR_AUDIT_SHA256", audit["audit_sha256"]):
+                    controller.execute(["external-gate", "--comparator-audit", str(audit_path)], dependencies=deps)
+                    with self.assertRaisesRegex(RuntimeError, f"forced {stage}"):
+                        controller.execute(["run-test-once", "--architecture", "a2"], dependencies=deps)
+                record = json.loads((root / "decisions" / "test-once.json").read_text())
+                self.assertEqual(record["state"], "failed")
+
+    def test_parent_swap_race_is_rejected_by_retained_root_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / controller.CAMPAIGN_ID
+            root.mkdir()
+            swapped = base / "swapped"
+
+            def race(stage):
+                if stage == "before-campaign-open":
+                    root.rename(swapped)
+                    root.mkdir()
+
+            deps = controller.CampaignDependencies.for_test(
+                campaign_root=root,
+                route_root=Path.cwd(),
+                runner=self.validation_runner(),
+                route_commit="a" * 40,
+                race_hook=race,
+            )
+            with self.assertRaisesRegex(ValueError, "root identity|parent swap"):
+                controller.execute(
+                    ["run-validation", "--architecture", "a2", "--dataset", "ASSIST17"],
+                    dependencies=deps,
+                )
 
     def test_external_derives_strongest_rows_and_failed_test_consumes_nonce(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

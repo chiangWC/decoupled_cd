@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import fcntl
 import hashlib
 import json
@@ -45,6 +44,22 @@ VALIDATION_METRICS = (
     "ordinary_doa",
     "weighted_doa",
 )
+TEST_METRICS = ("overall_auc", "zero_auc", "ordinary_doa", "weighted_doa")
+VALIDATION_RESULT_FIELDS = {
+    "schema_version", "architecture", "architecture_manifest",
+    "architecture_fingerprint", "cohort_sha256", "dataset_id", "recipe_index", "seed",
+    "split_seed", "gpu_uuid", "peak_gpu_memory_gb", *VALIDATION_METRICS,
+}
+SMOKE_RESULT_FIELDS = {
+    "architecture_fingerprint", "gpu_uuid", "peak_gpu_memory_gb",
+    "mastery_shape", "final_loss", "parameter_count",
+}
+TEST_RESULT_FIELDS = {
+    "schema_version", "architecture", "architecture_manifest",
+    "architecture_fingerprint", "seed", "split_seed", "cohort_sha256",
+    "recipes", "gpu_uuid", "peak_gpu_memory_gb", "rows",
+}
+TEST_ROW_FIELDS = {"recipe_index", *TEST_METRICS}
 DEFAULT_CAMPAIGN_ROOT = Path(
     "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes"
 ) / CAMPAIGN_ID
@@ -54,6 +69,219 @@ DEFAULT_COMPARATOR_AUDIT = Path(
 )
 RUNNER = PROJECT_ROOT / "scripts" / "run_unified_validation.py"
 Runner = Callable[[Sequence[str], Path], Mapping[str, object]]
+IMPLEMENTATION_DIRECTORIES = (
+    "models", "scripts", "trainers", "data", "configs", "tests"
+)
+_PRODUCTION_AUTHORITY = object()
+_TEST_AUTHORITY = object()
+_TEST_SENTINEL_BYTES = secrets.token_bytes(32)
+_TEST_SENTINEL_NAME = ".stable-graph-test-root"
+LEDGER_FIELDS = {"schema_version", "campaign_id", "implementation_code_sha256", "entries"}
+ENTRY_PENDING_FIELDS = {
+    "counter", "nonce", "kind", "split_ids", "architecture", "dataset_id", "attempt_dir",
+    "route_commit", "implementation_code_sha256", "status",
+}
+ENTRY_COMPLETE_FIELDS = ENTRY_PENDING_FIELDS | {"proof_file_sha256"}
+ATTEMPT_PROOF_FIELDS = {
+    "schema_version", "campaign_id", "cohort_sha256", "kind", "split_ids", "architecture",
+    "architecture_manifest", "architecture_fingerprint", "dataset_id",
+    "recipe_index", "seed", "split_seed", "route_commit",
+    "implementation_code_sha256", "counter", "nonce", "runner_argv",
+    "runner_result", "artifacts", "proof_sha256",
+}
+ARTIFACT_FIELDS = {"path", "size_bytes", "sha256", "device", "inode"}
+
+
+class CampaignStore:
+    """Campaign filesystem rooted at one retained no-follow directory descriptor."""
+
+    def __init__(self, root: Path, race_hook: Callable[[str], None] | None = None):
+        self.root = root.absolute()
+        self.race_hook = race_hook
+        try:
+            descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as error:
+            raise ValueError("campaign root must be a no-follow directory, not a symlink") from error
+        status = os.fstat(descriptor)
+        if not stat.S_ISDIR(status.st_mode):
+            os.close(descriptor)
+            raise ValueError("campaign root is not a directory")
+        self.root_fd = descriptor
+        self.identity = (status.st_dev, status.st_ino)
+
+    def __del__(self) -> None:
+        descriptor = getattr(self, "root_fd", -1)
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            self.root_fd = -1
+
+    def assert_identity(self, stage: str = "before-campaign-open") -> None:
+        if self.race_hook is not None:
+            self.race_hook(stage)
+        try:
+            current = self.root.lstat()
+        except FileNotFoundError as error:
+            raise ValueError("campaign root identity changed by parent swap") from error
+        if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
+            raise ValueError("campaign root identity changed by parent swap")
+        if (current.st_dev, current.st_ino) != self.identity:
+            raise ValueError("campaign root identity changed by parent swap")
+
+    @staticmethod
+    def _parts(relative: str | Path) -> tuple[str, ...]:
+        path = Path(relative)
+        if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
+            raise ValueError("campaign relative path is invalid")
+        return path.parts
+
+    def _open_dir(self, parts: Sequence[str], *, create: bool = False) -> int:
+        self.assert_identity()
+        descriptor = os.dup(self.root_fd)
+        try:
+            for part in parts:
+                if create:
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=descriptor)
+                    except FileExistsError:
+                        pass
+                child = os.open(
+                    part,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=descriptor,
+                )
+                status = os.fstat(child)
+                if not stat.S_ISDIR(status.st_mode):
+                    os.close(child)
+                    raise ValueError("campaign parent is not a no-follow directory")
+                os.close(descriptor)
+                descriptor = child
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def mkdir(self, relative: str | Path) -> None:
+        descriptor = self._open_dir(self._parts(relative), create=True)
+        os.close(descriptor)
+
+    def mkdir_exclusive(self, relative: str | Path) -> None:
+        parent, name = self._parent(relative, create=True)
+        try:
+            os.mkdir(name, 0o700, dir_fd=parent)
+            child = os.open(
+                name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=parent,
+            )
+            os.close(child)
+            os.fsync(parent)
+            self.assert_identity("after-exclusive-directory-create")
+        finally:
+            os.close(parent)
+
+    def _parent(self, relative: str | Path, *, create: bool = False) -> tuple[int, str]:
+        parts = self._parts(relative)
+        return self._open_dir(parts[:-1], create=create), parts[-1]
+
+    def exists(self, relative: str | Path) -> bool:
+        parent, name = self._parent(relative)
+        try:
+            try:
+                status = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return False
+            if stat.S_ISLNK(status.st_mode):
+                raise ValueError("campaign file must not be a symlink")
+            return True
+        finally:
+            os.close(parent)
+
+    def exclusive_bytes(self, relative: str | Path, data: bytes) -> None:
+        parent, name = self._parent(relative, create=True)
+        try:
+            descriptor = os.open(
+                name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                0o600, dir_fd=parent,
+            )
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.fsync(parent)
+            self.assert_identity("after-campaign-write")
+        finally:
+            os.close(parent)
+
+    def exclusive_json(self, relative: str | Path, payload: object) -> None:
+        self.exclusive_bytes(relative, _json_bytes(payload))
+
+    def atomic_json(self, relative: str | Path, payload: object) -> None:
+        parent, name = self._parent(relative, create=True)
+        temporary = f".{name}.{secrets.token_hex(16)}.tmp"
+        try:
+            descriptor = os.open(
+                temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                0o600, dir_fd=parent,
+            )
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(_json_bytes(payload))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
+            self.assert_identity("after-campaign-replace")
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+            os.close(parent)
+
+    def read_regular(self, relative: str | Path, *, label: str) -> tuple[bytes, dict[str, object]]:
+        parent, name = self._parent(relative)
+        try:
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+            with os.fdopen(descriptor, "rb") as handle:
+                before = os.fstat(handle.fileno())
+                if not stat.S_ISREG(before.st_mode):
+                    raise ValueError(f"{label} is not a regular no-follow file")
+                digest = hashlib.sha256()
+                chunks: list[bytes] = []
+                while chunk := handle.read(1024 * 1024):
+                    chunks.append(chunk)
+                    digest.update(chunk)
+                after = os.fstat(handle.fileno())
+            identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+            identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+            if identity_before != identity_after:
+                raise ValueError(f"{label} identity changed while hashing")
+            self.assert_identity("after-campaign-read")
+            return b"".join(chunks), {
+                "path": str(Path(relative)), "size_bytes": before.st_size,
+                "sha256": digest.hexdigest(), "device": before.st_dev,
+                "inode": before.st_ino,
+            }
+        finally:
+            os.close(parent)
+
+    def read_json(self, relative: str | Path, *, label: str) -> dict[str, Any]:
+        data, _ = self.read_regular(relative, label=label)
+        try:
+            payload = json.loads(data)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(f"invalid {label} JSON") from error
+        if type(payload) is not dict:
+            raise ValueError(f"{label} must be a JSON object")
+        return payload
+
+    def listdir(self, relative: str | Path) -> list[str]:
+        descriptor = self._open_dir(self._parts(relative))
+        try:
+            return sorted(os.listdir(descriptor))
+        finally:
+            os.close(descriptor)
 
 
 def architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
@@ -97,122 +325,6 @@ def _verify_seal(payload: Mapping[str, object], label: str) -> None:
         raise ValueError(f"{label} proof SHA-256 mismatch")
 
 
-def _ensure_nofollow_directory(path: Path) -> None:
-    absolute = path.absolute()
-    current = Path(absolute.anchor)
-    for part in absolute.parts[1:]:
-        current /= part
-        try:
-            mode = current.lstat().st_mode
-        except FileNotFoundError as error:
-            raise ValueError(f"campaign directory is missing: {current}") from error
-        if stat.S_ISLNK(mode):
-            raise ValueError(f"campaign path must not contain a symlink: {current}")
-        if not stat.S_ISDIR(mode):
-            raise ValueError(f"campaign path parent is not a directory: {current}")
-    descriptor = os.open(absolute, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
-            raise ValueError("campaign root is not a directory")
-    finally:
-        os.close(descriptor)
-
-
-def _under(root: Path, path: Path) -> Path:
-    root_absolute = root.absolute()
-    candidate = path.absolute()
-    try:
-        candidate.relative_to(root_absolute)
-    except ValueError as error:
-        raise ValueError("artifact is outside the fixed campaign root") from error
-    return candidate
-
-
-def _mkdir(root: Path, relative: str) -> Path:
-    path = _under(root, root / relative)
-    try:
-        os.mkdir(path, 0o700)
-    except FileExistsError:
-        mode = path.lstat().st_mode
-        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
-            raise ValueError(f"campaign directory is invalid: {path}")
-    return path
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _exclusive_bytes(root: Path, path: Path, data: bytes) -> None:
-    path = _under(root, path)
-    descriptor = os.open(
-        path,
-        os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
-        0o600,
-    )
-    with os.fdopen(descriptor, "wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    _fsync_directory(path.parent)
-
-
-def _exclusive_json(root: Path, path: Path, payload: object) -> None:
-    _exclusive_bytes(root, path, _json_bytes(payload))
-
-
-def _atomic_json(root: Path, path: Path, payload: object) -> None:
-    path = _under(root, path)
-    temporary = path.parent / f".{path.name}.{secrets.token_hex(16)}.tmp"
-    _exclusive_bytes(root, temporary, _json_bytes(payload))
-    os.replace(temporary, path)
-    _fsync_directory(path.parent)
-
-
-def _read_regular(root: Path, path: Path, *, label: str) -> tuple[bytes, dict[str, object]]:
-    path = _under(root, path)
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    with os.fdopen(descriptor, "rb") as handle:
-        before = os.fstat(handle.fileno())
-        if not stat.S_ISREG(before.st_mode):
-            raise ValueError(f"{label} is not a regular no-follow file")
-        digest = hashlib.sha256()
-        chunks: list[bytes] = []
-        while True:
-            chunk = handle.read(1024 * 1024)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            digest.update(chunk)
-        after = os.fstat(handle.fileno())
-    identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-    identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-    if identity_before != identity_after:
-        raise ValueError(f"{label} identity changed while hashing")
-    return b"".join(chunks), {
-        "path": str(path.relative_to(root.absolute())),
-        "size_bytes": before.st_size,
-        "sha256": digest.hexdigest(),
-        "device": before.st_dev,
-        "inode": before.st_ino,
-    }
-
-
-def _read_json(root: Path, path: Path, *, label: str) -> dict[str, Any]:
-    data, _ = _read_regular(root, path, label=label)
-    try:
-        payload = json.loads(data)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"invalid {label} JSON") from error
-    if type(payload) is not dict:
-        raise ValueError(f"{label} must be a JSON object")
-    return payload
-
-
 def validate_metrics(value: Mapping[str, object]) -> dict[str, float]:
     if not isinstance(value, Mapping) or set(value) != set(VALIDATION_METRICS):
         raise ValueError("validation metrics field set mismatch")
@@ -230,7 +342,11 @@ def validate_metrics(value: Mapping[str, object]) -> dict[str, float]:
 def fake_validation_result(architecture: str, dataset: str) -> dict[str, object]:
     """Deterministic test fixture; production never calls this helper."""
     return {
+        "schema_version": 4,
+        "architecture": architecture,
+        "architecture_manifest": architecture_spec(architecture).manifest(),
         "architecture_fingerprint": architecture_fingerprint(architecture),
+        "cohort_sha256": FROZEN_COHORT_SHA256,
         "dataset_id": dataset,
         "recipe_index": FROZEN_RECIPES[dataset],
         "seed": 42,
@@ -238,6 +354,28 @@ def fake_validation_result(architecture: str, dataset: str) -> dict[str, object]
         "gpu_uuid": "GPU-fake",
         "peak_gpu_memory_gb": 0.25,
         **{field: 0.5 for field in VALIDATION_METRICS},
+    }
+
+
+def fake_test_result() -> dict[str, object]:
+    return {
+        "schema_version": 4,
+        "architecture": "a2",
+        "architecture_manifest": architecture_spec("a2").manifest(),
+        "architecture_fingerprint": architecture_fingerprint("a2"),
+        "seed": 42,
+        "split_seed": 2024,
+        "cohort_sha256": FROZEN_COHORT_SHA256,
+        "recipes": dict(FROZEN_RECIPES),
+        "gpu_uuid": "GPU-fake",
+        "peak_gpu_memory_gb": 0.25,
+        "rows": {
+            dataset: {
+                "recipe_index": recipe,
+                **{metric: 0.5 for metric in TEST_METRICS},
+            }
+            for dataset, recipe in FROZEN_RECIPES.items()
+        },
     }
 
 
@@ -260,26 +398,62 @@ def _subprocess_runner(argv: Sequence[str], attempt_dir: Path) -> Mapping[str, o
         raise ValueError("trusted runner result must be an object")
     records = payload.get("records")
     if isinstance(records, list) and len(records) == 1 and isinstance(records[0], dict):
-        payload = dict(records[0])
-        payload["gpu_uuid"] = payload.pop("physical_gpu_uuid", None)
+        record = records[0]
+        payload = {
+            "architecture_fingerprint": record.get("architecture_fingerprint"),
+            "gpu_uuid": record.get("physical_gpu_uuid"),
+            "peak_gpu_memory_gb": record.get("peak_gpu_memory_gb"),
+            "mastery_shape": record.get("mastery_shape"),
+            "final_loss": record.get("final_loss"),
+            "parameter_count": record.get("parameter_count"),
+        }
     return payload
 
 
-@dataclass(frozen=True)
 class CampaignDependencies:
-    campaign_root: Path
-    route_root: Path
-    runner: Runner
-    route_commit: str | None = None
-    test_only: bool = False
-
-    def __post_init__(self) -> None:
-        root = self.campaign_root.absolute()
+    def __init__(
+        self,
+        campaign_root: Path,
+        route_root: Path,
+        runner: Runner,
+        route_commit: str | None = None,
+        test_only: bool = False,
+        *,
+        _authority: object | None = None,
+        failure_hook: Callable[[str], None] | None = None,
+        race_hook: Callable[[str], None] | None = None,
+    ) -> None:
+        if _authority not in {_PRODUCTION_AUTHORITY, _TEST_AUTHORITY}:
+            raise ValueError("CampaignDependencies require internal authority")
+        root = campaign_root.absolute()
         if root.name != CAMPAIGN_ID:
             raise ValueError("exact campaign root name is required")
-        if not self.test_only and root != DEFAULT_CAMPAIGN_ROOT:
+        resolved_root = root.resolve(strict=True)
+        production_resolved = DEFAULT_CAMPAIGN_ROOT.resolve(strict=False)
+        if _authority is _TEST_AUTHORITY and resolved_root == production_resolved:
+            raise ValueError("test dependencies cannot use the production campaign root")
+        if _authority is _PRODUCTION_AUTHORITY and resolved_root != production_resolved:
             raise ValueError("exact production campaign root is required")
-        _ensure_nofollow_directory(root)
+        if _authority is _PRODUCTION_AUTHORITY and (
+            runner is not _subprocess_runner or route_root.absolute() != PROJECT_ROOT
+            or route_commit is not None or test_only
+        ):
+            raise ValueError("production dependencies cannot inject runner or route")
+        self.campaign_root = root
+        self.route_root = route_root.absolute()
+        self.runner = runner
+        self.route_commit = route_commit
+        self.test_only = _authority is _TEST_AUTHORITY
+        self.failure_hook = failure_hook
+        self.store = CampaignStore(root)
+        if self.test_only:
+            sentinel = _TEST_SENTINEL_NAME
+            if not self.store.exists(sentinel):
+                self.store.exclusive_bytes(sentinel, _TEST_SENTINEL_BYTES)
+            data, _ = self.store.read_regular(sentinel, label="test sentinel")
+            if data != _TEST_SENTINEL_BYTES:
+                raise ValueError("isolated test root sentinel mismatch")
+        self.store.race_hook = race_hook
 
     @classmethod
     def for_test(
@@ -288,40 +462,105 @@ class CampaignDependencies:
         campaign_root: Path,
         route_root: Path,
         runner: Runner,
-        route_commit: str,
+        route_commit: str | None = None,
+        failure_hook: Callable[[str], None] | None = None,
+        race_hook: Callable[[str], None] | None = None,
     ) -> CampaignDependencies:
-        if type(route_commit) is not str or len(route_commit) != 40:
+        if route_commit is not None and (type(route_commit) is not str or len(route_commit) != 40):
             raise ValueError("test route commit must be 40-hex")
-        return cls(campaign_root, route_root, runner, route_commit, True)
+        return cls(
+            campaign_root, route_root, runner, route_commit, True,
+            _authority=_TEST_AUTHORITY,
+            failure_hook=failure_hook,
+            race_hook=race_hook,
+        )
 
     def current_route(self) -> str:
         return self.route_commit if self.route_commit is not None else _route_head(self.route_root)
 
+    def implementation_hash(self, commit: str | None = None) -> str:
+        if self.route_commit is not None:
+            return hashlib.sha256(b"isolated-test-implementation").hexdigest()
+        selected = commit or self.current_route()
+        command = [
+            "/usr/bin/git", "-C", str(self.route_root), "ls-tree", "-r",
+            "--full-tree", selected, "--", *IMPLEMENTATION_DIRECTORIES,
+        ]
+        completed = subprocess.run(command, check=True, capture_output=True)
+        return hashlib.sha256(completed.stdout).hexdigest()
+
+    def route_is_ancestor(self, ancestor: str, current: str) -> bool:
+        if self.route_commit is not None:
+            return ancestor == current
+        completed = subprocess.run(
+            ["/usr/bin/git", "-C", str(self.route_root), "merge-base", "--is-ancestor", ancestor, current],
+            check=False,
+            capture_output=True,
+        )
+        return completed.returncode == 0
+
+    def route_followups_are_reports_only(self, ancestor: str, current: str) -> bool:
+        if self.route_commit is not None:
+            return ancestor == current
+        completed = subprocess.run(
+            [
+                "/usr/bin/git", "-C", str(self.route_root), "diff",
+                "--name-only", "--no-renames", f"{ancestor}..{current}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        paths = [line for line in completed.stdout.splitlines() if line]
+        return all(path.startswith("docs/") for path in paths)
+
+    def fail(self, stage: str) -> None:
+        if self.failure_hook is not None:
+            self.failure_hook(stage)
+
 
 def _production_dependencies() -> CampaignDependencies:
-    return CampaignDependencies(DEFAULT_CAMPAIGN_ROOT, PROJECT_ROOT, _subprocess_runner)
+    return CampaignDependencies(
+        DEFAULT_CAMPAIGN_ROOT, PROJECT_ROOT, _subprocess_runner,
+        _authority=_PRODUCTION_AUTHORITY,
+    )
 
 
 def _layout(dependencies: CampaignDependencies) -> None:
-    root = dependencies.campaign_root.absolute()
-    _mkdir(root, "attempts")
-    _mkdir(root, "decisions")
-    lock = root / "issuance.lock"
-    if not lock.exists():
+    store = dependencies.store
+    store.mkdir("attempts")
+    store.mkdir("decisions")
+    if not store.exists("issuance.lock"):
         try:
-            _exclusive_bytes(root, lock, b"")
+            store.exclusive_bytes("issuance.lock", b"")
         except FileExistsError:
             pass
 
 
-def _load_ledger(root: Path) -> dict[str, Any]:
-    path = root / "issuance-ledger.json"
-    if not path.exists():
-        return {"schema_version": 2, "campaign_id": CAMPAIGN_ID, "entries": []}
-    ledger = _read_json(root, path, label="issuance ledger")
+def _load_ledger(dependencies: CampaignDependencies) -> dict[str, Any]:
+    store = dependencies.store
+    if not store.exists("issuance-ledger.json"):
+        return {
+            "schema_version": 3,
+            "campaign_id": CAMPAIGN_ID,
+            "implementation_code_sha256": dependencies.implementation_hash(),
+            "entries": [],
+        }
+    ledger = store.read_json("issuance-ledger.json", label="issuance ledger")
     entries = ledger.get("entries")
-    if ledger.get("schema_version") != 2 or ledger.get("campaign_id") != CAMPAIGN_ID or type(entries) is not list:
+    if set(ledger) != LEDGER_FIELDS or ledger.get("schema_version") != 3 or ledger.get("campaign_id") != CAMPAIGN_ID or type(entries) is not list:
         raise ValueError("issuance ledger identity is invalid")
+    registered_code = ledger.get("implementation_code_sha256")
+    if type(registered_code) is not str or len(registered_code) != 64:
+        raise ValueError("issuance ledger implementation code hash is invalid")
+    if registered_code != dependencies.implementation_hash():
+        raise ValueError("campaign implementation code tree is stale")
+    for row in entries:
+        if type(row) is not dict:
+            raise ValueError("issuance ledger entry must be an object")
+        expected = ENTRY_COMPLETE_FIELDS if row.get("status") == "complete" else ENTRY_PENDING_FIELDS
+        if set(row) != expected:
+            raise ValueError("issuance ledger entry field set mismatch")
     counters = [row.get("counter") for row in entries if type(row) is dict]
     nonces = [row.get("nonce") for row in entries if type(row) is dict]
     if counters != list(range(1, len(entries) + 1)):
@@ -331,10 +570,14 @@ def _load_ledger(root: Path) -> dict[str, Any]:
     return ledger
 
 
-def _with_lock(root: Path):
+def _with_lock(dependencies: CampaignDependencies):
     class Lock:
         def __enter__(self):
-            descriptor = os.open(root / "issuance.lock", os.O_RDWR | os.O_NOFOLLOW)
+            dependencies.store.assert_identity()
+            descriptor = os.open(
+                "issuance.lock", os.O_RDWR | os.O_NOFOLLOW,
+                dir_fd=dependencies.store.root_fd,
+            )
             self.handle = os.fdopen(descriptor, "r+b")
             fcntl.flock(self.handle, fcntl.LOCK_EX)
             return self
@@ -367,7 +610,16 @@ def _runner_argv(kind: str, architecture: str, attempt_dir: Path, dataset: str |
 
 
 def _validate_runner_result(kind: str, architecture: str, dataset: str | None, result: Mapping[str, object]) -> dict[str, Any]:
+    if not isinstance(result, Mapping):
+        raise ValueError("runner result must be an object")
     normalized = dict(result)
+    expected_fields = {
+        "validation": VALIDATION_RESULT_FIELDS,
+        "smoke": SMOKE_RESULT_FIELDS,
+        "test": TEST_RESULT_FIELDS,
+    }.get(kind)
+    if expected_fields is None or set(normalized) != expected_fields:
+        raise ValueError(f"{kind} runner result field set mismatch")
     if normalized.get("architecture_fingerprint") != architecture_fingerprint(architecture):
         raise ValueError("runner architecture fingerprint mismatch")
     peak = normalized.get("peak_gpu_memory_gb")
@@ -376,22 +628,153 @@ def _validate_runner_result(kind: str, architecture: str, dataset: str | None, r
     if type(normalized.get("gpu_uuid")) is not str or not normalized["gpu_uuid"]:
         raise ValueError("runner GPU UUID is invalid")
     if kind == "validation":
+        if (
+            normalized.get("schema_version") != 4
+            or normalized.get("architecture") != architecture
+            or normalized.get("architecture_manifest") != architecture_spec(architecture).manifest()
+            or normalized.get("cohort_sha256") != FROZEN_COHORT_SHA256
+        ):
+            raise ValueError("validation runner v4 identity mismatch")
         if normalized.get("dataset_id") != dataset or normalized.get("recipe_index") != FROZEN_RECIPES.get(str(dataset)):
             raise ValueError("runner frozen dataset/recipe mismatch")
         if normalized.get("seed") != 42 or normalized.get("split_seed") != 2024:
             raise ValueError("runner seed binding mismatch")
         metrics = {field: normalized.get(field) for field in VALIDATION_METRICS}
         normalized.update(validate_metrics(metrics))
+    elif kind == "smoke":
+        shape = normalized.get("mastery_shape")
+        if type(shape) is not list or len(shape) != 2 or any(type(item) is not int or item <= 0 for item in shape):
+            raise ValueError("smoke mastery shape is invalid")
+        if type(normalized.get("final_loss")) is not float or not math.isfinite(normalized["final_loss"]):
+            raise ValueError("smoke final loss must be a finite float")
+        if type(normalized.get("parameter_count")) is not int or normalized["parameter_count"] < 0:
+            raise ValueError("smoke parameter count is invalid")
+    elif kind == "test":
+        if (
+            normalized.get("schema_version") != 4
+            or normalized.get("architecture") != "a2"
+            or normalized.get("architecture_manifest") != architecture_spec("a2").manifest()
+            or normalized.get("seed") != 42
+            or normalized.get("split_seed") != 2024
+            or normalized.get("cohort_sha256") != FROZEN_COHORT_SHA256
+            or normalized.get("recipes") != FROZEN_RECIPES
+        ):
+            raise ValueError("test runner identity/schema mismatch")
+        rows = normalized.get("rows")
+        if type(rows) is not dict or set(rows) != set(FROZEN_RECIPES):
+            raise ValueError("test runner rows must contain the exact frozen cohort")
+        for dataset_id, recipe in FROZEN_RECIPES.items():
+            row = rows[dataset_id]
+            if type(row) is not dict or set(row) != TEST_ROW_FIELDS or row.get("recipe_index") != recipe:
+                raise ValueError("test runner row field set/recipe mismatch")
+            for metric in TEST_METRICS:
+                value = row[metric]
+                if type(value) is not float or not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                    raise ValueError("test metric must be an exact finite float in [0, 1]")
     return normalized
+
+
+def _validate_route_chain(
+    dependencies: CampaignDependencies,
+    *,
+    attempt_commit: object,
+    attempt_code_hash: object,
+    registered_code_hash: object,
+) -> None:
+    if type(attempt_commit) is not str or len(attempt_commit) != 40:
+        raise ValueError("attempt route commit is invalid")
+    current = dependencies.current_route()
+    if not dependencies.route_is_ancestor(attempt_commit, current):
+        raise ValueError("stale attempt route is not an ancestor of current HEAD")
+    current_hash = dependencies.implementation_hash(current)
+    attempt_hash = dependencies.implementation_hash(attempt_commit)
+    if (
+        type(attempt_code_hash) is not str
+        or attempt_code_hash != registered_code_hash
+        or attempt_hash != registered_code_hash
+        or current_hash != registered_code_hash
+    ):
+        raise ValueError("campaign implementation code tree is stale")
+    if not dependencies.route_followups_are_reports_only(attempt_commit, current):
+        raise ValueError("attempt route has non-report follow-up commits")
+
+
+def _canonical_attempt_proof(
+    dependencies: CampaignDependencies,
+    ledger: Mapping[str, object],
+    entry: Mapping[str, object],
+    result: Mapping[str, object],
+    artifact: Mapping[str, object],
+) -> dict[str, Any]:
+    if set(entry) != ENTRY_COMPLETE_FIELDS:
+        raise ValueError("immutable ledger entry field set mismatch")
+    counter = entry.get("counter")
+    if type(counter) is not int or counter < 1:
+        raise ValueError("immutable attempt counter is invalid")
+    attempt_dir = f"attempts/attempt-{counter:03d}"
+    if entry.get("attempt_dir") != attempt_dir:
+        raise ValueError("immutable attempt directory mismatch")
+    kind = entry.get("kind")
+    split_ids = entry.get("split_ids")
+    architecture = entry.get("architecture")
+    dataset = entry.get("dataset_id")
+    if kind not in {"smoke", "validation"} or architecture not in ARCHITECTURES:
+        raise ValueError("immutable attempt kind/architecture mismatch")
+    if kind == "validation":
+        if split_ids != ["standard", "holdout"]:
+            raise ValueError("validation attempt split identity mismatch")
+        if dataset not in FROZEN_RECIPES:
+            raise ValueError("immutable attempt dataset is outside frozen cohort")
+    elif dataset is not None or split_ids != ["smoke"]:
+        raise ValueError("smoke attempt split/dataset identity mismatch")
+    nonce = entry.get("nonce")
+    if type(nonce) is not str or len(nonce) != 64:
+        raise ValueError("immutable attempt nonce is invalid")
+    _validate_route_chain(
+        dependencies,
+        attempt_commit=entry.get("route_commit"),
+        attempt_code_hash=entry.get("implementation_code_sha256"),
+        registered_code_hash=ledger.get("implementation_code_sha256"),
+    )
+    normalized = _validate_runner_result(str(kind), str(architecture), dataset if isinstance(dataset, str) else None, result)
+    if set(artifact) != ARTIFACT_FIELDS or artifact.get("path") != f"{attempt_dir}/runner-result.json":
+        raise ValueError("canonical attempt artifact field/path mismatch")
+    argv = _runner_argv(
+        str(kind), str(architecture),
+        dependencies.campaign_root / attempt_dir,
+        dataset if isinstance(dataset, str) else None,
+    )
+    return _seal({
+        "schema_version": 3,
+        "campaign_id": CAMPAIGN_ID,
+        "cohort_sha256": FROZEN_COHORT_SHA256,
+        "kind": kind,
+        "split_ids": split_ids,
+        "architecture": architecture,
+        "architecture_manifest": architecture_spec(str(architecture)).manifest(),
+        "architecture_fingerprint": architecture_fingerprint(str(architecture)),
+        "dataset_id": dataset,
+        "recipe_index": None if dataset is None else FROZEN_RECIPES[str(dataset)],
+        "seed": 42,
+        "split_seed": 2024,
+        "route_commit": entry["route_commit"],
+        "implementation_code_sha256": entry["implementation_code_sha256"],
+        "counter": counter,
+        "nonce": nonce,
+        "runner_argv": argv,
+        "runner_result": normalized,
+        "artifacts": [dict(artifact)],
+    })
 
 
 def _run_registered(dependencies: CampaignDependencies, *, kind: str, architecture: str, dataset: str | None = None) -> dict[str, Any]:
     architecture_spec(architecture)
-    root = dependencies.campaign_root.absolute()
+    store = dependencies.store
     _layout(dependencies)
     route_commit = dependencies.current_route()
-    with _with_lock(root):
-        ledger = _load_ledger(root)
+    implementation_hash = dependencies.implementation_hash(route_commit)
+    with _with_lock(dependencies):
+        ledger = _load_ledger(dependencies)
         entries = ledger["entries"]
         if kind == "smoke" and any(row["kind"] == "smoke" and row["architecture"] == architecture for row in entries):
             raise ValueError(f"smoke for {architecture} has already been issued")
@@ -400,112 +783,94 @@ def _run_registered(dependencies: CampaignDependencies, *, kind: str, architectu
         counter = len(entries) + 1
         nonce = secrets.token_hex(32)
         attempt_name = f"attempt-{counter:03d}"
-        attempt_dir = root / "attempts" / attempt_name
-        os.mkdir(attempt_dir, 0o700)
+        attempt_relative = f"attempts/{attempt_name}"
+        store.mkdir_exclusive(attempt_relative)
+        attempt_dir = dependencies.campaign_root / attempt_relative
         entry = {
             "counter": counter,
             "nonce": nonce,
             "kind": kind,
+            "split_ids": ["standard", "holdout"] if kind == "validation" else ["smoke"],
             "architecture": architecture,
             "dataset_id": dataset,
-            "attempt_dir": f"attempts/{attempt_name}",
+            "attempt_dir": attempt_relative,
             "route_commit": route_commit,
+            "implementation_code_sha256": implementation_hash,
             "status": "pending",
         }
         entries.append(entry)
-        _atomic_json(root, root / "issuance-ledger.json", ledger)
+        store.atomic_json("issuance-ledger.json", ledger)
 
     argv = _runner_argv(kind, architecture, attempt_dir, dataset)
     try:
         result = _validate_runner_result(kind, architecture, dataset, dependencies.runner(argv, attempt_dir))
-        _exclusive_json(root, attempt_dir / "runner-result.json", result)
-        _, artifact = _read_regular(root, attempt_dir / "runner-result.json", label="runner result")
-        proof = _seal({
-            "schema_version": 2,
-            "campaign_id": CAMPAIGN_ID,
-            "cohort_sha256": FROZEN_COHORT_SHA256,
-            "kind": kind,
-            "architecture": architecture,
-            "architecture_manifest": architecture_spec(architecture).manifest(),
-            "architecture_fingerprint": architecture_fingerprint(architecture),
-            "dataset_id": dataset,
-            "recipe_index": None if dataset is None else FROZEN_RECIPES[dataset],
-            "seed": 42,
-            "split_seed": 2024,
-            "route_commit": route_commit,
-            "counter": counter,
-            "nonce": nonce,
-            "runner_argv": argv,
-            "runner_result": result,
-            "artifacts": [artifact],
-        })
-        _exclusive_json(root, attempt_dir / "proof.json", proof)
+        store.exclusive_json(f"{attempt_relative}/runner-result.json", result)
+        _, artifact = store.read_regular(f"{attempt_relative}/runner-result.json", label="runner result")
+        complete_entry = {**entry, "status": "complete", "proof_file_sha256": "0" * 64}
+        proof = _canonical_attempt_proof(dependencies, ledger, complete_entry, result, artifact)
+        store.exclusive_json(f"{attempt_relative}/proof.json", proof)
     except BaseException:
-        with _with_lock(root):
-            ledger = _load_ledger(root)
+        with _with_lock(dependencies):
+            ledger = _load_ledger(dependencies)
             ledger["entries"][counter - 1]["status"] = "failed"
-            _atomic_json(root, root / "issuance-ledger.json", ledger)
+            store.atomic_json("issuance-ledger.json", ledger)
         raise
-    with _with_lock(root):
-        ledger = _load_ledger(root)
+    with _with_lock(dependencies):
+        ledger = _load_ledger(dependencies)
         current = ledger["entries"][counter - 1]
         if current["nonce"] != nonce or current["status"] != "pending":
             raise ValueError("issuance identity changed during runner execution")
-        _, proof_record = _read_regular(root, attempt_dir / "proof.json", label="attempt proof")
+        _, proof_record = store.read_regular(f"{attempt_relative}/proof.json", label="attempt proof")
         current["status"] = "complete"
-        current["proof_sha256"] = proof_record["sha256"]
-        _atomic_json(root, root / "issuance-ledger.json", ledger)
+        current["proof_file_sha256"] = proof_record["sha256"]
+        store.atomic_json("issuance-ledger.json", ledger)
     print(json.dumps(proof, sort_keys=True))
     return proof
 
 
 def _verify_attempts(dependencies: CampaignDependencies) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    root = dependencies.campaign_root.absolute()
+    store = dependencies.store
     _layout(dependencies)
-    route = dependencies.current_route()
-    with _with_lock(root):
-        ledger = _load_ledger(root)
+    with _with_lock(dependencies):
+        ledger = _load_ledger(dependencies)
         entries = json.loads(json.dumps(ledger["entries"]))
     proofs: list[dict[str, Any]] = []
     for entry in entries:
         if entry.get("status") != "complete":
             raise ValueError("status is invalid: issuance is not complete")
-        attempt_dir = root / str(entry["attempt_dir"])
-        proof = _read_json(root, attempt_dir / "proof.json", label="attempt proof")
+        attempt_relative = str(entry["attempt_dir"])
+        proof = store.read_json(f"{attempt_relative}/proof.json", label="attempt proof")
+        if set(proof) != ATTEMPT_PROOF_FIELDS:
+            raise ValueError("canonical attempt proof field set mismatch")
         _verify_seal(proof, "attempt")
-        if any(proof.get(field) != entry.get(field) for field in ("counter", "nonce", "kind", "architecture", "dataset_id", "route_commit")):
-            raise ValueError("attempt proof and ledger identity mismatch")
-        if proof.get("route_commit") != route:
-            raise ValueError("stale route commit in registered attempt")
-        _, proof_record = _read_regular(root, attempt_dir / "proof.json", label="attempt proof")
-        if proof_record["sha256"] != entry.get("proof_sha256"):
+        _, proof_record = store.read_regular(f"{attempt_relative}/proof.json", label="attempt proof")
+        if proof_record["sha256"] != entry.get("proof_file_sha256"):
             raise ValueError("attempt proof artifact SHA mismatch")
         artifacts = proof.get("artifacts")
         if type(artifacts) is not list or len(artifacts) != 1:
             raise ValueError("attempt artifact registry is invalid")
-        artifact_path = root / str(artifacts[0].get("path"))
-        _, current = _read_regular(root, artifact_path, label="runner artifact")
+        if type(artifacts[0]) is not dict or set(artifacts[0]) != ARTIFACT_FIELDS:
+            raise ValueError("attempt artifact field set mismatch")
+        artifact_path = str(artifacts[0].get("path"))
+        _, current = store.read_regular(artifact_path, label="runner artifact")
         if current != artifacts[0]:
             raise ValueError("runner artifact identity/SHA mismatch")
-        result = _read_json(root, artifact_path, label="runner artifact")
-        if result != proof.get("runner_result"):
-            raise ValueError("runner artifact content mismatch")
+        result = store.read_json(artifact_path, label="runner artifact")
+        expected = _canonical_attempt_proof(dependencies, ledger, entry, result, current)
+        if proof != expected:
+            raise ValueError("canonical attempt proof differs from recomputed immutable authority")
         proofs.append(proof)
     return ledger, proofs
 
 
-def _decision_path(root: Path, name: str) -> Path:
-    return root.absolute() / "decisions" / name
-
-
-def _write_decision(root: Path, name: str, payload: Mapping[str, object]) -> dict[str, Any]:
+def _write_decision(dependencies: CampaignDependencies, name: str, payload: Mapping[str, object]) -> dict[str, Any]:
     sealed = _seal(payload)
-    _exclusive_json(root.absolute(), _decision_path(root, name), sealed)
+    dependencies.store.exclusive_json(f"decisions/{name}", sealed)
     return sealed
 
 
-def _load_decision(root: Path, name: str) -> dict[str, Any]:
-    payload = _read_json(root.absolute(), _decision_path(root, name), label=name)
+def _load_decision(dependencies: CampaignDependencies, name: str) -> dict[str, Any]:
+    payload = dependencies.store.read_json(f"decisions/{name}", label=name)
     _verify_seal(payload, name)
     return payload
 
@@ -522,24 +887,30 @@ def _command_validation(args: argparse.Namespace, deps: CampaignDependencies) ->
 
 def _command_replay(args: argparse.Namespace, deps: CampaignDependencies) -> int:
     payload = _expected_replay(deps, args.architecture)
-    decision = _write_decision(deps.campaign_root, f"replay-{args.architecture}.json", payload)
+    decision = _write_decision(deps, f"replay-{args.architecture}.json", payload)
     print(json.dumps(decision, sort_keys=True))
     return 0
 
 
-def _expected_replay(deps: CampaignDependencies, architecture: str) -> dict[str, Any]:
+def _expected_replay(
+    deps: CampaignDependencies,
+    architecture: str,
+    *,
+    decision_route: str | None = None,
+) -> dict[str, Any]:
     ledger, proofs = _verify_attempts(deps)
     selected = [proof for proof in proofs if proof["kind"] == "validation" and proof["architecture"] == architecture]
     if {proof["dataset_id"] for proof in selected} != set(FROZEN_RECIPES) or len(selected) != 3:
         raise ValueError("replay requires exactly one registered proof per frozen dataset")
     selected.sort(key=lambda proof: proof["counter"])
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "campaign_id": CAMPAIGN_ID,
         "cohort_sha256": FROZEN_COHORT_SHA256,
         "architecture": architecture,
         "architecture_fingerprint": architecture_fingerprint(architecture),
-        "route_commit": deps.current_route(),
+        "route_commit": decision_route or deps.current_route(),
+        "implementation_code_sha256": ledger["implementation_code_sha256"],
         "counters": [proof["counter"] for proof in selected],
         "nonces": [proof["nonce"] for proof in selected],
         "proof_sha256s": [proof["proof_sha256"] for proof in selected],
@@ -549,8 +920,16 @@ def _expected_replay(deps: CampaignDependencies, architecture: str) -> dict[str,
 
 
 def _verified_replay(deps: CampaignDependencies, architecture: str) -> dict[str, Any]:
-    replay = _load_decision(deps.campaign_root, f"replay-{architecture}.json")
-    expected = _expected_replay(deps, architecture)
+    replay = _load_decision(deps, f"replay-{architecture}.json")
+    _validate_route_chain(
+        deps,
+        attempt_commit=replay.get("route_commit"),
+        attempt_code_hash=replay.get("implementation_code_sha256"),
+        registered_code_hash=deps.implementation_hash(),
+    )
+    expected = _expected_replay(
+        deps, architecture, decision_route=str(replay.get("route_commit"))
+    )
     unsigned = dict(replay)
     unsigned.pop("proof_sha256", None)
     if unsigned != expected:
@@ -560,11 +939,12 @@ def _verified_replay(deps: CampaignDependencies, architecture: str) -> dict[str,
 
 def _command_freeze(args: argparse.Namespace, deps: CampaignDependencies) -> int:
     replay = _verified_replay(deps, "a0v4")
-    payload = _write_decision(deps.campaign_root, "a0v4-frozen.json", {
-        "schema_version": 2,
+    payload = _write_decision(deps, "a0v4-frozen.json", {
+        "schema_version": 3,
         "campaign_id": CAMPAIGN_ID,
         "cohort_sha256": FROZEN_COHORT_SHA256,
         "route_commit": deps.current_route(),
+        "implementation_code_sha256": deps.implementation_hash(),
         "architecture": "a0v4",
         "architecture_fingerprint": architecture_fingerprint("a0v4"),
         "replay_proof_sha256": replay["proof_sha256"],
@@ -579,8 +959,14 @@ def _command_freeze(args: argparse.Namespace, deps: CampaignDependencies) -> int
 
 
 def _verified_frozen(deps: CampaignDependencies) -> dict[str, Any]:
-    frozen = _load_decision(deps.campaign_root, "a0v4-frozen.json")
+    frozen = _load_decision(deps, "a0v4-frozen.json")
     replay = _verified_replay(deps, "a0v4")
+    _validate_route_chain(
+        deps,
+        attempt_commit=frozen.get("route_commit"),
+        attempt_code_hash=frozen.get("implementation_code_sha256"),
+        registered_code_hash=deps.implementation_hash(),
+    )
     if frozen.get("replay_proof_sha256") != replay.get("proof_sha256") or frozen.get("rows") != replay.get("rows"):
         raise ValueError("frozen A0v4 proof chain mismatch")
     return frozen
@@ -592,12 +978,17 @@ def relative_gate(deltas: Mapping[str, Mapping[str, object]]) -> dict[str, Any]:
 
 def _command_relative(args: argparse.Namespace, deps: CampaignDependencies) -> int:
     derived = _derive_relative(deps)
-    payload = _write_decision(deps.campaign_root, "relative-gate.json", derived)
+    payload = _write_decision(deps, "relative-gate.json", derived)
     print(json.dumps(payload, sort_keys=True))
     return 0
 
 
-def _derive_relative(deps: CampaignDependencies, *, nonce: str | None = None) -> dict[str, Any]:
+def _derive_relative(
+    deps: CampaignDependencies,
+    *,
+    nonce: str | None = None,
+    decision_route: str | None = None,
+) -> dict[str, Any]:
     baseline = _verified_frozen(deps)
     candidate = _verified_replay(deps, "a2")
     deltas: dict[str, dict[str, float]] = {}
@@ -618,10 +1009,11 @@ def _derive_relative(deps: CampaignDependencies, *, nonce: str | None = None) ->
     decision = relative_gate(gate_input)
     gate_nonce = (nonce or secrets.token_hex(32)) if decision["passed"] else None
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "campaign_id": CAMPAIGN_ID,
         "cohort_sha256": FROZEN_COHORT_SHA256,
-        "route_commit": deps.current_route(),
+        "route_commit": decision_route or deps.current_route(),
+        "implementation_code_sha256": deps.implementation_hash(),
         **decision,
         "deltas": deltas,
         "a0v4_frozen_sha256": baseline["proof_sha256"],
@@ -635,8 +1027,18 @@ def _derive_relative(deps: CampaignDependencies, *, nonce: str | None = None) ->
 
 
 def _verified_relative(deps: CampaignDependencies) -> dict[str, Any]:
-    proof = _load_decision(deps.campaign_root, "relative-gate.json")
-    expected = _derive_relative(deps, nonce=proof.get("nonce") if isinstance(proof.get("nonce"), str) else None)
+    proof = _load_decision(deps, "relative-gate.json")
+    _validate_route_chain(
+        deps,
+        attempt_commit=proof.get("route_commit"),
+        attempt_code_hash=proof.get("implementation_code_sha256"),
+        registered_code_hash=deps.implementation_hash(),
+    )
+    expected = _derive_relative(
+        deps,
+        nonce=proof.get("nonce") if isinstance(proof.get("nonce"), str) else None,
+        decision_route=str(proof.get("route_commit")),
+    )
     unsigned = dict(proof)
     unsigned.pop("proof_sha256", None)
     if unsigned != expected:
@@ -697,7 +1099,7 @@ def _command_external(args: argparse.Namespace, deps: CampaignDependencies) -> i
         audit=audit,
         audit_path=args.comparator_audit.absolute(),
     )
-    payload = _write_decision(deps.campaign_root, "external-gate.json", derived)
+    payload = _write_decision(deps, "external-gate.json", derived)
     print(json.dumps(payload, sort_keys=True))
     return 0
 
@@ -710,6 +1112,7 @@ def _derive_external(
     audit: Mapping[str, object],
     audit_path: Path,
     nonce: str | None = None,
+    decision_route: str | None = None,
 ) -> dict[str, Any]:
     deltas: dict[str, dict[str, float]] = {}
     identities: dict[str, dict[str, object]] = {}
@@ -728,10 +1131,11 @@ def _derive_external(
             deltas[dataset][condition] = delta
             passed = passed and (delta > 0.0 if condition == "zero" else delta >= 0.0)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "campaign_id": CAMPAIGN_ID,
         "cohort_sha256": FROZEN_COHORT_SHA256,
-        "route_commit": deps.current_route(),
+        "route_commit": decision_route or deps.current_route(),
+        "implementation_code_sha256": deps.implementation_hash(),
         "passed": passed,
         "nonce": (nonce or secrets.token_hex(32)) if passed else None,
         "relative_proof_sha256": relative["proof_sha256"],
@@ -744,13 +1148,19 @@ def _derive_external(
 
 
 def _verified_external(deps: CampaignDependencies) -> dict[str, Any]:
-    proof = _load_decision(deps.campaign_root, "external-gate.json")
+    proof = _load_decision(deps, "external-gate.json")
     audit_path = proof.get("comparator_audit_path")
     if type(audit_path) is not str:
         raise ValueError("external proof comparator audit path is invalid")
     audit = load_verified_comparator_audit(Path(audit_path))
     relative = _verified_relative(deps)
     candidate = _verified_replay(deps, "a2")
+    _validate_route_chain(
+        deps,
+        attempt_commit=proof.get("route_commit"),
+        attempt_code_hash=proof.get("implementation_code_sha256"),
+        registered_code_hash=deps.implementation_hash(),
+    )
     derived = _derive_external(
         deps,
         relative=relative,
@@ -758,6 +1168,7 @@ def _verified_external(deps: CampaignDependencies) -> dict[str, Any]:
         audit=audit,
         audit_path=Path(audit_path),
         nonce=proof.get("nonce") if isinstance(proof.get("nonce"), str) else None,
+        decision_route=str(proof.get("route_commit")),
     )
     unsigned = dict(proof)
     unsigned.pop("proof_sha256", None)
@@ -769,87 +1180,171 @@ def _verified_external(deps: CampaignDependencies) -> dict[str, Any]:
 def _command_test(args: argparse.Namespace, deps: CampaignDependencies) -> int:
     if args.architecture != "a2":
         raise ValueError("test remains closed for every architecture except a2")
-    root = deps.campaign_root.absolute()
     relative = _verified_relative(deps)
     external = _verified_external(deps)
     if relative.get("passed") is not True or external.get("passed") is not True or external.get("relative_proof_sha256") != relative.get("proof_sha256"):
         raise ValueError("test remains closed until registered gates pass")
     _verified_replay(deps, "a2")
     _layout(deps)
-    pending_path = _decision_path(root, "test-once.json")
+    route_commit = deps.current_route()
+    implementation_hash = deps.implementation_hash(route_commit)
     nonce = secrets.token_hex(32)
     pending = _seal({
-        "schema_version": 2,
+        "schema_version": 3,
         "campaign_id": CAMPAIGN_ID,
+        "cohort_sha256": FROZEN_COHORT_SHA256,
         "state": "pending",
         "nonce": nonce,
-        "route_commit": deps.current_route(),
+        "route_commit": route_commit,
+        "implementation_code_sha256": implementation_hash,
+        "architecture": "a2",
+        "split_id": "test",
+        "architecture_manifest": architecture_spec("a2").manifest(),
+        "architecture_fingerprint": architecture_fingerprint("a2"),
+        "recipes": dict(FROZEN_RECIPES),
         "relative_proof_sha256": relative["proof_sha256"],
         "external_proof_sha256": external["proof_sha256"],
     })
     try:
-        _exclusive_json(root, pending_path, pending)
+        deps.store.exclusive_json("decisions/test-once.json", pending)
     except FileExistsError as error:
         raise ValueError("test-once nonce has already been consumed") from error
-    attempt_dir = root / "attempts" / "test-once"
-    os.mkdir(attempt_dir, 0o700)
-    argv = _runner_argv("test", "a2", attempt_dir, None)
+    state = "failed"
+    argv: list[str] | None = None
+    result: dict[str, Any] | None = None
+    artifact: dict[str, object] | None = None
+    error_text: str | None = None
     try:
+        deps.fail("mkdir")
+        deps.store.mkdir_exclusive("attempts/test-once")
+        attempt_dir = deps.campaign_root / "attempts" / "test-once"
+        deps.fail("argv")
+        argv = _runner_argv("test", "a2", attempt_dir, None)
+        deps.fail("runner")
         result = _validate_runner_result("test", "a2", None, deps.runner(argv, attempt_dir))
+        deps.fail("artifact")
+        deps.store.exclusive_json("attempts/test-once/runner-result.json", result)
+        _, artifact = deps.store.read_regular(
+            "attempts/test-once/runner-result.json", label="test runner result"
+        )
         state = "succeeded"
-        error_text = None
     except BaseException as error:
-        result = None
-        state = "failed"
         error_text = f"{type(error).__name__}: {error}"
-    finalized = _seal({
-        "schema_version": 2,
-        "campaign_id": CAMPAIGN_ID,
-        "state": state,
-        "nonce": nonce,
-        "route_commit": deps.current_route(),
-        "relative_proof_sha256": relative["proof_sha256"],
-        "external_proof_sha256": external["proof_sha256"],
-        "runner_argv": argv,
-        "runner_result": result,
-        "error": error_text,
-    })
-    _atomic_json(root, pending_path, finalized)
+        result = None
+        artifact = None
+    finally:
+        finalized = _seal({
+            "schema_version": 3,
+            "campaign_id": CAMPAIGN_ID,
+            "cohort_sha256": FROZEN_COHORT_SHA256,
+            "state": state,
+            "nonce": nonce,
+            "route_commit": route_commit,
+            "implementation_code_sha256": implementation_hash,
+            "architecture": "a2",
+            "split_id": "test",
+            "architecture_manifest": architecture_spec("a2").manifest(),
+            "architecture_fingerprint": architecture_fingerprint("a2"),
+            "recipes": dict(FROZEN_RECIPES),
+            "relative_proof_sha256": relative["proof_sha256"],
+            "external_proof_sha256": external["proof_sha256"],
+            "runner_argv": argv,
+            "runner_result": result,
+            "artifact": artifact,
+            "error": error_text,
+        })
+        deps.store.atomic_json("decisions/test-once.json", finalized)
     if state == "failed":
         raise RuntimeError(error_text)
     print(json.dumps(finalized, sort_keys=True))
     return 0
 
 
+def _verified_test_record(deps: CampaignDependencies) -> dict[str, Any]:
+    record = deps.store.read_json("decisions/test-once.json", label="test-once.json")
+    expected_fields = {
+        "schema_version", "campaign_id", "cohort_sha256", "state", "nonce",
+        "route_commit", "implementation_code_sha256", "architecture",
+        "split_id",
+        "architecture_manifest", "architecture_fingerprint", "recipes",
+        "relative_proof_sha256", "external_proof_sha256", "runner_argv",
+        "runner_result", "artifact", "error", "proof_sha256",
+    }
+    if set(record) != expected_fields:
+        raise ValueError("test-once record field set mismatch")
+    _verify_seal(record, "test-once")
+    relative = _verified_relative(deps)
+    external = _verified_external(deps)
+    _validate_route_chain(
+        deps,
+        attempt_commit=record.get("route_commit"),
+        attempt_code_hash=record.get("implementation_code_sha256"),
+        registered_code_hash=deps.implementation_hash(),
+    )
+    identity = (
+        record.get("schema_version") == 3
+        and record.get("campaign_id") == CAMPAIGN_ID
+        and record.get("cohort_sha256") == FROZEN_COHORT_SHA256
+        and record.get("architecture") == "a2"
+        and record.get("split_id") == "test"
+        and record.get("architecture_manifest") == architecture_spec("a2").manifest()
+        and record.get("architecture_fingerprint") == architecture_fingerprint("a2")
+        and record.get("recipes") == FROZEN_RECIPES
+        and record.get("relative_proof_sha256") == relative.get("proof_sha256")
+        and record.get("external_proof_sha256") == external.get("proof_sha256")
+        and type(record.get("nonce")) is str
+        and len(record["nonce"]) == 64
+    )
+    if not identity:
+        raise ValueError("test-once identity/proof chain mismatch")
+    state = record.get("state")
+    if state == "failed":
+        if record.get("runner_result") is not None or record.get("artifact") is not None or type(record.get("error")) is not str:
+            raise ValueError("failed test-once record contains a forged result/artifact")
+        argv = record.get("runner_argv")
+        if argv is not None and (type(argv) is not list or any(type(item) is not str for item in argv)):
+            raise ValueError("failed test-once argv is invalid")
+        return record
+    if state != "succeeded":
+        raise ValueError("test-once record is pending or has invalid state")
+    expected_argv = _runner_argv(
+        "test", "a2", deps.campaign_root / "attempts" / "test-once", None
+    )
+    if record.get("runner_argv") != expected_argv or record.get("error") is not None:
+        raise ValueError("succeeded test-once argv/error mismatch")
+    artifact = record.get("artifact")
+    if type(artifact) is not dict or set(artifact) != ARTIFACT_FIELDS or artifact.get("path") != "attempts/test-once/runner-result.json":
+        raise ValueError("succeeded test result artifact registry is invalid")
+    _, current = deps.store.read_regular(str(artifact["path"]), label="test result artifact")
+    if current != artifact:
+        raise ValueError("test result artifact identity/SHA mismatch")
+    result = deps.store.read_json(str(artifact["path"]), label="test result artifact")
+    normalized = _validate_runner_result("test", "a2", None, result)
+    if normalized != record.get("runner_result"):
+        raise ValueError("test result differs from recomputed artifact")
+    return record
+
+
 def _command_status(args: argparse.Namespace, deps: CampaignDependencies) -> int:
     ledger, proofs = _verify_attempts(deps)
     decisions: dict[str, str] = {}
-    for path in sorted((deps.campaign_root / "decisions").iterdir()):
-        if path.name == "replay-a0v4.json":
+    for name in deps.store.listdir("decisions"):
+        if name == "replay-a0v4.json":
             _verified_replay(deps, "a0v4")
-        elif path.name == "replay-a2.json":
+        elif name == "replay-a2.json":
             _verified_replay(deps, "a2")
-        elif path.name == "a0v4-frozen.json":
+        elif name == "a0v4-frozen.json":
             _verified_frozen(deps)
-        elif path.name == "relative-gate.json":
+        elif name == "relative-gate.json":
             _verified_relative(deps)
-        elif path.name == "external-gate.json":
+        elif name == "external-gate.json":
             _verified_external(deps)
-        elif path.name == "test-once.json":
-            payload = _read_json(deps.campaign_root, path, label=path.name)
-            _verify_seal(payload, path.name)
-            if payload.get("route_commit") != deps.current_route():
-                raise ValueError("test-once record has a stale route")
-            if payload.get("state") not in {"pending", "succeeded", "failed"}:
-                raise ValueError("test-once record state is invalid")
-            relative = _verified_relative(deps)
-            external = _verified_external(deps)
-            if payload.get("relative_proof_sha256") != relative.get("proof_sha256") or payload.get("external_proof_sha256") != external.get("proof_sha256"):
-                raise ValueError("test-once proof chain mismatch")
+        elif name == "test-once.json":
+            _verified_test_record(deps)
         else:
-            raise ValueError(f"status found an unregistered decision artifact: {path.name}")
-        _, record = _read_regular(deps.campaign_root, path, label=path.name)
-        decisions[path.name] = str(record["sha256"])
+            raise ValueError(f"status found an unregistered decision artifact: {name}")
+        _, record = deps.store.read_regular(f"decisions/{name}", label=name)
+        decisions[name] = str(record["sha256"])
     print(json.dumps({"campaign_id": CAMPAIGN_ID, "attempt_count": len(proofs), "ledger_entry_count": len(ledger["entries"]), "decisions": decisions}, sort_keys=True))
     return 0
 

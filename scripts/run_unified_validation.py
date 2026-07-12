@@ -1121,6 +1121,7 @@ def _run_stable_test(args: argparse.Namespace) -> None:
                 doa_path=doa_path,
             )
             rows[dataset] = {
+                "recipe_index": recipe_index,
                 "overall_auc": overall,
                 "zero_auc": zero,
                 "ordinary_doa": ordinary,
@@ -1134,6 +1135,11 @@ def _run_stable_test(args: argparse.Namespace) -> None:
         "architecture_fingerprint": fingerprint,
         "seed": 42,
         "split_seed": 2024,
+        "cohort_sha256": (
+            "6342dc8a5f73a4e03a1645780597b625c"
+            "1480ba7a6513668b6766089cdd5b8a5"
+        ),
+        "recipes": dict(STABLE_FROZEN_RECIPES),
         "gpu_uuid": gpu_uuid,
         "peak_gpu_memory_gb": max(peaks),
         "rows": rows,
