@@ -109,7 +109,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
         return audit
 
     def test_identity_recipes_and_fingerprints(self) -> None:
-        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r3-20260712")
+        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r4-20260712")
         self.assertEqual(controller.FROZEN_RECIPES, {"MOOCRadar": 2, "ASSIST17": 1, "XES3G5M": 0})
         self.assertEqual(controller.architecture_fingerprint("a0v4"), UnifiedArchitectureSpec(completion="prior").fingerprint())
         self.assertEqual(controller.architecture_fingerprint("a2"), UnifiedArchitectureSpec(completion="evidence-relational-graph").fingerprint())
@@ -439,6 +439,9 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                     }))
                     output.with_name(f"{output.stem}_best.pt").write_bytes(b"checkpoint")
                     output.with_name(f"{output.stem}_history.csv").write_text("loss\n")
+                    logs = output.parent / "logs"
+                    logs.mkdir()
+                    (logs / "train.log").write_text("finished\n")
                 elif command[1].endswith("evaluate_coverage_slice.py"):
                     output.write_text(json.dumps({
                         "slices": [
@@ -501,8 +504,18 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                         "coverage-valid_slices.csv",
                         "coverage-valid_summary.csv",
                         "doa-valid_summary.csv",
+                        "logs",
                     },
                 )
+            self.assertEqual(
+                {
+                    path.name
+                    for path in (
+                        attempt / "stable-validation-work" / "aux"
+                    ).iterdir()
+                },
+                {"standard", "holdout", "artifact-manifest.json"},
+            )
             self.assertTrue(any("--slice-csv" in command for command in commands))
             deps = self.dependencies(
                 root,
@@ -516,7 +529,26 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                 deps, "attempts/attempt-001", "validation"
             )
             self.assertEqual(len(sources), 6)
-            self.assertEqual(len(auxiliary), 2)
+            self.assertEqual(len(auxiliary), 1)
+            aux_root = attempt / "stable-validation-work" / "aux"
+            manifest_path = aux_root / "artifact-manifest.json"
+            original_manifest = manifest_path.read_bytes()
+            manifest = json.loads(original_manifest)
+            manifest["artifacts"] = manifest["artifacts"][1:]
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "omission|mismatch"):
+                controller._discover_aux_artifacts(
+                    deps, "attempts/attempt-001", "validation"
+                )
+            manifest_path.write_bytes(original_manifest)
+            bound_path = aux_root / manifest["artifacts"][0]["relative_path"]
+            original_bound = bound_path.read_bytes()
+            bound_path.write_bytes(original_bound + b"tamper")
+            with self.assertRaisesRegex(ValueError, "omission|mismatch"):
+                controller._discover_aux_artifacts(
+                    deps, "attempts/attempt-001", "validation"
+                )
+            bound_path.write_bytes(original_bound)
             unexpected = (
                 attempt
                 / "stable-validation-work"
@@ -568,8 +600,16 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                         "coverage-test_slices.csv",
                         "coverage-test_summary.csv",
                         "doa-test_summary.csv",
+                        "logs",
                     },
                 )
+            self.assertEqual(
+                {
+                    path.name
+                    for path in (test_attempt / "stable-test-work" / "aux").iterdir()
+                },
+                {*controller.FROZEN_RECIPES, "artifact-manifest.json"},
+            )
             sources = controller._discover_source_artifacts(
                 deps, "attempts/test-once", "test"
             )
@@ -577,7 +617,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
                 deps, "attempts/test-once", "test"
             )
             self.assertEqual(len(sources), 9)
-            self.assertEqual(len(auxiliary), 3)
+            self.assertEqual(len(auxiliary), 1)
 
     def test_test_sources_reject_duplicate_required_coverage_scope(self) -> None:
         for duplicate_scope in ("overall", "bucket:zero"):

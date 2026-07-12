@@ -11,6 +11,7 @@ import secrets
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Callable, Mapping, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +25,7 @@ from scripts.unified_dataset_audit import canonical_sha256
 from scripts.unified_validation_controller import _route_head
 
 
-CAMPAIGN_ID = "unified-ergc-r3-20260712"
+CAMPAIGN_ID = "unified-ergc-r4-20260712"
 FROZEN_COHORT_SHA256 = (
     "6342dc8a5f73a4e03a1645780597b625c"
     "1480ba7a6513668b6766089cdd5b8a5"
@@ -312,6 +313,20 @@ class CampaignStore:
             return sorted(os.listdir(descriptor))
         finally:
             os.close(descriptor)
+
+    def entry_kind(self, relative: str | Path) -> str:
+        parent, name = self._parent(relative)
+        try:
+            status = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if stat.S_ISLNK(status.st_mode):
+                raise ValueError("campaign auxiliary entry must not be a symlink")
+            if stat.S_ISDIR(status.st_mode):
+                return "directory"
+            if stat.S_ISREG(status.st_mode):
+                return "file"
+            raise ValueError("campaign auxiliary entry must be regular or directory")
+        finally:
+            os.close(parent)
 
 
 def architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
@@ -907,22 +922,63 @@ def _discover_aux_artifacts(
         if dependencies.store.exists(aux_root):
             raise ValueError("fixture policy forbids an auxiliary output layout")
         return []
-    identities = _aux_identities(kind)
-    if set(dependencies.store.listdir(aux_root)) != set(identities):
-        raise ValueError("fixed auxiliary root has missing or extra entries")
-    names = set(_aux_names(kind))
-    checkpoints: list[dict[str, object]] = []
-    for identity in identities:
-        parent = f"{aux_root}/{identity}"
-        if set(dependencies.store.listdir(parent)) != names:
-            raise ValueError("fixed auxiliary directory has missing or extra artifacts")
-        checkpoint = f"{parent}/train-summary_best.pt"
-        checkpoints.append(
-            dependencies.store.read_regular(
-                checkpoint, label=f"{kind} checkpoint artifact"
-            )[1]
-        )
-    return checkpoints
+    manifest_path = f"{aux_root}/artifact-manifest.json"
+    _verified_aux_manifest(dependencies, aux_root=aux_root, kind=kind)
+    return [
+        dependencies.store.read_regular(
+            manifest_path, label=f"{kind} auxiliary artifact manifest"
+        )[1]
+    ]
+
+
+def _recomputed_aux_manifest(
+    dependencies: CampaignDependencies, *, aux_root: str, kind: str
+) -> dict[str, object]:
+    identities = set(_aux_identities(kind))
+    if set(dependencies.store.listdir(aux_root)) != {
+        *identities,
+        "artifact-manifest.json",
+    }:
+        raise ValueError("fixed auxiliary root identity set is invalid")
+    records: list[dict[str, object]] = []
+    pending = [f"{aux_root}/{identity}" for identity in sorted(identities)]
+    while pending:
+        directory = pending.pop()
+        for name in dependencies.store.listdir(directory):
+            path = f"{directory}/{name}"
+            entry_kind = dependencies.store.entry_kind(path)
+            if entry_kind == "directory":
+                pending.append(path)
+                continue
+            _, artifact = dependencies.store.read_regular(
+                path, label=f"{kind} auxiliary artifact"
+            )
+            records.append(
+                {
+                    "relative_path": str(Path(path).relative_to(aux_root)),
+                    "size_bytes": artifact["size_bytes"],
+                    "sha256": artifact["sha256"],
+                    "device": artifact["device"],
+                    "inode": artifact["inode"],
+                }
+            )
+    records.sort(key=lambda record: str(record["relative_path"]))
+    return {"schema_version": 1, "kind": kind, "artifacts": records}
+
+
+def _verified_aux_manifest(
+    dependencies: CampaignDependencies, *, aux_root: str, kind: str
+) -> dict[str, object]:
+    manifest = dependencies.store.read_json(
+        f"{aux_root}/artifact-manifest.json",
+        label=f"{kind} auxiliary artifact manifest",
+    )
+    expected = _recomputed_aux_manifest(
+        dependencies, aux_root=aux_root, kind=kind
+    )
+    if manifest != expected:
+        raise ValueError("auxiliary artifact manifest omission or identity mismatch")
+    return manifest
 
 
 def _validate_aux_artifacts(
@@ -933,23 +989,25 @@ def _validate_aux_artifacts(
     artifacts: Sequence[Mapping[str, object]],
 ) -> None:
     expected = (
-        [
-            f"{attempt_dir}/stable-{kind}-work/aux/{identity}/train-summary_best.pt"
-            for identity in _aux_identities(kind)
-        ]
+        [f"{attempt_dir}/stable-{kind}-work/aux/artifact-manifest.json"]
         if kind in {"validation", "test"} and _requires_aux_layout(dependencies)
         else []
     )
     if [artifact.get("path") for artifact in artifacts] != expected:
-        raise ValueError("checkpoint artifact registry mismatch")
+        raise ValueError("auxiliary manifest artifact registry mismatch")
     for artifact, path in zip(artifacts, expected, strict=True):
         if set(artifact) != ARTIFACT_FIELDS:
-            raise ValueError("checkpoint artifact field set mismatch")
+            raise ValueError("auxiliary manifest artifact field set mismatch")
         _, current = dependencies.store.read_regular(
-            path, label=f"{kind} checkpoint artifact"
+            path, label=f"{kind} auxiliary artifact manifest"
         )
         if current != artifact:
-            raise ValueError("checkpoint artifact identity/SHA mismatch")
+            raise ValueError("auxiliary manifest artifact identity/SHA mismatch")
+        _verified_aux_manifest(
+            dependencies,
+            aux_root=f"{attempt_dir}/stable-{kind}-work/aux",
+            kind=kind,
+        )
 
 
 def _validate_metric_sources(
@@ -1164,6 +1222,34 @@ def _preflight_attempt(
 ) -> dict[str, object]:
     if dependencies.test_only:
         return {"test_only": True}
+    with tempfile.TemporaryDirectory() as temporary:
+        rehearsal_root = Path(temporary)
+        rehearsal_attempt = rehearsal_root / "attempts" / "rehearsal"
+        rehearsal_attempt.mkdir(parents=True)
+        runner_rehearsal = runner_module.rehearse_stable_validation_layout(
+            rehearsal_attempt
+        )
+
+        class RehearsalDependencies:
+            source_policy = "production-layout-fixture"
+            store = CampaignStore(rehearsal_root)
+
+        rehearsal_dependencies = RehearsalDependencies()
+        rehearsal_sources = _discover_source_artifacts(
+            rehearsal_dependencies,
+            "attempts/rehearsal",
+            "validation",
+        )
+        rehearsal_aux = _discover_aux_artifacts(
+            rehearsal_dependencies,
+            "attempts/rehearsal",
+            "validation",
+        )
+        rehearsal = {
+            **runner_rehearsal,
+            "source_artifact_count": len(rehearsal_sources),
+            "aux_manifest_artifact_count": len(rehearsal_aux),
+        }
     smoke = runner_module.preflight_stable_smoke(architecture=architecture)
     validations = {
         dataset_id: runner_module.preflight_stable_validation(
@@ -1181,6 +1267,7 @@ def _preflight_attempt(
         "architecture": architecture,
         "requested_kind": kind,
         "requested_dataset": dataset,
+        "rehearsal": rehearsal,
         "smoke": smoke,
         "validations": validations,
     }

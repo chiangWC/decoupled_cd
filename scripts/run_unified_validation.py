@@ -1143,6 +1143,116 @@ def _publish_authoritative_json(source: Path, destination: Path) -> None:
     os.replace(source, destination)
 
 
+def _write_aux_artifact_manifest(aux_root: Path, *, kind: str) -> Path:
+    records: list[dict[str, object]] = []
+    for path in sorted(aux_root.rglob("*"), key=lambda item: item.as_posix()):
+        status = path.lstat()
+        if stat.S_ISLNK(status.st_mode):
+            raise ValueError(f"auxiliary artifact must not be a symlink: {path}")
+        if stat.S_ISDIR(status.st_mode):
+            continue
+        if not stat.S_ISREG(status.st_mode):
+            raise ValueError(f"auxiliary artifact must be regular: {path}")
+        relative = path.relative_to(aux_root).as_posix()
+        if relative == "artifact-manifest.json":
+            raise ValueError("auxiliary artifact manifest already exists")
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            before = os.fstat(handle.fileno())
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+            after = os.fstat(handle.fileno())
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise ValueError(f"auxiliary artifact changed while hashing: {path}")
+        records.append(
+            {
+                "relative_path": relative,
+                "size_bytes": before.st_size,
+                "sha256": digest.hexdigest(),
+                "device": before.st_dev,
+                "inode": before.st_ino,
+            }
+        )
+    manifest = aux_root / "artifact-manifest.json"
+    _write_json(
+        manifest,
+        {"schema_version": 1, "kind": kind, "artifacts": records},
+    )
+    return manifest
+
+
+def rehearse_stable_validation_layout(attempt_dir: Path) -> dict[str, object]:
+    data_root = attempt_dir / "rehearsal-data"
+    for directory_name in DATASET_DIRECTORIES["ASSIST17"]:
+        _write_synthetic_fixture(data_root / directory_name)
+    assignments = (
+        data_root
+        / DATASET_DIRECTORIES["ASSIST17"][1]
+        / "student_concept_holdout_assignments.csv"
+    )
+    with assignments.open("x", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            ("stu_id", "num_rows", "num_concepts", "mode", "holdout_concepts", "holdout_rows")
+        )
+        for student_id in range(3):
+            writer.writerow((student_id, 4, 3, "random", "", 0))
+    work_root = attempt_dir / "stable-validation-work"
+    recipe = NumericalRecipe("full_batch", 4, 1, 1e-3, 0.0, 1)
+    for split_id in ("standard", "holdout"):
+        authoritative = work_root / split_id
+        authoritative.mkdir(parents=True)
+        aux_root = work_root / "aux" / split_id
+        aux_root.mkdir(parents=True)
+        train_summary = aux_root / "train-summary.json"
+        coverage = aux_root / "coverage-valid.json"
+        doa = aux_root / "doa-valid.json"
+        train_command = build_train_command(
+            dataset_id="ASSIST17",
+            split_id=split_id,
+            architecture="a0v4",
+            data_root=data_root,
+            output=train_summary,
+            device="cpu",
+            recipe=recipe,
+        )
+        _run_checked(train_command, env=dict(os.environ))
+        coverage_command, doa_command = build_evaluation_commands(
+            dataset_id="ASSIST17",
+            split_id=split_id,
+            architecture="a0v4",
+            data_root=data_root,
+            train_summary_path=train_summary,
+            coverage_path=coverage,
+            doa_path=doa,
+            device="cpu",
+        )
+        _run_checked(coverage_command, env=dict(os.environ))
+        _run_checked(doa_command, env=dict(os.environ))
+        for source, name in (
+            (train_summary, "train-summary.json"),
+            (coverage, "coverage-valid.json"),
+            (doa, "doa-valid.json"),
+        ):
+            _publish_authoritative_json(source, authoritative / name)
+    manifest = _write_aux_artifact_manifest(work_root / "aux", kind="validation")
+    return {
+        "attempt_dir": str(attempt_dir),
+        "manifest": str(manifest),
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+    }
+
+
 def _run_stable_validation(args: argparse.Namespace) -> None:
     """Run both validation protocols under the stable controller's issuance."""
     output_path = _output_path(args.output).resolve()
@@ -1227,6 +1337,7 @@ def _run_stable_validation(args: argparse.Namespace) -> None:
             ):
                 _publish_authoritative_json(source, split_root / name)
         gpu_uuid = _gpu_uuid(gpu_index)
+    _write_aux_artifact_manifest(work_root / "aux", kind="validation")
     standard = split_metrics["standard"]
     holdout = split_metrics["holdout"]
     _write_json(output_path, {
@@ -1344,6 +1455,7 @@ def _run_stable_test(args: argparse.Namespace) -> None:
             ):
                 _publish_authoritative_json(source, dataset_root / name)
         gpu_uuid = _gpu_uuid(gpu_index)
+    _write_aux_artifact_manifest(work_root / "aux", kind="test")
     _write_json(output_path, {
         "schema_version": 4,
         "architecture": "a2",
