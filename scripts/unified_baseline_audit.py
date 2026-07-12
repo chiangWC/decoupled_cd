@@ -166,11 +166,13 @@ def audit_baseline_sources(
         })
     discovered: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
+    binding_rejected: list[dict[str, Any]] = []
     for source_path in _expand_source_paths(normalized_paths):
         source: dict[str, Any] = {
             "source_path": str(source_path.resolve()),
             "source_sha256": None,
             "rows": [],
+            "row_reasons": [],
             "reasons": [],
         }
         if not source_path.is_file():
@@ -182,10 +184,28 @@ def audit_baseline_sources(
             source["rows"] = _read_artifact_rows(source_path)
         except (OSError, UnicodeError, csv.Error, json.JSONDecodeError, ValueError) as error:
             source["reasons"].append(str(error))
-        rows.extend(source["rows"])
+        for row in source["rows"]:
+            declared_path = row.get("source_path")
+            declared_resolved = (
+                str(Path(declared_path).resolve())
+                if isinstance(declared_path, str)
+                else None
+            )
+            if declared_resolved != source["source_path"]:
+                reasons = [
+                    "source_path does not match containing artifact: expected "
+                    + source["source_path"]
+                ]
+                source["row_reasons"].append(reasons)
+                binding_rejected.append({"row": row, "reasons": reasons})
+            else:
+                source["row_reasons"].append([])
+                rows.append(row)
         discovered.append(source)
 
     result = audit_baseline_rows(rows, dataset_audits)
+    result["rejected_rows"].extend(binding_rejected)
+    result["rejected_count"] = len(result["rejected_rows"])
     accepted_sources: list[dict[str, Any]] = []
     rejected_sources: list[dict[str, Any]] = []
     for source in discovered:
@@ -198,9 +218,12 @@ def audit_baseline_sources(
         if not source_record["row_count"] and not source_record["reasons"]:
             source_record["reasons"].append("source artifact contains no rows")
         for index, row in enumerate(source["rows"], start=1):
-            row_audit = audit_baseline_rows([row], dataset_audits)
-            if row_audit["rejected_rows"]:
-                reasons = row_audit["rejected_rows"][0]["reasons"]
+            reasons = source["row_reasons"][index - 1]
+            if not reasons:
+                row_audit = audit_baseline_rows([row], dataset_audits)
+                if row_audit["rejected_rows"]:
+                    reasons = row_audit["rejected_rows"][0]["reasons"]
+            if reasons:
                 source_record["reasons"].append(
                     f"row {index}: " + "; ".join(reasons)
                 )

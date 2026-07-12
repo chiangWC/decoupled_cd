@@ -517,6 +517,28 @@ class PrimaryCohortRankingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "A0 fingerprint mismatch"):
                 load_verified_cohort(path, **self._trusted_expectations(cohort))
 
+    def test_schema_v2_cannot_be_downgraded_hidden_or_changed(self) -> None:
+        cohort = freeze_primary_cohort(
+            self.a0_rows, self.baseline_audit, self.audit_rows
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.json"
+            for schema_version in (1, 3, None):
+                with self.subTest(schema_version=schema_version):
+                    tampered = copy.deepcopy(cohort)
+                    if schema_version is None:
+                        tampered.pop("schema_version")
+                    else:
+                        tampered["schema_version"] = schema_version
+                    tampered.pop("cohort_sha256")
+                    tampered["cohort_sha256"] = canonical_sha256(tampered)
+                    path.write_text(json.dumps(tampered), encoding="utf-8")
+
+                    with self.assertRaisesRegex(ValueError, "schema version"):
+                        load_verified_cohort(
+                            path, **self._trusted_expectations(cohort)
+                        )
+
     def test_cohort_boundary_rejects_rehashed_invalid_accepted_provenance(self) -> None:
         tampered = copy.deepcopy(self.baseline_audit)
         tampered["accepted_rows"][0]["seed"] = 7

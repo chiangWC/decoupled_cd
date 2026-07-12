@@ -14,6 +14,25 @@ from scripts.unified_baseline_audit import (
 from scripts.unified_dataset_audit import canonical_sha256
 
 
+_SCHEMA_V1_FIELDS = frozenset({
+    "schema_version",
+    "dataset_ids",
+    "audit_sha256",
+    "dataset_audit_sha256",
+    "b0_validation_references",
+    "cohort_sha256",
+})
+_SCHEMA_V2_FIELDS = frozenset({
+    "schema_version",
+    "dataset_ids",
+    "a0_fingerprints",
+    "comparator_audit_sha256",
+    "dataset_audit_sha256",
+    "rankings",
+    "cohort_sha256",
+})
+
+
 def _verify_canonical_hash(
     payload: Mapping[str, Any],
     *,
@@ -99,7 +118,22 @@ def load_verified_cohort(
     stored_hash = unhashed.pop("cohort_sha256", None)
     if stored_hash != canonical_sha256(unhashed):
         raise ValueError("canonical SHA-256 mismatch for frozen cohort")
-    if existing.get("schema_version") == 2:
+    schema_version = existing.get("schema_version")
+    if schema_version == 1:
+        if set(existing) != _SCHEMA_V1_FIELDS:
+            raise ValueError("schema version 1 field set mismatch")
+        dataset_ids = existing.get("dataset_ids")
+        if (
+            not isinstance(dataset_ids, list)
+            or len(dataset_ids) != 3
+            or len(set(dataset_ids)) != 3
+            or not isinstance(existing.get("dataset_audit_sha256"), dict)
+            or not isinstance(existing.get("b0_validation_references"), dict)
+        ):
+            raise ValueError("schema version 1 payload mismatch")
+    elif schema_version == 2:
+        if set(existing) != _SCHEMA_V2_FIELDS:
+            raise ValueError("schema version 2 field set mismatch")
         expectations = (
             expected_dataset_ids,
             expected_a0_fingerprints,
@@ -119,6 +153,8 @@ def load_verified_cohort(
             raise ValueError("trusted comparator audit hash mismatch for frozen cohort")
         if existing.get("dataset_audit_sha256") != expected_dataset_audit_sha256:
             raise ValueError("trusted dataset audit hash mismatch for frozen cohort")
+    else:
+        raise ValueError(f"unsupported or missing cohort schema version: {schema_version}")
     return existing
 
 

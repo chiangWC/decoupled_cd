@@ -163,9 +163,8 @@ class UnifiedBaselineAuditTests(unittest.TestCase):
         self.assertEqual(len(rejected_source["source_sha256"]), 64)
         self.assertEqual(
             rejected_source["reasons"][0],
-            "row 1: missing required fields: model, seed, split_seed, split, metric, "
-            "value, data_sha256, q_sha256, prediction_sha256, "
-            "prediction_order_sha256, config_sha256, checkpoint_sha256, source_path",
+            "row 1: source_path does not match containing artifact: expected "
+            + str(extra.resolve()),
         )
         unhashed = dict(result)
         stored = unhashed.pop("audit_sha256")
@@ -210,6 +209,45 @@ class UnifiedBaselineAuditTests(unittest.TestCase):
                 for record in result["rejected_source_records"]
             )
         )
+
+    def test_discovery_binds_each_row_to_its_containing_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "artifact.json"
+            unrelated = root / "other.json"
+            missing = root / "missing.json"
+            rows = [
+                dict(self.row, source_path=str(artifact.resolve()), value=0.78),
+                dict(self.row, source_path=str(unrelated.resolve()), value=0.79),
+                dict(self.row, source_path=str(missing.resolve()), value=0.80),
+            ]
+            artifact.write_text(json.dumps(rows), encoding="utf-8")
+
+            result = audit_baseline_sources([artifact], self.audits)
+
+        self.assertEqual(result["accepted_count"], 1)
+        self.assertEqual(result["rejected_count"], 2)
+        expected_prefix = "source_path does not match containing artifact: expected "
+        self.assertEqual(
+            result["rejected_rows"][0]["reasons"],
+            [expected_prefix + str(artifact.resolve())],
+        )
+        self.assertEqual(
+            result["rejected_rows"][1]["reasons"],
+            [expected_prefix + str(artifact.resolve())],
+        )
+        self.assertEqual(
+            result["strongest_comparators"]["assist17"]["holdout"]["zero_auc"][
+                "value"
+            ],
+            0.78,
+        )
+        source = result["rejected_source_records"][0]
+        self.assertEqual(len(source["source_sha256"]), 64)
+        self.assertEqual(source["reasons"], [
+            "row 2: " + expected_prefix + str(artifact.resolve()),
+            "row 3: " + expected_prefix + str(artifact.resolve()),
+        ])
 
 
 if __name__ == "__main__":
