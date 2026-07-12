@@ -735,6 +735,67 @@ print(attempt_dir)
 
         self.assertEqual(controller_module._route_head(linked), expected)
 
+    def test_assume_unchanged_cannot_hide_modified_tracked_route(self) -> None:
+        subprocess.run(
+            [
+                "/usr/bin/git",
+                "update-index",
+                "--assume-unchanged",
+                "scripts/run_remote_campaign.py",
+            ],
+            cwd=self.repo_root,
+            check=True,
+        )
+        self.route_runner.write_text(
+            "# hidden assume-unchanged modification\n", encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(ValueError, "index|dirty"):
+            self.initialize()
+        self.assertFalse(self.state_dir.exists())
+
+    def test_skip_worktree_cannot_hide_modified_tracked_route(self) -> None:
+        subprocess.run(
+            [
+                "/usr/bin/git",
+                "update-index",
+                "--skip-worktree",
+                "scripts/run_remote_campaign.py",
+            ],
+            cwd=self.repo_root,
+            check=True,
+        )
+        self.route_runner.write_text(
+            "# hidden skip-worktree modification\n", encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(ValueError, "index|dirty"):
+            self.initialize()
+        self.assertFalse(self.state_dir.exists())
+
+    def test_clean_route_supports_tracked_filename_with_newline(self) -> None:
+        unusual = self.repo_root / "scripts" / "line\nbreak.py"
+        unusual.write_text("# unusual tracked path\n", encoding="utf-8")
+        subprocess.run(
+            ["/usr/bin/git", "add", "--", str(unusual.relative_to(self.repo_root))],
+            cwd=self.repo_root,
+            check=True,
+        )
+        subprocess.run(
+            ["/usr/bin/git", "commit", "-qm", "add unusual path"],
+            cwd=self.repo_root,
+            check=True,
+        )
+
+        expected = subprocess.run(
+            ["/usr/bin/git", "rev-parse", "HEAD"],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(controller_module._route_head(self.repo_root), expected)
+
     def test_first_authorization_issues_only_first_dataset_pair(self) -> None:
         self.initialize()
 

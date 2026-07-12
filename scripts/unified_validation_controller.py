@@ -163,6 +163,43 @@ def _trusted_git_command(
     ]
 
 
+def _verify_normal_git_index(
+    repo_root: Path,
+    git_dir: Path,
+    environment: Mapping[str, str],
+) -> None:
+    for flag, label in (
+        ("-v", "assume-unchanged/skip-worktree"),
+        ("-f", "fsmonitor-valid"),
+    ):
+        completed = subprocess.run(
+            _trusted_git_command(
+                repo_root,
+                git_dir,
+                "ls-files",
+                flag,
+                "-z",
+            ),
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=False,
+            env=dict(environment),
+        )
+        if completed.returncode != 0:
+            detail_bytes = completed.stderr or completed.stdout
+            detail = detail_bytes.decode("utf-8", errors="replace").strip()
+            raise ValueError(f"cannot verify route index flags: {detail}")
+        records = completed.stdout.split(b"\x00")
+        if not records or records[-1] != b"":
+            raise ValueError("route index listing is not NUL terminated")
+        for record in records[:-1]:
+            if len(record) < 3 or record[:2] != b"H ":
+                raise ValueError(
+                    f"route index has abnormal {label} state"
+                )
+
+
 def _architecture_spec(architecture: str) -> UnifiedArchitectureSpec:
     try:
         inference, composer = ARCHITECTURES[architecture]
@@ -211,6 +248,7 @@ def _route_head(repo_root: Path) -> str:
             f"route top-level mismatch: expected {repo_root}, "
             f"actual {resolved_top_level}"
         )
+    _verify_normal_git_index(repo_root, git_dir, environment)
     completed = subprocess.run(
         _trusted_git_command(repo_root, git_dir, "rev-parse", "HEAD"),
         cwd=repo_root,
