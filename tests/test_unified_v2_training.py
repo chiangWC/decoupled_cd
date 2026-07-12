@@ -160,6 +160,14 @@ class UnifiedV2TrainingTests(unittest.TestCase):
         with self.assertRaisesRegex(NotImplementedError, "Task 8"):
             self.model(completion="lowrank")
 
+    def test_trainable_parameter_count_is_exact_and_excludes_frozen_parameters(self) -> None:
+        model = torch.nn.Sequential(
+            torch.nn.Linear(3, 4),
+            torch.nn.Linear(4, 2, bias=False),
+        )
+        model[1].weight.requires_grad_(False)
+        self.assertEqual(train_script.trainable_parameter_count(model), 16)
+
     def test_a0_forward_uses_train_evidence_and_one_mastery_path(self) -> None:
         tensors = self.tensors()
         evidence = tensors["student_concept_evidence"]

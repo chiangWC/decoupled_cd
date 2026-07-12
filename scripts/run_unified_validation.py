@@ -331,6 +331,9 @@ def validate_smoke_summary(
     ):
         raise ValueError("smoke mastery must be nonempty")
     _finite_float(summary.get("final_loss"), field="final_loss")
+    parameter_count = summary.get("parameter_count")
+    if type(parameter_count) is not int or parameter_count < 0:
+        raise ValueError("parameter_count must be a nonnegative integer")
     peak = summary.get("peak_gpu_memory_gb")
     if require_gpu_peak and _finite_float(peak, field="peak_gpu_memory_gb") <= 0.0:
         raise ValueError("GPU smoke must record positive peak memory")
@@ -413,6 +416,8 @@ def assemble_candidate_rows(
             or standard.get("numerical_recipe") != holdout.get("numerical_recipe")
         ):
             raise ValueError("validation split summaries use different recipes")
+        if standard.get("parameter_count") != holdout.get("parameter_count"):
+            raise ValueError("validation split summaries use different parameter counts")
         rows.append(
             {
                 "dataset_id": dataset_id,
@@ -425,6 +430,7 @@ def assemble_candidate_rows(
                 "weighted_doa": float(standard["weighted_doa"]),
                 "recipe_index": standard.get("recipe_index", 0),
                 "numerical_recipe": standard.get("numerical_recipe"),
+                "parameter_count": standard["parameter_count"],
             }
         )
     unexpected = set(indexed) - {
@@ -690,6 +696,9 @@ def _run_split(args: argparse.Namespace) -> None:
         if train_summary.get("architecture_fingerprint") != fingerprint:
             raise ValueError("training summary architecture fingerprint mismatch")
         final_loss = _finite_float(train_summary.get("final_loss"), field="final_loss")
+        parameter_count = train_summary.get("parameter_count")
+        if type(parameter_count) is not int or parameter_count < 0:
+            raise ValueError("training summary parameter_count is invalid")
         peak = train_summary.get("max_cuda_memory_allocated_gb")
         if gpu_index is not None:
             peak = _finite_float(peak, field="max_cuda_memory_allocated_gb")
@@ -713,6 +722,7 @@ def _run_split(args: argparse.Namespace) -> None:
             "capability_counter": binding["counter"],
             "capability_nonce": binding["nonce"],
             "seed": 42,
+            "split_seed": binding["split_seed"],
             "evaluation_input_role": "valid",
             "overall_auc": overall_auc,
             "zero_auc": zero_auc,
@@ -723,6 +733,7 @@ def _run_split(args: argparse.Namespace) -> None:
                 int(train_summary["num_concepts"]),
             ],
             "final_loss": final_loss,
+            "parameter_count": parameter_count,
             "peak_gpu_memory_gb": peak,
             "gpu_selection": {
                 "physical_index": gpu_index,
@@ -845,6 +856,7 @@ def _run_smoke(args: argparse.Namespace) -> None:
                     "architecture_fingerprint": raw["architecture_fingerprint"],
                     "mastery_shape": [raw["num_students"], raw["num_concepts"]],
                     "final_loss": raw["final_loss"],
+                    "parameter_count": raw["parameter_count"],
                     "peak_gpu_memory_gb": raw["max_cuda_memory_allocated_gb"],
                     "physical_gpu_index": gpu_index,
                     "gpu_lock_path": None if lock_path is None else str(lock_path),

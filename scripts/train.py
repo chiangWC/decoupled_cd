@@ -30,6 +30,14 @@ from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
 
+def trainable_parameter_count(model: torch.nn.Module) -> int:
+    return sum(
+        parameter.numel()
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    )
+
+
 def _reset_cuda_peak_memory_if_available(device: str) -> None:
     if not device.startswith("cuda") or not torch.cuda.is_available():
         return
@@ -1302,6 +1310,7 @@ def main() -> None:
         "num_students": train_bundle.num_students,
         "num_exercises": train_bundle.num_exercises,
         "num_concepts": train_bundle.num_concepts,
+        "parameter_count": trainable_parameter_count(model),
         "concept_dim": args.concept_dim,
         "dual_cdm_ensemble": args.dual_cdm_ensemble,
         "dual_cdm_secondary_concept_dim": args.dual_cdm_secondary_concept_dim,

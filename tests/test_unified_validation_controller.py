@@ -89,6 +89,7 @@ class UnifiedValidationControllerTests(unittest.TestCase):
                 "zero_auc": 0.60,
                 "ordinary_doa": 0.61,
                 "weighted_doa": 0.62,
+                "parameter_count": 100,
                 "recipe_index": 0,
                 "numerical_recipe": RECIPES[dataset_id][0].__dict__,
             }
@@ -120,13 +121,16 @@ class UnifiedValidationControllerTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def initialize(self) -> dict[str, object]:
+    def initialize(self, *, architecture: str = "a1") -> dict[str, object]:
+        completion = "lowrank" if architecture == "a1" else "prior"
+        self.manifest = UnifiedArchitectureSpec(completion=completion).manifest()
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
         return initialize_controller(
             state_dir=self.state_dir,
             repo_root=self.repo_root,
             cohort_path=self.cohort_path,
             manifest_path=self.manifest_path,
-            architecture="a1",
+            architecture=architecture,
             baseline_rows_path=self.baseline_path,
             data_root=self.data_root,
             artifact_root=self.artifact_root,
@@ -253,11 +257,13 @@ summary = {
     "capability_counter": binding["counter"],
     "capability_nonce": binding["nonce"],
     "seed": 42,
+    "split_seed": binding["split_seed"],
     "evaluation_input_role": "valid",
     "overall_auc": 0.71 if split_id == "standard" else 0.70,
     "zero_auc": 0.61,
     "ordinary_doa": 0.62,
     "weighted_doa": 0.63,
+    "parameter_count": 123,
     "mastery_shape": [2, 3],
     "final_loss": 0.4,
     "peak_gpu_memory_gb": 0.1,
@@ -277,7 +283,7 @@ status = {
     "status": "completed",
     "exit_code": 0,
     "invocation": {"command": child},
-    "parameters": {"seed": 42},
+    "parameters": {"seed": 42, "split_seed": 2024},
     "code": {"route_commit": route},
     "immutable_inputs": {
         "architecture_manifest": {**fingerprint(manifest_path), "architecture_fingerprint": binding["architecture_fingerprint"]},
@@ -304,6 +310,7 @@ print(attempt_dir)
         zero_auc: float = 0.61,
         ordinary_doa: float = 0.62,
         weighted_doa: float = 0.63,
+        architecture: str = "a1",
     ) -> dict[str, dict[str, object]]:
         state = json.loads((self.state_dir / "state.json").read_text())
         data_root = Path(state["data_root"])
@@ -311,7 +318,9 @@ print(attempt_dir)
 
         records: dict[str, dict[str, object]] = {}
         for split_id in ("standard", "holdout"):
-            attempt_dir = self.artifact_root / "a1" / dataset_id / split_id / "attempt-001"
+            split_root = self.artifact_root / architecture / dataset_id / split_id
+            attempt_number = len(list(split_root.glob("attempt-*"))) + 1
+            attempt_dir = split_root / f"attempt-{attempt_number:03d}"
             attempt_dir.mkdir(parents=True, exist_ok=True)
             record = consume_split_capability(
                 state_dir=self.state_dir,
@@ -319,7 +328,7 @@ print(attempt_dir)
                 token_path=token_path,
                 dataset_id=dataset_id,
                 split_id=split_id,
-                architecture="a1",
+                architecture=architecture,
                 data_root=data_root,
                 raw_output=Path("validation-summary.json"),
                 attempt_dir=attempt_dir,
@@ -330,7 +339,7 @@ print(attempt_dir)
                 "schema_version": 3,
                 "dataset_id": dataset_id,
                 "split_id": split_id,
-                "architecture": "a1",
+                "architecture": architecture,
                 "architecture_manifest": self.manifest,
                 "architecture_fingerprint": record["architecture_fingerprint"],
                 "cohort_sha256": self.cohort["cohort_sha256"],
@@ -339,6 +348,7 @@ print(attempt_dir)
                 "capability_counter": record["counter"],
                 "capability_nonce": capability["nonce"],
                 "seed": 42,
+                "split_seed": 2024,
                 "evaluation_input_role": "valid",
                 "overall_auc": (
                     standard_overall_auc
@@ -348,18 +358,22 @@ print(attempt_dir)
                 "zero_auc": zero_auc,
                 "ordinary_doa": ordinary_doa,
                 "weighted_doa": weighted_doa,
+                "parameter_count": 123,
                 "mastery_shape": [2, 3],
                 "final_loss": 0.4,
                 "peak_gpu_memory_gb": 0.1,
                 "recipe_index": record["recipe_index"],
-                "numerical_recipe": record["numerical_recipe"],
+                "numerical_recipe": (
+                    record["numerical_recipe"]
+                    or RECIPES[dataset_id][record["recipe_index"]].__dict__
+                ),
             }
             summary_path.write_text(json.dumps(summary), encoding="utf-8")
             status = {
                 "status": "completed",
                 "exit_code": 0,
                 "invocation": {"command": [f"unit-{split_id}"]},
-                "parameters": {"seed": 42},
+                "parameters": {"seed": 42, "split_seed": 2024},
                 "code": {"route_commit": record["route_commit"]},
                 "immutable_inputs": {
                     "architecture_manifest": {
@@ -832,6 +846,13 @@ print(attempt_dir)
         _, token = self.issue()
 
         self.assertEqual(token["dataset_id"], "ASSIST09")
+        self.assertEqual(token["split_seed"], 2024)
+        self.assertTrue(
+            all(
+                capability["split_seed"] == 2024
+                for capability in token["capabilities"].values()
+            )
+        )
         self.assertEqual(token["counter"], 1)
         self.assertEqual(set(token["capabilities"]), {"standard", "holdout"})
         self.assertNotIn("authorization_sha256", token)
@@ -863,6 +884,7 @@ print(attempt_dir)
         output_path = self.root / "forged-reservation.json"
         common = {
             "schema_version": 3,
+            "split_seed": 2024,
             "controller_id": state["controller_id"],
             "route_commit": state["route_commit"],
             "counter": 999,
@@ -956,6 +978,7 @@ print(attempt_dir)
         state = self.initialize()
         common = {
             "schema_version": 3,
+            "split_seed": 2024,
             "controller_id": state["controller_id"],
             "route_commit": state["route_commit"],
             "counter": 1,
@@ -980,6 +1003,7 @@ print(attempt_dir)
             ("route_commit", "f" * 40),
             ("counter", 999),
             ("dataset_id", "XES3G5M"),
+            ("split_seed", 7),
         ):
             forged = json.loads(json.dumps(valid))
             forged[field] = value
@@ -1606,6 +1630,28 @@ controller.authorize_next(
             self._advance_unit_launch()
         self.assertFalse(any((self.state_dir / "proofs").glob("*.json")))
 
+    def test_proof_rejects_different_parameter_counts_across_splits(self) -> None:
+        self.initialize()
+        token_path, token = self.issue()
+        records = self._prepare_pair_artifacts(
+            token_path, token, dataset_id="ASSIST09"
+        )
+        holdout = records["holdout"]
+        summary = dict(holdout["summary"])
+        summary["parameter_count"] = 124
+        summary_path = Path(holdout["summary_path"])
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+        status = holdout["status"]
+        status["output_hashes"]["validation-summary.json"] = {
+            "exists": True,
+            **self._fingerprint(summary_path),
+        }
+        Path(holdout["status_path"]).write_text(json.dumps(status), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "parameter counts differ"):
+            self._advance_unit_launch()
+        self.assertFalse(any((self.state_dir / "proofs").glob("*.json")))
+
     def test_status_attempt_path_mismatch_cannot_advance_progress(self) -> None:
         self.initialize()
         token_path, token = self.issue()
@@ -1637,6 +1683,22 @@ controller.authorize_next(
 
         with self.assertRaisesRegex(ValueError, "status route commit mismatch"):
             self._advance_unit_launch()
+
+    def test_outer_status_split_seed_mismatch_cannot_publish_proof(self) -> None:
+        self.initialize()
+        token_path, token = self.issue()
+        records = self._prepare_pair_artifacts(
+            token_path, token, dataset_id="ASSIST09"
+        )
+        status = records["standard"]["status"]
+        status["parameters"]["split_seed"] = 7
+        Path(records["standard"]["status_path"]).write_text(
+            json.dumps(status), encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(ValueError, "split seed"):
+            self._advance_unit_launch()
+        self.assertFalse(any((self.state_dir / "proofs").glob("*.json")))
 
     def test_outer_manifest_fingerprint_mismatch_cannot_advance(self) -> None:
         self.initialize()
@@ -1886,12 +1948,21 @@ controller.authorize_next(
             ),
             1,
         )
+        self.assertEqual(
+            controller_module._next_a0_recipe_index(
+                dataset_id="ASSIST17",
+                recipe_index=0,
+                overall_guard_passed=True,
+                eligible_candidates=2,
+            ),
+            1,
+        )
         self.assertIsNone(
             controller_module._next_a0_recipe_index(
                 dataset_id="ASSIST17",
                 recipe_index=0,
                 overall_guard_passed=True,
-                eligible_candidates=0,
+                eligible_candidates=3,
             )
         )
         self.assertEqual(
@@ -1910,6 +1981,74 @@ controller.authorize_next(
                 overall_guard_passed=False,
                 eligible_candidates=3,
             )
+        )
+
+    def test_a0_retries_when_guard_passes_but_cohort_is_short_then_exports_a1_recipe(self) -> None:
+        self.initialize(architecture="a0")
+        token_path, token = self.issue()
+        self._prepare_pair_artifacts(
+            token_path,
+            token,
+            dataset_id="ASSIST09",
+            architecture="a0",
+        )
+        self._advance_unit_launch()
+        token_path = self.root / "assist17-first.json"
+        token = authorize_next(
+            state_dir=self.state_dir,
+            repo_root=self.repo_root,
+            output_path=token_path,
+        )
+        self._prepare_pair_artifacts(
+            token_path,
+            token,
+            dataset_id="ASSIST17",
+            architecture="a0",
+        )
+        state = self._advance_unit_launch()
+        self.assertEqual(state["cursor"], 1)
+        self.assertEqual(state["recipe_indices"]["ASSIST17"], 1)
+
+        token_path = self.root / "assist17-fallback.json"
+        token = authorize_next(
+            state_dir=self.state_dir,
+            repo_root=self.repo_root,
+            output_path=token_path,
+        )
+        self._prepare_pair_artifacts(
+            token_path,
+            token,
+            dataset_id="ASSIST17",
+            architecture="a0",
+        )
+        state = self._advance_unit_launch()
+        selected = state["selected_recipes"]["ASSIST17"]
+        self.assertEqual(selected["recipe_index"], 1)
+        self.assertEqual(selected["numerical_recipe"], RECIPES["ASSIST17"][1].__dict__)
+
+        inherited_rows = json.loads(json.dumps(self.baseline_rows))
+        for row in inherited_rows:
+            exported = state["selected_recipes"].get(row["dataset_id"])
+            if exported is not None:
+                row.update(exported)
+        inherited_path = self.root / "a0-selected-baseline.json"
+        inherited_path.write_text(json.dumps({"rows": inherited_rows}), encoding="utf-8")
+        self.manifest = UnifiedArchitectureSpec(completion="lowrank").manifest()
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        a1_state = initialize_controller(
+            state_dir=self.root / "a1-controller",
+            repo_root=self.repo_root,
+            cohort_path=self.cohort_path,
+            manifest_path=self.manifest_path,
+            architecture="a1",
+            baseline_rows_path=inherited_path,
+            data_root=self.data_root,
+            artifact_root=self.root / "a1-artifacts",
+        )
+        self.assertEqual(a1_state["recipe_indices"]["ASSIST17"], 1)
+        self.assertEqual(
+            a1_state["registered_recipes"]["ASSIST17"],
+            RECIPES["ASSIST17"][1].__dict__,
         )
 
     def test_final_global_gate_requires_one_zero_delta_at_least_point_001(self) -> None:

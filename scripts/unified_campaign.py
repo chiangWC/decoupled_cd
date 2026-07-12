@@ -60,7 +60,11 @@ def _validated_rows(
         if not isinstance(source_row, Mapping):
             raise ValueError(f"{label} row {index} must be a JSON object")
         row = dict(source_row)
-        missing = [field for field in (*IDENTITY_FIELDS, *REQUIRED_METRICS) if field not in row]
+        missing = [
+            field
+            for field in (*IDENTITY_FIELDS, *REQUIRED_METRICS, "parameter_count")
+            if field not in row
+        ]
         if missing:
             raise ValueError(f"{label} row {index} is missing fields: {missing}")
 
@@ -83,6 +87,12 @@ def _validated_rows(
             raise ValueError(
                 f"{label} row {index} architecture_fingerprint must be "
                 "lowercase 64-hex SHA-256"
+            )
+        parameter_count = row["parameter_count"]
+        if type(parameter_count) is not int or parameter_count < 0:
+            raise ValueError(
+                f"{label} row {dataset_id} parameter_count must be a "
+                "nonnegative integer"
             )
 
         current_metric_fields = tuple(
@@ -206,22 +216,15 @@ def evaluate_candidate(
     weighted_deltas = [
         deltas[dataset_id]["weighted_doa"] for dataset_id in dataset_ids
     ]
-    parameter_counts = {
-        row["parameter_count"]
-        for row in candidate.values()
-        if "parameter_count" in row
-    }
-    if any(type(value) is not int or value < 0 for value in parameter_counts):
-        raise ValueError("candidate parameter_count must be a nonnegative integer")
-    if len(parameter_counts) > 1:
-        raise ValueError("candidate rows contain mixed parameter counts")
-    parameter_count = next(iter(parameter_counts), 0)
+    total_parameter_count = sum(
+        int(row["parameter_count"]) for row in candidate.values()
+    )
     ranking = {
         "mean_zero_auc_delta": math.fsum(zero_deltas) / len(zero_deltas),
         "worst_zero_auc_delta": min(zero_deltas),
         "mean_weighted_doa_delta": math.fsum(weighted_deltas)
         / len(weighted_deltas),
-        "negative_parameter_count": -float(parameter_count),
+        "negative_parameter_count": -float(total_parameter_count),
     }
     for name, value in ranking.items():
         if type(value) is not float or not math.isfinite(value):

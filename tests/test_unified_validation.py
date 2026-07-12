@@ -273,6 +273,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
             "mastery_shape": [3, 4],
             "final_loss": 0.4,
             "peak_gpu_memory_gb": 0.2,
+            "parameter_count": 123,
         }
         validate_smoke_summary(
             summary,
@@ -284,6 +285,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
             ("final_loss", float("nan")),
             ("architecture_fingerprint", "0" * 64),
             ("peak_gpu_memory_gb", None),
+            ("parameter_count", -1),
         ):
             broken = dict(summary)
             broken[field] = value
@@ -318,6 +320,9 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
                         "weighted_doa": 0.63,
                         "mastery_shape": [2, 3],
                         "final_loss": 0.4,
+                        "parameter_count": 321,
+                        "recipe_index": 0,
+                        "numerical_recipe": RECIPES[dataset_id][0].__dict__,
                     }
                 )
         rows = assemble_candidate_rows(
@@ -329,6 +334,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         self.assertEqual(rows[0]["standard_overall_auc"], 0.70)
         self.assertEqual(rows[0]["holdout_overall_auc"], 0.71)
         self.assertEqual(rows[0]["zero_auc"], 0.61)
+        self.assertEqual(rows[0]["parameter_count"], 321)
         mismatched = [dict(summary) for summary in summaries]
         mismatched[0]["cohort_sha256"] = "b" * 64
         with self.assertRaisesRegex(ValueError, "summary cohort SHA-256 mismatch"):
@@ -366,6 +372,9 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
             "weighted_doa": 0.6,
             "mastery_shape": [2, 3],
             "final_loss": 0.4,
+            "parameter_count": 321,
+            "recipe_index": 0,
+            "numerical_recipe": RECIPES["ASSIST09"][0].__dict__,
         }
         with self.assertRaisesRegex(ValueError, "version 3"):
             assemble_candidate_rows(

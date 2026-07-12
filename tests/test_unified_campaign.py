@@ -19,6 +19,7 @@ class UnifiedCampaignTests(unittest.TestCase):
         zero_deltas: tuple[float, ...] | None = None,
         ordinary_deltas: tuple[float, ...] | None = None,
         weighted_deltas: tuple[float, ...] | None = None,
+        parameter_count: int = 123,
     ) -> list[dict[str, object]]:
         zero_deltas = zero_deltas or (0.0,) * count
         ordinary_deltas = ordinary_deltas or (0.0,) * count
@@ -33,6 +34,7 @@ class UnifiedCampaignTests(unittest.TestCase):
                 "zero_auc": 0.7 + zero_deltas[index],
                 "ordinary_doa": 0.6 + ordinary_deltas[index],
                 "weighted_doa": 0.61 + weighted_deltas[index],
+                "parameter_count": parameter_count,
             }
             for index in range(count)
         ]
@@ -86,6 +88,21 @@ class UnifiedCampaignTests(unittest.TestCase):
         self.assertAlmostEqual(
             decision["ranking"]["mean_weighted_doa_delta"], -0.02
         )
+        self.assertEqual(decision["ranking"]["negative_parameter_count"], -369.0)
+
+    def test_parameter_count_is_required_and_must_be_a_nonnegative_integer(self) -> None:
+        baseline = self.rows(self.baseline_fingerprint, count=3)
+        candidate = self.rows(self.candidate_fingerprint, count=3)
+        candidate[0].pop("parameter_count")
+        with self.assertRaisesRegex(ValueError, "parameter_count"):
+            evaluate_candidate(baseline, candidate)
+        for invalid in (-1, 1.5, True):
+            candidate = self.rows(self.candidate_fingerprint, count=3)
+            candidate[0]["parameter_count"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                ValueError, "parameter_count"
+            ):
+                evaluate_candidate(baseline, candidate)
 
     def test_one_zero_auc_delta_must_reach_raw_point_zero_zero_one(self) -> None:
         baseline = self.rows(self.baseline_fingerprint, count=3)

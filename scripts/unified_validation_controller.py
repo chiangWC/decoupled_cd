@@ -359,9 +359,10 @@ def _load_state(state_dir: Path, repo_root: Path) -> dict[str, Any]:
     if (
         state.get("schema_version") != CONTROLLER_SCHEMA_VERSION
         or state.get("campaign_id") != CAMPAIGN_ID
+        or state.get("split_seed") != 2024
     ):
         raise ValueError(
-            "controller state schema/campaign is stale; initialize fresh state"
+            "controller state schema/campaign/split seed is stale; initialize fresh state"
         )
     registered_head = state.get("route_commit")
     actual_head = _route_head(repo_root.resolve())
@@ -645,6 +646,11 @@ def _validate_baseline_rows(
                 or not 0.0 <= value <= 1.0
             ):
                 raise ValueError(f"baseline {dataset_id}.{field} is invalid")
+        parameter_count = row.get("parameter_count")
+        if type(parameter_count) is not int or parameter_count < 0:
+            raise ValueError(
+                f"baseline {dataset_id}.parameter_count is invalid"
+            )
         normalized.append(dict(row))
     if len(fingerprints) != 1:
         raise ValueError("baseline rows have mixed architecture fingerprints")
@@ -761,6 +767,7 @@ def initialize_controller(
             "registered_recipes": registered_recipes,
             "selected_recipes": {},
             "zero_delta_threshold_seen": False,
+            "split_seed": 2024,
             "issuance_counter": 0,
             "active_pair": None,
             "pending_issuance": None,
@@ -859,6 +866,12 @@ def _verify_split_proof(
         raise ValueError(f"{split_id} outer attempt did not complete")
     if status.get("parameters", {}).get("seed") != 42:
         raise ValueError(f"{split_id} outer attempt seed must be 42")
+    if (
+        status.get("parameters", {}).get("split_seed") != 2024
+        or status.get("parameters", {}).get("split_seed")
+        != consumption.get("split_seed")
+    ):
+        raise ValueError(f"{split_id} outer attempt split seed must be 2024")
     if status.get("code", {}).get("route_commit") != state.get("route_commit"):
         raise ValueError(f"{split_id} outer status route commit mismatch")
     launch = state.get("launch")
@@ -956,6 +969,7 @@ def _verify_split_proof(
         or summary.get("capability_counter") != consumption.get("counter")
         or summary.get("capability_nonce") != consumption.get("nonce")
         or summary.get("seed") != 42
+        or summary.get("split_seed") != consumption.get("split_seed")
         or summary.get("evaluation_input_role") != "valid"
     ):
         raise ValueError(f"{split_id} validation summary binding mismatch")
@@ -975,6 +989,9 @@ def _verify_split_proof(
     )
     if mastery_loss_weight <= 0.0:
         raise ValueError(f"{split_id} mastery_loss_weight must be positive")
+    parameter_count = summary.get("parameter_count")
+    if type(parameter_count) is not int or parameter_count < 0:
+        raise ValueError(f"{split_id} parameter_count must be a nonnegative integer")
     if summary.get("recipe_index") != consumption.get("recipe_index"):
         raise ValueError(f"{split_id} numerical recipe index mismatch")
     expected_recipe = consumption.get("numerical_recipe")
@@ -995,6 +1012,7 @@ def _verify_split_proof(
                 "dataset_id",
                 "split_id",
                 "nonce",
+                "split_seed",
             )
         },
         "attempt_dir": str(attempt_dir),
@@ -1006,6 +1024,7 @@ def _verify_split_proof(
         "metrics": metrics,
         "recipe_index": summary["recipe_index"],
         "numerical_recipe": dict(numerical_recipe),
+        "parameter_count": parameter_count,
     }
 
 
@@ -1024,9 +1043,11 @@ def _next_a0_recipe_index(
     overall_guard_passed: bool,
     eligible_candidates: int,
 ) -> int | None:
-    if overall_guard_passed or recipe_index + 1 >= RECIPE_COUNTS[dataset_id]:
+    if recipe_index + 1 >= RECIPE_COUNTS[dataset_id]:
         return None
     if dataset_id == "XES3G5M" and eligible_candidates >= 3:
+        return None
+    if overall_guard_passed and eligible_candidates >= 3:
         return None
     return recipe_index + 1
 
@@ -1099,8 +1120,14 @@ def _advance_active_pair(
         != split_proofs["holdout"]["numerical_recipe"]
     ):
         raise ValueError("standard/holdout numerical recipes differ")
+    if (
+        split_proofs["standard"]["parameter_count"]
+        != split_proofs["holdout"]["parameter_count"]
+    ):
+        raise ValueError("standard/holdout parameter counts differ")
     proof: dict[str, Any] = {
         "schema_version": CONTROLLER_SCHEMA_VERSION,
+        "split_seed": state["split_seed"],
         "controller_id": state["controller_id"],
         "route_commit": state["route_commit"],
         "counter": active_pair["counter"],
@@ -1209,6 +1236,7 @@ def _validate_pending_token(
         raise ValueError("controller progress cannot validate pending issuance")
     common = {
         "schema_version": CONTROLLER_SCHEMA_VERSION,
+        "split_seed": state.get("split_seed"),
         "controller_id": state.get("controller_id"),
         "route_commit": state.get("route_commit"),
         "counter": int(state.get("issuance_counter", 0)) + 1,
@@ -1359,6 +1387,7 @@ def authorize_next(
             counter = int(state.get("issuance_counter", 0)) + 1
             common: dict[str, object] = {
                 "schema_version": CONTROLLER_SCHEMA_VERSION,
+                "split_seed": state["split_seed"],
                 "controller_id": state["controller_id"],
                 "route_commit": state["route_commit"],
                 "counter": counter,
@@ -1698,6 +1727,7 @@ def consume_split_capability(
         capability = dict(capability)
         expected_top = {
             "schema_version": CONTROLLER_SCHEMA_VERSION,
+            "split_seed": state.get("split_seed"),
             "controller_id": state.get("controller_id"),
             "route_commit": state.get("route_commit"),
             "counter": active_pair.get("counter"),
@@ -1788,6 +1818,7 @@ def consume_split_capability(
                 label="registered architecture manifest",
             ),
             "cohort_sha256": state["cohort_sha256"],
+            "split_seed": state["split_seed"],
             "recipe_index": state["recipe_indices"][dataset_id],
             "numerical_recipe": state["registered_recipes"].get(dataset_id),
             "attempt_dir": str(attempt_dir),

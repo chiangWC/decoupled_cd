@@ -559,6 +559,36 @@ class RemoteCampaignTests(unittest.TestCase):
         self.assertEqual(exit_code, 7)
         self.assertIn("sampler exploded", peak["last_error"])
 
+    def test_termination_signals_are_blocked_during_child_spawn(self) -> None:
+        process = mock.MagicMock()
+        process.pid = 123456
+        process.wait.return_value = 0
+        process.poll.return_value = 0
+
+        def spawn(*_args, **_kwargs):
+            current_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            self.assertIn(signal.SIGTERM, current_mask)
+            self.assertIn(signal.SIGINT, current_mask)
+            return process
+
+        with (
+            open(os.devnull, "w", encoding="utf-8") as sink,
+            mock.patch.object(RUNNER_MODULE.subprocess, "Popen", side_effect=spawn),
+            mock.patch.object(
+                RUNNER_MODULE,
+                "sample_gpu_process_memory",
+                return_value={"available": False, "devices": {}},
+            ),
+        ):
+            exit_code, _ = RUNNER_MODULE.run_with_gpu_sampling(
+                [sys.executable, "-c", "pass"],
+                cwd=self.repo,
+                env=os.environ.copy(),
+                stdout=sink,
+            )
+
+        self.assertEqual(exit_code, 0)
+
     def test_keyboard_interrupt_terminates_and_reaps_child_process(self) -> None:
         pid_path = self.root / "child.pid"
 
@@ -651,6 +681,72 @@ class RemoteCampaignTests(unittest.TestCase):
         finally:
             if process_is_active():
                 os.kill(grandchild_pid, signal.SIGKILL)
+
+    def test_sigterm_to_runner_forwards_to_nested_child_process_group(self) -> None:
+        grandchild_pid_path = self.root / "forwarded-grandchild.pid"
+        grandchild_code = (
+            "import os, signal, time; from pathlib import Path; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            f"Path({str(grandchild_pid_path)!r}).write_text(str(os.getpid())); "
+            "time.sleep(30)"
+        )
+        parent_code = (
+            "import subprocess, sys, time; "
+            f"subprocess.Popen([sys.executable, '-c', {grandchild_code!r}]); "
+            "time.sleep(30)"
+        )
+        argv = [
+            sys.executable,
+            str(RUNNER),
+            "--artifact-root",
+            str(self.artifact_root),
+            "--repo-root",
+            str(self.repo),
+            "--cwd",
+            str(self.repo),
+            "--dataset-file",
+            str(self.dataset),
+            "--",
+            sys.executable,
+            "-c",
+            parent_code,
+        ]
+        runner = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        grandchild_pid: int | None = None
+        try:
+            deadline = time.monotonic() + 5
+            while not grandchild_pid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(grandchild_pid_path.exists())
+            grandchild_pid = int(grandchild_pid_path.read_text(encoding="utf-8"))
+            os.kill(runner.pid, signal.SIGTERM)
+            runner.communicate(timeout=10)
+            self.assertNotEqual(runner.returncode, 0)
+            status = self.load_status("attempt-001")
+            self.assertEqual(status["status"], "failed")
+            self.assertNotEqual(status["exit_code"], 0)
+
+            deadline = time.monotonic() + 3
+            while Path(f"/proc/{grandchild_pid}/stat").exists() and time.monotonic() < deadline:
+                try:
+                    state = Path(f"/proc/{grandchild_pid}/stat").read_text().split()[2]
+                except (FileNotFoundError, IndexError):
+                    break
+                if state == "Z":
+                    break
+                time.sleep(0.01)
+            if Path(f"/proc/{grandchild_pid}/stat").exists():
+                state = Path(f"/proc/{grandchild_pid}/stat").read_text().split()[2]
+                self.assertEqual(state, "Z")
+        finally:
+            if runner.poll() is None:
+                runner.kill()
+                runner.wait()
+            if grandchild_pid is not None:
+                try:
+                    os.kill(grandchild_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
     def test_nonzero_child_exit_is_written_as_terminal_failure(self) -> None:
         completed = self.run_runner([sys.executable, "-c", "raise SystemExit(7)"])

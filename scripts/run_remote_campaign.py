@@ -30,6 +30,12 @@ class CampaignError(RuntimeError):
     """Raised when campaign preflight checks fail."""
 
 
+class ForwardedTermination(RuntimeError):
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        super().__init__(f"received signal {signum}")
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run one reproducible command in a new immutable campaign attempt directory."
@@ -533,17 +539,37 @@ def run_with_gpu_sampling(
     env: dict[str, str],
     stdout: Any,
 ) -> tuple[int, dict[str, Any]]:
-    process = subprocess.Popen(
-        command,
-        cwd=cwd,
-        env=env,
-        stdout=stdout,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
-    )
+    termination_signals = {signal.SIGTERM, signal.SIGINT}
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, termination_signals)
+    process: subprocess.Popen[Any] | None = None
     peak = empty_gpu_peak_record()
+    previous_handlers: dict[int, Any] = {}
+
+    def forward_signal(signum: int, _frame: Any) -> None:
+        assert process is not None
+        terminate_process_tree(process)
+        raise ForwardedTermination(signum)
+
     try:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdout=stdout,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        for signum in termination_signals:
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, forward_signal)
+    except BaseException:
+        if process is not None:
+            terminate_process_tree(process)
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        raise
+    try:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         while True:
             try:
                 sample = sample_gpu_process_memory(process.pid)
@@ -562,6 +588,9 @@ def run_with_gpu_sampling(
     except BaseException:
         terminate_process_tree(process)
         raise
+    finally:
+        for signum, previous_handler in previous_handlers.items():
+            signal.signal(signum, previous_handler)
 
 
 def reserve_attempt(artifact_root: Path) -> Path:
@@ -746,6 +775,10 @@ def execute(args: argparse.Namespace, runner_argv: Sequence[str]) -> int:
         exit_code = 130
         error = f"{type(exc).__name__}: command interrupted"
         gpu_peak_memory["reason"] = "command interrupted"
+    except ForwardedTermination as exc:
+        exit_code = 128 + exc.signum
+        error = f"{type(exc).__name__}: {exc}"
+        gpu_peak_memory["reason"] = "command terminated by forwarded signal"
     except Exception as exc:  # Ensure an allocated attempt always receives a terminal status.
         exit_code = 1
         error = f"{type(exc).__name__}: {exc}"
