@@ -873,6 +873,38 @@ class UnifiedComponentTests(unittest.TestCase):
         state.probs.sum().backward()
         self.assertTrue(torch.all(cognitive.grad > 0))
 
+    def test_stable_simplex_has_positive_extreme_derivative(self):
+        for dtype in (torch.float32, torch.float64):
+            model = ConditionalSimplexBehaviorModel(2, 2, 2).to(dtype=dtype)
+            with torch.no_grad():
+                model.out[-1].weight.zero_()
+                model.out[-1].bias.copy_(
+                    torch.tensor([1e4, 1e4, -1e4], dtype=dtype)
+                )
+            cognitive = torch.tensor(
+                [0.25], dtype=dtype, requires_grad=True
+            )
+            state = model(
+                cognitive,
+                torch.tensor([0]),
+                torch.tensor([0]),
+            )
+            derivative, = torch.autograd.grad(
+                state.probs.sum(), cognitive
+            )
+            self.assertGreaterEqual(
+                float(state.cognitive_weight),
+                2.0 ** -20,
+            )
+            self.assertLess(
+                float(state.guess_probs + state.slip_probs),
+                1.0,
+            )
+            torch.testing.assert_close(
+                derivative,
+                state.cognitive_weight,
+            )
+
     def test_behavior_boundary_logits_keep_guess_and_slip_below_one(self):
         behavior = ConditionalSimplexBehaviorModel(2, 3, dim=4)
         with torch.no_grad():

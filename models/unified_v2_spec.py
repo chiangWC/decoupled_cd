@@ -12,11 +12,15 @@ _FINGERPRINT_NOT_PROVIDED = object()
 @dataclass(frozen=True)
 class UnifiedArchitectureSpec:
     mastery_estimator: Literal["evidence-parameter"] = "evidence-parameter"
-    completion: Literal["prior", "lowrank"] = "prior"
+    completion: Literal[
+        "prior", "evidence-relational-graph"
+    ] = "prior"
     cognitive_decoder: Literal["neuralcdm-monotonic"] = "neuralcdm-monotonic"
-    behavior_model: Literal["conditional-simplex"] = "conditional-simplex"
+    behavior_model: Literal["conditional-simplex-floor-2m20"] = (
+        "conditional-simplex-floor-2m20"
+    )
     mastery_output: Literal["student-concept"] = "student-concept"
-    version: int = 3
+    version: int = 4
 
     def __post_init__(self) -> None:
         expected = {
@@ -30,7 +34,7 @@ class UnifiedArchitectureSpec:
             ),
             "behavior_model": (
                 self.behavior_model,
-                "conditional-simplex",
+                "conditional-simplex-floor-2m20",
             ),
             "mastery_output": (self.mastery_output, "student-concept"),
         }
@@ -39,11 +43,13 @@ class UnifiedArchitectureSpec:
                 raise ValueError(f"{name} must be {required!r}")
         if type(self.completion) is not str or self.completion not in {
             "prior",
-            "lowrank",
+            "evidence-relational-graph",
         }:
-            raise ValueError("completion must be 'prior' or 'lowrank'")
-        if type(self.version) is not int or self.version != 3:
-            raise ValueError("version must be integer 3")
+            raise ValueError(
+                "completion must be 'prior' or 'evidence-relational-graph'"
+            )
+        if type(self.version) is not int or self.version != 4:
+            raise ValueError("version must be integer 4")
 
     @classmethod
     def from_manifest(
@@ -54,9 +60,9 @@ class UnifiedArchitectureSpec:
     ) -> UnifiedArchitectureSpec:
         if type(manifest) is not dict:
             raise ValueError("architecture_manifest must be a JSON object")
-        if manifest.get("version") != 3:
+        if manifest.get("version") != 4:
             raise ValueError(
-                "invalid architecture_manifest: version 3 is required"
+                "invalid architecture_manifest: version 4 is required"
             )
         expected_keys = {
             "mastery_estimator",
@@ -121,7 +127,9 @@ class UnifiedArchitectureSpec:
         payload = asdict(self)
         payload["modules"] = {
             "prior": "m1-prior-m3-m4",
-            "lowrank": "m1-lowrank-m3-m4",
+            "evidence-relational-graph": (
+                "m1-evidence-relational-graph-m3-m4"
+            ),
         }[self.completion]
         return payload
 

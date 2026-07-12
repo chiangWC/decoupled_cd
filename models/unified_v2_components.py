@@ -365,6 +365,8 @@ class BehaviorState:
 
 
 class ConditionalSimplexBehaviorModel(nn.Module):
+    COGNITIVE_FLOOR = 2.0 ** -20
+
     def __init__(
         self,
         num_students: int,
@@ -397,18 +399,20 @@ class ConditionalSimplexBehaviorModel(nn.Module):
             ),
             dim=-1,
         )
-        guess, slip, weight = self.out(features).softmax(dim=-1).unbind(
-            dim=-1
-        )
-        probs = (
-            (1.0 - slip) * cognitive_probs
-            + guess * (1.0 - cognitive_probs)
-        )
+        logits = self.out(features)
+        raw_cognitive = logits.softmax(dim=-1)[..., 2]
+        cognitive_weight = self.COGNITIVE_FLOOR + (
+            1.0 - self.COGNITIVE_FLOOR
+        ) * raw_cognitive
+        behavior_mass = 1.0 - cognitive_weight
+        guess = behavior_mass * torch.sigmoid(logits[..., 0] - logits[..., 1])
+        slip = behavior_mass - guess
+        probs = guess + cognitive_weight * cognitive_probs
         return BehaviorState(
             probs=probs,
             guess_probs=guess,
             slip_probs=slip,
-            cognitive_weight=weight,
+            cognitive_weight=cognitive_weight,
         )
 
 
