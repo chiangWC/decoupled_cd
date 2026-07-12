@@ -37,7 +37,7 @@ ELIGIBLE_DATASET_IDS = (
 ASSET_READY_WITHOUT_EXACT_ZERO = ("NIPS34",)
 ARCHITECTURES = {
     "a0": ("prior", 0.0),
-    "a1": ("lowrank", 1.0),
+    "a1": ("evidence-relational-graph", 1.0),
 }
 
 
@@ -112,7 +112,7 @@ def _unified_training_flags(
 ) -> list[str]:
     completion_loss_weight = evidence_loss_weight * {
         "prior": ARCHITECTURES["a0"][1],
-        "lowrank": ARCHITECTURES["a1"][1],
+        "evidence-relational-graph": ARCHITECTURES["a1"][1],
     }[spec.completion]
     return [
         "--unified-completion",

@@ -21,6 +21,7 @@ IDENTITY_FIELDS = (
     "architecture_fingerprint",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+STABLE_GRAPH_DATASETS = frozenset({"MOOCRadar", "ASSIST17", "XES3G5M"})
 
 
 def _has_test_token(value: str) -> bool:
@@ -242,6 +243,51 @@ def evaluate_candidate(
         "gates": gates,
         "failed_gates": failed_gates,
         "pass": not failed_gates,
+    }
+
+
+def stable_graph_relative_gate(
+    deltas: Mapping[str, Mapping[str, object]],
+) -> dict[str, Any]:
+    """Evaluate the frozen A2-vs-A0v4 five-part validation gate."""
+    if not isinstance(deltas, Mapping) or set(deltas) != STABLE_GRAPH_DATASETS:
+        raise ValueError("relative deltas must contain the exact frozen dataset cohort")
+    normalized: dict[str, dict[str, float]] = {}
+    for dataset_id in sorted(STABLE_GRAPH_DATASETS):
+        row = deltas[dataset_id]
+        if not isinstance(row, Mapping) or set(row) != {
+            "standard",
+            "holdout",
+            "zero",
+        }:
+            raise ValueError(f"relative delta fields are invalid: {dataset_id}")
+        normalized_row: dict[str, float] = {}
+        for field in ("standard", "holdout", "zero"):
+            value = row[field]
+            if type(value) is not float or not math.isfinite(value):
+                raise ValueError(
+                    f"relative delta must be a finite float: {dataset_id}.{field}"
+                )
+            normalized_row[field] = value
+        normalized[dataset_id] = normalized_row
+
+    standard_nonregression = all(
+        row["standard"] >= 0.0 for row in normalized.values()
+    )
+    holdout_nonregression = all(
+        row["holdout"] >= 0.0 for row in normalized.values()
+    )
+    zero_wins = sum(row["zero"] > 0.0 for row in normalized.values())
+    margin = any(row["zero"] >= 0.001 for row in normalized.values())
+    overall = standard_nonregression and holdout_nonregression
+    return {
+        "passed": overall and zero_wins >= 2 and margin,
+        "overall_nonregression": overall,
+        "standard_nonregression": standard_nonregression,
+        "holdout_nonregression": holdout_nonregression,
+        "zero_wins": zero_wins,
+        "zero_delta_at_least_0.001": margin,
+        "deltas": normalized,
     }
 
 

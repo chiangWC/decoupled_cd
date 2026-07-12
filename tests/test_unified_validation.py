@@ -132,7 +132,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         self.assertNotIn("--unified-inference", command)
         self.assertNotIn("--unified-composer", command)
 
-    def test_lowrank_training_command_registers_positive_completion_loss(self):
+    def test_graph_training_command_registers_positive_completion_loss(self):
         command = build_train_command(
             dataset_id="ASSIST17",
             split_id="standard",
@@ -143,7 +143,8 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            command[command.index("--unified-completion") + 1], "lowrank"
+            command[command.index("--unified-completion") + 1],
+            "evidence-relational-graph",
         )
         self.assertEqual(
             command[command.index("--unified-completion-loss-weight") + 1],
@@ -151,9 +152,18 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
         )
         self.assertNotIn("--unified-mastery-loss-weight", command)
 
-    def test_runner_recognizes_only_a0_and_a1_version_3_completions(self):
-        self.assertEqual(ARCHITECTURES, {"a0": ("prior", 0.0), "a1": ("lowrank", 1.0)})
-        for architecture, completion in (("a0", "prior"), ("a1", "lowrank")):
+    def test_runner_recognizes_only_a0_and_a1_version_4_completions(self):
+        self.assertEqual(
+            ARCHITECTURES,
+            {
+                "a0": ("prior", 0.0),
+                "a1": ("evidence-relational-graph", 1.0),
+            },
+        )
+        for architecture, completion in (
+            ("a0", "prior"),
+            ("a1", "evidence-relational-graph"),
+        ):
             command = build_train_command(
                 dataset_id="ASSIST09",
                 split_id="standard",
@@ -163,7 +173,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
                 device="cpu",
             )
             self.assertEqual(command[command.index("--unified-completion") + 1], completion)
-            self.assertEqual(architecture_spec(architecture).manifest()["version"], 3)
+            self.assertEqual(architecture_spec(architecture).manifest()["version"], 4)
         for removed in ("b0", "m2", "m2-m3"):
             with self.subTest(architecture=removed), self.assertRaisesRegex(
                 ValueError, "unknown unified architecture"
@@ -435,7 +445,7 @@ class UnifiedValidationRunnerTests(unittest.TestCase):
             "recipe_index": 0,
             "numerical_recipe": RECIPES["ASSIST09"][0].__dict__,
         }
-        with self.assertRaisesRegex(ValueError, "version 3"):
+        with self.assertRaisesRegex(ValueError, "version 4"):
             assemble_candidate_rows(
                 [summary, {**summary, "split_id": "holdout"}],
                 cohort_dataset_ids=["ASSIST09"],

@@ -28,7 +28,7 @@ COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 NONCE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ARCHITECTURES = {
     "a0": ("prior", 0.0),
-    "a1": ("lowrank", 1.0),
+    "a1": ("evidence-relational-graph", 1.0),
 }
 CAMPAIGN_ID = "unified-mastery-20260712"
 CONTROLLER_SCHEMA_VERSION = 3

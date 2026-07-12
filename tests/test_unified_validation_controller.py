@@ -75,7 +75,9 @@ class UnifiedValidationControllerTests(unittest.TestCase):
         self.cohort_path.write_text(json.dumps(cohort), encoding="utf-8")
 
         self.manifest_path = self.root / "manifest.json"
-        self.manifest = UnifiedArchitectureSpec(completion="lowrank").manifest()
+        self.manifest = UnifiedArchitectureSpec(
+            completion="evidence-relational-graph"
+        ).manifest()
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
 
         self.baseline_path = self.root / "baseline.json"
@@ -127,7 +129,9 @@ class UnifiedValidationControllerTests(unittest.TestCase):
         architecture: str = "a1",
         cohort_expectations: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        completion = "lowrank" if architecture == "a1" else "prior"
+        completion = (
+            "evidence-relational-graph" if architecture == "a1" else "prior"
+        )
         self.manifest = UnifiedArchitectureSpec(completion=completion).manifest()
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
         return initialize_controller(
@@ -2440,7 +2444,9 @@ controller.authorize_next(
                 row.update(exported)
         inherited_path = self.root / "a0-selected-baseline.json"
         inherited_path.write_text(json.dumps({"rows": inherited_rows}), encoding="utf-8")
-        self.manifest = UnifiedArchitectureSpec(completion="lowrank").manifest()
+        self.manifest = UnifiedArchitectureSpec(
+            completion="evidence-relational-graph"
+        ).manifest()
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
         a1_state = initialize_controller(
             state_dir=self.root / "a1-controller",
