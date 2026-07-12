@@ -320,6 +320,62 @@ def _inverse_softplus(value: float) -> float:
     return math.log(math.expm1(value))
 
 
+@dataclass(frozen=True)
+class BehaviorState:
+    probs: torch.Tensor
+    guess_probs: torch.Tensor
+    slip_probs: torch.Tensor
+    cognitive_weight: torch.Tensor
+
+
+class ConditionalSimplexBehaviorModel(nn.Module):
+    def __init__(
+        self,
+        num_students: int,
+        num_exercises: int,
+        dim: int,
+    ) -> None:
+        super().__init__()
+        self.student_embedding = nn.Embedding(num_students, dim)
+        self.exercise_embedding = nn.Embedding(num_exercises, dim)
+        self.out = nn.Sequential(
+            nn.Linear(2 * dim, dim),
+            nn.ReLU(),
+            nn.Linear(dim, 3),
+        )
+        nn.init.zeros_(self.out[-1].weight)
+        nn.init.constant_(self.out[-1].bias, -2.0)
+        with torch.no_grad():
+            self.out[-1].bias[2] = 2.0
+
+    def forward(
+        self,
+        cognitive_probs: torch.Tensor,
+        student_ids: torch.Tensor,
+        exercise_ids: torch.Tensor,
+    ) -> BehaviorState:
+        features = torch.cat(
+            (
+                self.student_embedding(student_ids),
+                self.exercise_embedding(exercise_ids),
+            ),
+            dim=-1,
+        )
+        guess, slip, weight = self.out(features).softmax(dim=-1).unbind(
+            dim=-1
+        )
+        probs = (
+            (1.0 - slip) * cognitive_probs
+            + guess * (1.0 - cognitive_probs)
+        )
+        return BehaviorState(
+            probs=probs,
+            guess_probs=guess,
+            slip_probs=slip,
+            cognitive_weight=weight,
+        )
+
+
 class PositiveLinear(nn.Module):
     def __init__(
         self,
@@ -355,7 +411,7 @@ class MonotonicDiagnosisDecoder(nn.Module):
         dim: int,
     ) -> None:
         super().__init__()
-        self.mastery_head = nn.Linear(dim, 1)
+        del dim
         self.item_concept_difficulty = nn.Embedding(
             num_exercises, num_concepts
         )
@@ -412,17 +468,24 @@ class MonotonicDiagnosisDecoder(nn.Module):
 
     def forward(
         self,
-        state_map: torch.Tensor,
+        mastery: torch.Tensor,
         q_matrix: torch.Tensor,
         target_student_ids: torch.Tensor,
         target_exercise_ids: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        mastery_logits = self.mastery_head(state_map).squeeze(-1)
-        mastery = torch.sigmoid(mastery_logits)
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         target_mastery = mastery[target_student_ids]
+        q_vectors = q_matrix[target_exercise_ids]
         cognitive_probs = self.decode_from_mastery(
             target_mastery,
-            q_matrix[target_exercise_ids],
+            q_vectors,
             target_exercise_ids,
         )
-        return cognitive_probs, cognitive_probs, mastery
+        beta = torch.sigmoid(
+            self.item_concept_difficulty(target_exercise_ids)
+        )
+        q_weights = q_vectors / q_vectors.sum(
+            dim=1,
+            keepdim=True,
+        ).clamp_min(1.0)
+        difficulty = (q_weights * beta).sum(dim=1)
+        return cognitive_probs, difficulty

@@ -27,6 +27,10 @@ class DecoupledForwardOutput:
     mastery: torch.Tensor | None = None
     mastery_aux_logits: torch.Tensor | None = None
     source_weights: torch.Tensor | None = None
+    observed_mastery: torch.Tensor | None = None
+    completion_predictions: torch.Tensor | None = None
+    mastery_observed_mask: torch.Tensor | None = None
+    cognitive_weight: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)

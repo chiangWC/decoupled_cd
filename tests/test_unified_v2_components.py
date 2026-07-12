@@ -6,8 +6,10 @@ from unittest import mock
 import torch
 import torch.nn as nn
 
+from models.decoupled_cdm import DecoupledForwardOutput
 from models.unified_decoupled_cdm import UnifiedDecoupledCDM
 from models.unified_v2_components import (
+    ConditionalSimplexBehaviorModel,
     GlobalConceptPriorCompleter,
     ObservedMasteryEstimator,
     CoverageAwareStateComposer,
@@ -779,6 +781,109 @@ class UnifiedComponentTests(unittest.TestCase):
                 module.concept_prior[2].expand(2, -1),
             )
         )
+
+    def test_decoder_consumes_the_returned_unique_mastery(self):
+        decoder = MonotonicDiagnosisDecoder(
+            num_exercises=2,
+            num_concepts=3,
+            dim=8,
+        )
+        mastery = torch.tensor([[0.2, 0.4, 0.6]], requires_grad=True)
+        q = torch.tensor([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+
+        cognitive, _ = decoder(
+            mastery,
+            q,
+            torch.tensor([0]),
+            torch.tensor([0]),
+        )
+        cognitive.backward()
+
+        self.assertGreaterEqual(float(mastery.grad[0, 0]), -1e-8)
+        self.assertEqual(float(mastery.grad[0, 1]), 0.0)
+        self.assertGreaterEqual(float(mastery.grad[0, 2]), -1e-8)
+
+    def test_decoder_has_no_internal_mastery_head(self):
+        decoder = MonotonicDiagnosisDecoder(
+            num_exercises=2,
+            num_concepts=3,
+            dim=8,
+        )
+
+        self.assertFalse(
+            any("mastery_head" in name for name, _ in decoder.named_parameters())
+        )
+
+    def test_decoder_forward_ignores_non_q_mastery_perturbations(self):
+        decoder = MonotonicDiagnosisDecoder(
+            num_exercises=1,
+            num_concepts=3,
+            dim=4,
+        )
+        q = torch.tensor([[1.0, 1.0, 0.0]])
+        student_ids = torch.tensor([0])
+        exercise_ids = torch.tensor([0])
+
+        first, _ = decoder(
+            torch.tensor([[0.3, 0.7, 0.0]]),
+            q,
+            student_ids,
+            exercise_ids,
+        )
+        second, _ = decoder(
+            torch.tensor([[0.3, 0.7, 1.0]]),
+            q,
+            student_ids,
+            exercise_ids,
+        )
+
+        self.assertTrue(torch.equal(first, second))
+
+    def test_behavior_simplex_preserves_positive_cognitive_derivative(self):
+        behavior = ConditionalSimplexBehaviorModel(2, 3, dim=4)
+        cognitive = torch.tensor([0.2, 0.8], requires_grad=True)
+
+        state = behavior(
+            cognitive,
+            torch.tensor([0, 1]),
+            torch.tensor([1, 2]),
+        )
+
+        torch.testing.assert_close(
+            state.guess_probs + state.slip_probs + state.cognitive_weight,
+            torch.ones(2),
+            atol=1e-6,
+            rtol=0,
+        )
+        state.probs.sum().backward()
+        self.assertTrue(torch.all(cognitive.grad > 0))
+
+    def test_behavior_boundary_logits_keep_guess_and_slip_below_one(self):
+        behavior = ConditionalSimplexBehaviorModel(2, 3, dim=4)
+        with torch.no_grad():
+            behavior.out[-1].weight.zero_()
+            behavior.out[-1].bias.copy_(torch.tensor([5.0, 5.0, -5.0]))
+
+        state = behavior(
+            torch.tensor([0.0, 1.0]),
+            torch.tensor([0, 1]),
+            torch.tensor([1, 2]),
+        )
+
+        self.assertTrue(torch.all(state.guess_probs + state.slip_probs < 1.0))
+
+    def test_forward_output_exposes_optional_mastery_diagnostics(self):
+        fields = DecoupledForwardOutput.__dataclass_fields__
+
+        for name in (
+            "observed_mastery",
+            "completion_predictions",
+            "mastery_observed_mask",
+            "cognitive_weight",
+        ):
+            with self.subTest(field=name):
+                self.assertIn(name, fields)
+                self.assertIsNone(fields[name].default)
 
 
 if __name__ == "__main__":
