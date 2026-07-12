@@ -25,7 +25,7 @@ from scripts.unified_dataset_audit import canonical_sha256
 from scripts.unified_validation_controller import _route_head
 
 
-CAMPAIGN_ID = "unified-ergc-r4-20260712"
+CAMPAIGN_ID = "unified-ergc-r5-20260712"
 FROZEN_COHORT_SHA256 = (
     "6342dc8a5f73a4e03a1645780597b625c"
     "1480ba7a6513668b6766089cdd5b8a5"

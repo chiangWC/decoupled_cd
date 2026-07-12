@@ -159,15 +159,17 @@ def _validate_legacy_manifest(manifest: object, fingerprint: object) -> None:
 
 
 def _unified_training_flags(
-    spec: LegacyArchitectureIdentity | UnifiedArchitectureSpec,
+    architecture: str,
     *,
     evidence_loss_weight: float,
 ) -> list[str]:
-    completion_loss_weight = evidence_loss_weight * {
-        "prior": 0.0,
-        "lowrank": 1.0,
-        "evidence-relational-graph": 1.0,
-    }[spec.completion]
+    spec = architecture_spec(architecture)
+    if architecture in STABLE_ARCHITECTURES:
+        completion_loss_weight = STABLE_ARCHITECTURES[architecture][1]
+    else:
+        completion_loss_weight = (
+            evidence_loss_weight * ARCHITECTURES[architecture][1]
+        )
     return [
         "--unified-completion",
         spec.completion,
@@ -369,14 +371,13 @@ def _validate_generated_argv(command: Sequence[str]) -> None:
 
 
 def preflight_stable_smoke(*, architecture: str) -> dict[str, object]:
-    spec = architecture_spec(architecture)
     root = Path("/preflight/stable-smoke")
     command = [
         sys.executable,
         "scripts/train.py",
         "--model",
         "unified_v2",
-        *_unified_training_flags(spec, evidence_loss_weight=0.1),
+        *_unified_training_flags(architecture, evidence_loss_weight=0.1),
         "--train-interactions",
         str(root / "train.csv"),
         "--valid-interactions",
@@ -480,14 +481,13 @@ def build_train_command(
         data_root=data_root,
     )
     selected_recipe = recipe or RECIPES[dataset_id][0]
-    spec = architecture_spec(architecture)
     command = [
         sys.executable,
         "scripts/train.py",
         "--model",
         "unified_v2",
         *_unified_training_flags(
-            spec,
+            architecture,
             evidence_loss_weight=selected_recipe.mastery_loss_weight,
         ),
         "--train-interactions",
@@ -1041,14 +1041,13 @@ def _run_smoke(args: argparse.Namespace) -> None:
                 env = dict(os.environ)
                 if gpu_index is not None:
                     env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-                spec = architecture_spec(architecture)
                 command = [
                     sys.executable,
                     "scripts/train.py",
                     "--model",
                     "unified_v2",
                     *_unified_training_flags(
-                        spec,
+                        architecture,
                         evidence_loss_weight=0.1,
                     ),
                     "--train-interactions",

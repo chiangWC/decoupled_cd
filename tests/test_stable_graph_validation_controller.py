@@ -109,11 +109,35 @@ class StableGraphValidationControllerTests(unittest.TestCase):
         return audit
 
     def test_identity_recipes_and_fingerprints(self) -> None:
-        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r4-20260712")
+        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r5-20260712")
+        self.assertEqual(
+            controller.DEFAULT_CAMPAIGN_ROOT.name,
+            controller.CAMPAIGN_ID,
+        )
         self.assertEqual(controller.FROZEN_RECIPES, {"MOOCRadar": 2, "ASSIST17": 1, "XES3G5M": 0})
         self.assertEqual(controller.architecture_fingerprint("a0v4"), UnifiedArchitectureSpec(completion="prior").fingerprint())
         self.assertEqual(controller.architecture_fingerprint("a2"), UnifiedArchitectureSpec(completion="evidence-relational-graph").fingerprint())
         self.assertFalse(hasattr(controller, "issue_attempt"))
+
+    def test_stable_smoke_preflight_keeps_evidence_and_completion_weights_separate(self) -> None:
+        expected_completion_weights = {"a0v4": "0.0", "a2": "1.0"}
+        for architecture, expected_completion_weight in expected_completion_weights.items():
+            with self.subTest(architecture=architecture):
+                command = outer_runner.preflight_stable_smoke(
+                    architecture=architecture
+                )["command"]
+                self.assertEqual(
+                    command[
+                        command.index("--unified-evidence-loss-weight") + 1
+                    ],
+                    "0.1",
+                )
+                self.assertEqual(
+                    command[
+                        command.index("--unified-completion-loss-weight") + 1
+                    ],
+                    expected_completion_weight,
+                )
 
     def test_cli_has_plan_shape_and_no_caller_proofs_or_deltas(self) -> None:
         parser = controller.build_parser()
