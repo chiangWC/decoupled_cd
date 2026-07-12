@@ -1,0 +1,55 @@
+# Unified Mastery 失败登记（A1，2026-07-12）
+
+## 冻结结论
+
+A1 相对 A0 的候选门失败，`test` 保持关闭。本登记只诊断 Task 8 注册的低秩 missing-mastery completer；没有启动数值调参、外部门、第二个替换模块或真实测试。
+
+## 三数据集冻结证据
+
+| Dataset | A1 std/hold/zero AUC | Δ vs A0 std/hold/zero | Δ vs audited external std/hold/zero | ordinary/weighted DOA | Recipe/proof |
+|---|---|---|---|---|---|
+| MOOCRadar | 0.9237381615694075 / 0.9207740355531081 / 0.9319816652749389 | -0.0003049148639236998 / -0.0014195154951669453 / -0.0006994812862632926 | -0.0059036502704337135 / -0.004168092697416692 / -0.0012955591178283044 | 0.5247008544427902 / 0.6647645004684439 | r2 / `01dd5e79...` |
+| ASSIST17 | 0.7772810133205648 / 0.7771050187131403 / 0.7790516387954539 | 0.0022809629178004442 / 0.0003449112774648322 / 0.0017363756363880656 | -0.007139198095423072 / -0.007012527345769515 / -0.002996664331784693 | 0.679439145816845 / 0.6774372281073252 | r1 / `9395ce45...` |
+| XES3G5M | 0.7744117095426273 / 0.7690837575240221 / 0.7658099393382194 | -0.004287354613667804 / -0.0011226916175651747 / -0.0034803057119332514 | -0.015043131434353985 / -0.011913832937965774 / -0.011004759754278837 | 0.49826839826839825 / 0.7358490566037735 | r0 / `00affc12...` |
+
+外部差值只从 Task 5 audit SHA `071b5df25d8641fdc249a9a56175961025b3deeba36a4a471640563ef5d0b181` 的 `strongest_comparators` 动态读取，用于失败诊断，没有运行或伪造 `final-external-gate.json`。MOO 三项 comparator 均为 SVGCD；ASSIST17 和 XES 三项均为 ORCDF。六个 validation 均为 `attempt-001/exit 0`；GPU UUID/peak 与完整 raw proof SHA 见 A1 主报告。
+
+## F-A1-001
+
+`failure_id` -> `F-A1-001`
+
+`failed dataset/split` -> `MOOCRadar/standard overall AUC`、`MOOCRadar/holdout overall AUC`、`MOOCRadar/holdout exact-zero AUC`
+
+`exact double-precision delta` -> `-0.0003049148639236998`、`-0.0014195154951669453`、`-0.0006994812862632926`
+
+`responsible module` -> A1 低秩 missing-mastery completer（rank `32`，observed-cell completion loss weight `0.1`）；其余 estimator、monotonic decoder、conditional-simplex behavior module 与 A0 相同。
+
+`mechanism hypothesis` -> 仅用已测单元重构目标训练的自由 student/concept 因子，在 MOOCRadar 的高维 `concept_dim=256` 条件下可改善普通 DOA，却没有把可迁移结构约束到未测单元；新增自由度轻微扰动了整体排序并降低 exact-zero 泛化。
+
+`literature retrieval question` -> 在认知诊断或稀疏二元矩阵补全中，哪些带结构先验、置信度校准或 inductive cold-start 约束的 mastery completer，能在不降低 observed/overall AUC 的前提下改善完全未观测 student-concept 单元？
+
+`variable mapping` -> student=`student_factors/student_bias`；concept=`concept_factors/concept_bias`；观测指示=`mastery_observed_mask`；监督统计=`attempts/correct`；目标=`(correct+1)/(attempts+2)`；未测输出=`completion_predictions[~mastery_observed_mask]`；整体保护量=`standard_overall_auc, holdout_overall_auc`；冷启动量=`zero_auc`。
+
+`replacement module input/output` -> 输入仍为 train-only student-concept evidence、observed mask 与可审计 concept structure；输出仍为 `[num_students, num_concepts]` 的 mastery 概率，只在 missing mask 上进入唯一 mastery。候选替换应是一个完整的结构约束/inductive completer，不改 decoder 或行为模块。
+
+`acceptance gate` -> 同一冻结 cohort、seed `42`、split seed `2024`、双 validation 协议下：三个数据集 standard/holdout overall AUC 均不回退；至少 2/3 数据集 zero AUC 严格提升；至少一项 zero delta `>=0.001`；随后才允许执行 Task 5 strongest-comparator 外部门。
+
+## F-A1-002
+
+`failure_id` -> `F-A1-002`
+
+`failed dataset/split` -> `XES3G5M/standard overall AUC`、`XES3G5M/holdout overall AUC`、`XES3G5M/holdout exact-zero AUC`
+
+`exact double-precision delta` -> `-0.004287354613667804`、`-0.0011226916175651747`、`-0.0034803057119332514`
+
+`responsible module` -> A1 低秩 missing-mastery completer（rank `32`，observed-cell completion loss weight `0.1`），不是 XES 的未注册 r1 fallback；本次严格继承 proof-ranked XES r0。
+
+`mechanism hypothesis` -> XES 上 ordinary DOA 增加 `0.04242424242424242`，但 weighted DOA 降低 `0.009433962264150941`，表明自由低秩补全可能改善少数概念的次序一致性，同时在交互权重较大的概念和 overall 排序上产生系统性偏移；observed-cell 重构并不足以标识 missing-cell mastery。
+
+`literature retrieval question` -> 哪些 weighted-risk-aware、graph-regularized 或 hierarchical Bayesian mastery completion 机制能把 observed-cell 证据外推到完全未测概念，并显式保护高频概念的加权排序与 overall AUC？
+
+`variable mapping` -> 学生覆盖度=`attempt count per student-concept`；概念权重=`weighted DOA support/interaction frequency`；低秩表示=`student_factors @ concept_factors.T + biases`；训练目标=`masked_completion_loss on observed cells`；缺失预测=`hard missing-only assembly`；失败观测=`overall/zero/weighted-DOA deltas`。
+
+`replacement module input/output` -> 输入保持 train-only evidence、mask、student/concept identity 和预注册结构先验；输出保持完整 `[S,K]` mastery 概率及可审计置信度，不允许读取 validation target 或真实 test。整体替换 completer，接口不扩散到 estimator/decoder/behavior modules。
+
+`acceptance gate` -> 与 F-A1-001 相同的全局候选门；任何单个 standard 或 holdout overall 回退都失败。通过相对 A0 门后，才可从 Task 5 audited `strongest_comparators` 动态重建外部门，禁止手抄阈值。
