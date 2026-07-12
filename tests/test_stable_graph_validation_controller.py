@@ -109,7 +109,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
         return audit
 
     def test_identity_recipes_and_fingerprints(self) -> None:
-        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r2-20260712")
+        self.assertEqual(controller.CAMPAIGN_ID, "unified-ergc-r3-20260712")
         self.assertEqual(controller.FROZEN_RECIPES, {"MOOCRadar": 2, "ASSIST17": 1, "XES3G5M": 0})
         self.assertEqual(controller.architecture_fingerprint("a0v4"), UnifiedArchitectureSpec(completion="prior").fingerprint())
         self.assertEqual(controller.architecture_fingerprint("a2"), UnifiedArchitectureSpec(completion="evidence-relational-graph").fingerprint())
@@ -118,7 +118,7 @@ class StableGraphValidationControllerTests(unittest.TestCase):
     def test_cli_has_plan_shape_and_no_caller_proofs_or_deltas(self) -> None:
         parser = controller.build_parser()
         commands = next(action.choices for action in parser._actions if getattr(action, "choices", None))
-        self.assertEqual(set(commands), {"smoke", "run-validation", "replay", "freeze-a0v4", "relative-gate", "external-gate", "run-test-once", "status"})
+        self.assertEqual(set(commands), {"preflight", "smoke", "run-validation", "replay", "freeze-a0v4", "relative-gate", "external-gate", "run-test-once", "status"})
         for argv in (
             ["replay", "--architecture", "a2", "--proof", "/tmp/forged"],
             ["freeze-a0v4", "--proof", "/tmp/forged"],
@@ -159,6 +159,37 @@ class StableGraphValidationControllerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "smoke.*already"):
                 controller.execute(["smoke", "--architecture", "a2"], dependencies=deps)
 
+    def test_preflight_source_failure_does_not_issue_durable_attempt(self) -> None:
+        failures = (
+            FileNotFoundError("frozen source missing"),
+            ValueError("frozen source SHA-256 mismatch"),
+        )
+        for failure in failures:
+            with self.subTest(failure=str(failure)), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary) / controller.CAMPAIGN_ID
+                root.mkdir()
+                deps = self.dependencies(root, self.validation_runner())
+
+                with mock.patch.object(
+                    controller,
+                    "_preflight_attempt",
+                    side_effect=failure,
+                ):
+                    with self.assertRaisesRegex(type(failure), str(failure)):
+                        controller.execute(
+                            [
+                                "run-validation",
+                                "--architecture",
+                                "a0v4",
+                                "--dataset",
+                                "ASSIST17",
+                            ],
+                            dependencies=deps,
+                        )
+
+                self.assertFalse((root / "issuance-ledger.json").exists())
+                self.assertEqual(list((root / "attempts").iterdir()), [])
+
     def test_existing_outer_runner_accepts_separate_stable_commands(self) -> None:
         smoke = outer_runner.parse_args([
             "smoke", "--architecture", "a2", "--devices", "gpu",
@@ -178,6 +209,26 @@ class StableGraphValidationControllerTests(unittest.TestCase):
             "--split-seed", "2024", "--output", "/tmp/test.json",
         ])
         self.assertEqual(test_once.architecture, "a2")
+
+    def test_production_preflight_resolves_all_frozen_validation_sources(self) -> None:
+        self.assertTrue(
+            hasattr(outer_runner, "preflight_stable_validation"),
+            "stable runner must expose immutable validation preflight",
+        )
+        for dataset in controller.FROZEN_RECIPES:
+            with self.subTest(dataset=dataset):
+                records = outer_runner.preflight_stable_validation(
+                    architecture="a0v4",
+                    dataset_id=dataset,
+                    recipe_index=controller.FROZEN_RECIPES[dataset],
+                )
+                self.assertEqual(
+                    {record["split_id"] for record in records},
+                    {"standard", "holdout"},
+                )
+                self.assertTrue(
+                    all(record["files"] for record in records)
+                )
 
     def test_concurrent_issuance_is_contiguous_and_unique(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

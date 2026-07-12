@@ -6,6 +6,7 @@ import math
 import sys
 from pathlib import Path
 from datetime import datetime, UTC
+from typing import Sequence
 
 import pandas as pd
 import torch
@@ -52,8 +53,8 @@ def _max_cuda_memory_allocated_gb(device: str) -> float | None:
     return torch.cuda.max_memory_allocated() / (1024**3)
 
 
-def parse_args() -> argparse.Namespace:
-    raw_argv = sys.argv[1:]
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(
         description="Train the minimal decoupled CDM pipeline.",
         allow_abbrev=False,

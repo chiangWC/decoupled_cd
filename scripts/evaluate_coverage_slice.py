@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import pandas as pd
 
@@ -23,7 +23,7 @@ from scripts.evaluate_history_hiding_stress import (
 from utils import compute_metrics, resolve_device, write_json
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate checkpoint metrics by target train-history concept coverage slices."
     )
@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Exclusive CSV output for row-ordered labels/probabilities; requires one summary.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.model_name is not None and len(args.model_name) != len(args.summary):
         raise ValueError("--model-name must be repeated the same number of times as --summary.")
     if args.prediction_output is not None and len(args.summary) != 1:

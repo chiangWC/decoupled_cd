@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import csv
 import fcntl
+import hashlib
 import json
 import math
 import os
+import stat
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +48,33 @@ STABLE_ARCHITECTURES = {
 }
 RUNNER_ARCHITECTURES = {**ARCHITECTURES, **STABLE_ARCHITECTURES}
 STABLE_FROZEN_RECIPES = {"MOOCRadar": 2, "ASSIST17": 1, "XES3G5M": 0}
+FROZEN_VALIDATION_DATA_ROOT = Path(
+    "/home/xph/jwc/research/local_data/decoupled_cd_codex_routes/"
+    "unified-mastery-20260712/controllers/a0-controller/data"
+)
+FROZEN_VALIDATION_FILES = {
+    "assist_17/train.csv": ("c42ddeff9605896395b6e413b0583a0a71ac31f0895faecd7457cfac483ad899", 3801552),
+    "assist_17/valid.csv": ("3065f9edbd33609a5e00e80503dc55e696d721497e4350805fb8897a667e8780", 411215),
+    "assist_17/Q_matrix.csv": ("23a59ec57c3b454d2d3fece3760aa91ec65a297e357766265466591b5bb0f9e3", 28938),
+    "assist_17_chold_v2/train.csv": ("e3c281f01d2fedaafa289c6d950c6ae64c48e2d2d3b2f6a69bd28e88a3ef236b", 3662694),
+    "assist_17_chold_v2/valid.csv": ("07b74bcfcd2c28693469d9eedddbe8b8d0fcc89d4659b079d75198886267fe70", 531157),
+    "assist_17_chold_v2/Q_matrix.csv": ("23a59ec57c3b454d2d3fece3760aa91ec65a297e357766265466591b5bb0f9e3", 28938),
+    "assist_17_chold_v2/student_concept_holdout_assignments.csv": ("ed88754b25dd797fc768801bc5f18b54c9d9ac4abc2eb4f9f73f31d0469435c6", 80536),
+    "moocradar/train.csv": ("43826e307ea3307bb9f39c88dcec84dcf07e79ac87a67729f5221918d0619998", 5939748),
+    "moocradar/valid.csv": ("1a180c21af134a1a88b88038d2b3e9a986f92d1e1ba51cede3f535bc02dceae9", 744558),
+    "moocradar/Q_matrix.csv": ("b2526274cf733d0170028037b727c682eb81366804dc0f72703699fb90aaf8af", 12893),
+    "moocradar_chold_v2/train.csv": ("a60037cffe8378f63e38a0b96dc79bc0ec8396abc2af620a513a11f1d5882f89", 5142346),
+    "moocradar_chold_v2/valid.csv": ("53739593a1b0ca3ee33da267409acd2d26d35b7663b780a58b96b65bb915e60b", 762379),
+    "moocradar_chold_v2/Q_matrix.csv": ("b2526274cf733d0170028037b727c682eb81366804dc0f72703699fb90aaf8af", 12893),
+    "moocradar_chold_v2/student_concept_holdout_assignments.csv": ("15db288a2a00b76b49fe296a6cefd215fbc3958a4f38278c63bb6ad162f5ead3", 189041),
+    "xes3g5m/train.csv": ("27d0f8715176f83040048498f345ca1ca3af9a1dbaef9ea3083d1821f6621740", 2320422),
+    "xes3g5m/valid.csv": ("59b1a462dd1853a20941164ca48661920d918972ff1a5eabde54d6e1701ceb2f", 290071),
+    "xes3g5m/Q_matrix.csv": ("13965c21cc2728281df235877805fcbf137bf851a4f9e232de6ec14620546df7", 12910),
+    "xes3g5m_chold_v2/train.csv": ("6016884a69ba395650313668a6d3d511f5778160bfa94335e7ca2e6c3d7f0c1f", 2023758),
+    "xes3g5m_chold_v2/valid.csv": ("104b637649d3a8c1d82d4ddd5171b2cbbd7e61754e8c480c0405fb2f3514357f", 292243),
+    "xes3g5m_chold_v2/Q_matrix.csv": ("13965c21cc2728281df235877805fcbf137bf851a4f9e232de6ec14620546df7", 12910),
+    "xes3g5m_chold_v2/student_concept_holdout_assignments.csv": ("b641a9662de94866427c7aacbec6093d06096c767b9154e8d69912a03e3dbac8", 120269),
+}
 
 
 @dataclass(frozen=True)
@@ -282,6 +311,157 @@ def _split_paths(
         else None
     )
     return train_path, valid_path, q_matrix_path, assignments
+
+
+def _validated_frozen_file(path: Path, *, data_root: Path) -> dict[str, object]:
+    try:
+        relative = path.relative_to(data_root).as_posix()
+        expected_sha256, expected_size = FROZEN_VALIDATION_FILES[relative]
+    except (KeyError, ValueError) as error:
+        raise ValueError(f"unregistered frozen validation source: {path}") from error
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise FileNotFoundError(f"cannot read frozen validation source: {path}") from error
+    with os.fdopen(descriptor, "rb") as handle:
+        before = os.fstat(handle.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_size != expected_size:
+            raise ValueError(f"frozen validation source size mismatch: {path}")
+        digest = hashlib.sha256()
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+        after = os.fstat(handle.fileno())
+    if (before.st_dev, before.st_ino, before.st_size) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+    ):
+        raise ValueError(f"frozen validation source changed during hashing: {path}")
+    if digest.hexdigest() != expected_sha256:
+        raise ValueError(f"frozen validation source SHA-256 mismatch: {path}")
+    return {
+        "path": str(path),
+        "relative_path": relative,
+        "size_bytes": expected_size,
+        "sha256": expected_sha256,
+    }
+
+
+def _validate_generated_argv(command: Sequence[str]) -> None:
+    script = Path(command[1]).name
+    argv = list(command[2:])
+    if script == "train.py":
+        from scripts import train as train_script
+
+        parsed = train_script.parse_args(argv)
+        train_script.validate_model_args(parsed)
+    elif script == "evaluate_coverage_slice.py":
+        from scripts import evaluate_coverage_slice
+
+        evaluate_coverage_slice.parse_args(argv)
+    elif script == "evaluate_doa.py":
+        from scripts import evaluate_doa
+
+        evaluate_doa.parse_args(argv)
+    else:
+        raise ValueError(f"unregistered stable command parser: {script}")
+
+
+def preflight_stable_smoke(*, architecture: str) -> dict[str, object]:
+    spec = architecture_spec(architecture)
+    root = Path("/preflight/stable-smoke")
+    command = [
+        sys.executable,
+        "scripts/train.py",
+        "--model",
+        "unified_v2",
+        *_unified_training_flags(spec, evidence_loss_weight=0.1),
+        "--train-interactions",
+        str(root / "train.csv"),
+        "--valid-interactions",
+        str(root / "valid.csv"),
+        "--test-interactions",
+        str(root / "valid.csv"),
+        "--q-matrix",
+        str(root / "Q_matrix.csv"),
+        "--concept-dim",
+        "4",
+        "--epochs",
+        "1",
+        "--early-stop-patience",
+        "1",
+        "--seed",
+        "42",
+        "--device",
+        "cuda:0",
+        "--log-dir",
+        str(root / "logs"),
+        "--output",
+        str(root / "summary.json"),
+    ]
+    _validate_generated_argv(command)
+    return {"architecture": architecture, "command": command}
+
+
+def preflight_stable_validation(
+    *, architecture: str, dataset_id: str, recipe_index: int
+) -> list[dict[str, object]]:
+    if dataset_id not in STABLE_FROZEN_RECIPES:
+        raise ValueError(f"dataset is outside stable frozen cohort: {dataset_id}")
+    if recipe_index != STABLE_FROZEN_RECIPES[dataset_id]:
+        raise ValueError("stable preflight recipe differs from frozen recipe")
+    recipe = RECIPES[dataset_id][recipe_index]
+    records: list[dict[str, object]] = []
+    for split_id in ("standard", "holdout"):
+        train_path, valid_path, q_matrix_path, assignments = _split_paths(
+            dataset_id=dataset_id,
+            split_id=split_id,
+            data_root=FROZEN_VALIDATION_DATA_ROOT,
+        )
+        paths = [train_path, valid_path, q_matrix_path]
+        if assignments is not None:
+            paths.append(assignments)
+        files = [
+            _validated_frozen_file(path, data_root=FROZEN_VALIDATION_DATA_ROOT)
+            for path in paths
+        ]
+        output_root = Path("/preflight/stable-validation") / dataset_id / split_id
+        train_command = build_train_command(
+            dataset_id=dataset_id,
+            split_id=split_id,
+            architecture=architecture,
+            data_root=FROZEN_VALIDATION_DATA_ROOT,
+            output=output_root / "train-summary.json",
+            device="cuda:0",
+            recipe=recipe,
+        )
+        coverage_command, doa_command = build_evaluation_commands(
+            dataset_id=dataset_id,
+            split_id=split_id,
+            architecture=architecture,
+            data_root=FROZEN_VALIDATION_DATA_ROOT,
+            train_summary_path=output_root / "train-summary.json",
+            coverage_path=output_root / "coverage-valid.json",
+            doa_path=output_root / "doa-valid.json",
+            device="cuda:0",
+        )
+        for command in (train_command, coverage_command, doa_command):
+            _validate_generated_argv(command)
+        records.append(
+            {
+                "dataset_id": dataset_id,
+                "split_id": split_id,
+                "recipe_index": recipe_index,
+                "files": files,
+                "commands": {
+                    "train": train_command,
+                    "coverage": coverage_command,
+                    "doa": doa_command,
+                },
+            }
+        )
+    return records
 
 
 def build_train_command(
@@ -1233,7 +1413,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     stable_validation.add_argument("--split-seed", type=int, choices=(2024,), default=2024)
     stable_validation.add_argument("--cohort-sha256", required=True)
     stable_validation.add_argument("--architecture-fingerprint", required=True)
-    stable_validation.add_argument("--data-root", type=Path, default=PROJECT_ROOT / "data")
+    stable_validation.add_argument(
+        "--data-root", type=Path, default=FROZEN_VALIDATION_DATA_ROOT
+    )
     stable_validation.add_argument("--output", type=Path, required=True)
     stable_validation.set_defaults(handler=_run_stable_validation)
 
@@ -1241,7 +1423,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     stable_test.add_argument("--architecture", choices=("a2",), required=True)
     stable_test.add_argument("--seed", type=int, choices=(42,), default=42)
     stable_test.add_argument("--split-seed", type=int, choices=(2024,), default=2024)
-    stable_test.add_argument("--data-root", type=Path, default=PROJECT_ROOT / "data")
+    stable_test.add_argument(
+        "--data-root", type=Path, default=FROZEN_VALIDATION_DATA_ROOT
+    )
     stable_test.add_argument("--output", type=Path, required=True)
     stable_test.set_defaults(handler=_run_stable_test)
 

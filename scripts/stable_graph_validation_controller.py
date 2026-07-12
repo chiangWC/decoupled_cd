@@ -18,12 +18,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from models.unified_v2_spec import UnifiedArchitectureSpec
+from scripts import run_unified_validation as runner_module
 from scripts.unified_campaign import stable_graph_relative_gate
 from scripts.unified_dataset_audit import canonical_sha256
 from scripts.unified_validation_controller import _route_head
 
 
-CAMPAIGN_ID = "unified-ergc-r2-20260712"
+CAMPAIGN_ID = "unified-ergc-r3-20260712"
 FROZEN_COHORT_SHA256 = (
     "6342dc8a5f73a4e03a1645780597b625c"
     "1480ba7a6513668b6766089cdd5b8a5"
@@ -458,6 +459,11 @@ class CampaignDependencies:
         root = campaign_root.absolute()
         if root.name != CAMPAIGN_ID:
             raise ValueError("exact campaign root name is required")
+        if (
+            _authority is _TEST_AUTHORITY
+            and root == DEFAULT_CAMPAIGN_ROOT.absolute()
+        ):
+            raise ValueError("test dependencies cannot use the production campaign root")
         resolved_root = root.resolve(strict=True)
         production_resolved = DEFAULT_CAMPAIGN_ROOT.resolve(strict=False)
         if _authority is _TEST_AUTHORITY and resolved_root == production_resolved:
@@ -637,6 +643,7 @@ def _runner_argv(kind: str, architecture: str, attempt_dir: Path, dataset: str |
             "--recipe-index", str(FROZEN_RECIPES[dataset]), "--seed", "42", "--split-seed", "2024",
             "--cohort-sha256", FROZEN_COHORT_SHA256,
             "--architecture-fingerprint", architecture_fingerprint(architecture),
+            "--data-root", str(runner_module.FROZEN_VALIDATION_DATA_ROOT),
         ]
     elif kind == "test":
         command += ["stable-test", "--architecture", "a2", "--seed", "42", "--split-seed", "2024"]
@@ -1082,6 +1089,12 @@ def _run_registered(dependencies: CampaignDependencies, *, kind: str, architectu
             raise ValueError(f"smoke for {architecture} has already been issued")
         if kind == "validation" and any(row["kind"] == kind and row["architecture"] == architecture and row.get("dataset_id") == dataset for row in entries):
             raise ValueError("validation attempt has already been issued")
+        _preflight_attempt(
+            dependencies,
+            kind=kind,
+            architecture=architecture,
+            dataset=dataset,
+        )
         counter = len(entries) + 1
         nonce = secrets.token_hex(32)
         attempt_name = f"attempt-{counter:03d}"
@@ -1142,6 +1155,37 @@ def _run_registered(dependencies: CampaignDependencies, *, kind: str, architectu
     return proof
 
 
+def _preflight_attempt(
+    dependencies: CampaignDependencies,
+    *,
+    kind: str,
+    architecture: str,
+    dataset: str | None,
+) -> dict[str, object]:
+    if dependencies.test_only:
+        return {"test_only": True}
+    smoke = runner_module.preflight_stable_smoke(architecture=architecture)
+    validations = {
+        dataset_id: runner_module.preflight_stable_validation(
+            architecture=architecture,
+            dataset_id=dataset_id,
+            recipe_index=FROZEN_RECIPES[dataset_id],
+        )
+        for dataset_id in FROZEN_RECIPES
+    }
+    if kind == "validation" and dataset not in validations:
+        raise ValueError("validation preflight dataset is outside frozen cohort")
+    return {
+        "schema_version": 1,
+        "campaign_id": CAMPAIGN_ID,
+        "architecture": architecture,
+        "requested_kind": kind,
+        "requested_dataset": dataset,
+        "smoke": smoke,
+        "validations": validations,
+    }
+
+
 def _verify_attempts(dependencies: CampaignDependencies) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     store = dependencies.store
     _layout(dependencies)
@@ -1200,6 +1244,19 @@ def _load_decision(dependencies: CampaignDependencies, name: str) -> dict[str, A
 
 def _command_smoke(args: argparse.Namespace, deps: CampaignDependencies) -> int:
     _run_registered(deps, kind="smoke", architecture=args.architecture)
+    return 0
+
+
+def _command_preflight(
+    args: argparse.Namespace, deps: CampaignDependencies
+) -> int:
+    payload = _preflight_attempt(
+        deps,
+        kind="smoke",
+        architecture=args.architecture,
+        dataset=None,
+    )
+    print(json.dumps(payload, sort_keys=True))
     return 0
 
 
@@ -1721,6 +1778,13 @@ def _command_status(args: argparse.Namespace, deps: CampaignDependencies) -> int
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Secure stable graph campaign controller")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    preflight = subparsers.add_parser("preflight")
+    preflight.add_argument("--architecture", choices=ARCHITECTURES, required=True)
+    preflight.add_argument(
+        "--campaign-root", type=Path, choices=(DEFAULT_CAMPAIGN_ROOT,),
+        default=DEFAULT_CAMPAIGN_ROOT,
+    )
+    preflight.set_defaults(handler=_command_preflight)
     smoke = subparsers.add_parser("smoke")
     smoke.add_argument("--architecture", choices=ARCHITECTURES, required=True)
     smoke.add_argument("--seed", type=int, choices=(42,), default=42)

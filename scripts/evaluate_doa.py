@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import pandas as pd
 import torch
@@ -25,7 +25,7 @@ from trainers.engine import _bundle_tensors, _forward_model
 from utils import compute_doa, resolve_device, write_json
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Degree-of-Agreement evaluation over diagnosed per-concept mastery. "
@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpus", default=None)
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary-csv", default=None)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def extract_mastery(*, model: Any, bundle: Any, device: str) -> torch.Tensor | None:
