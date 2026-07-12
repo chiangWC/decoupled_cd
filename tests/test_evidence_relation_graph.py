@@ -3,6 +3,8 @@ import unittest
 import torch
 
 from models.evidence_relation_graph import (
+    EvidenceRelationGraphCompleter,
+    RelationMessageLayer,
     build_relation_graph,
     node_summary_features,
 )
@@ -227,6 +229,117 @@ class EvidenceRelationGraphTests(unittest.TestCase):
         self.assertFalse(
             torch.equal(first.reconstruction_mask, later.reconstruction_mask)
         )
+
+    def test_completer_supports_noncontiguous_subset_without_id_embedding(
+        self,
+    ) -> None:
+        torch.manual_seed(7)
+        model = EvidenceRelationGraphCompleter(4, 3, hidden_dim=5)
+        evidence = torch.tensor(
+            [
+                [[4.0, 4.0], [4.0, 1.0], [2.0, 1.0]],
+                [[3.0, 1.0], [2.0, 2.0], [4.0, 3.0]],
+                [[1.0, 1.0], [4.0, 0.0], [3.0, 2.0]],
+                [[4.0, 2.0], [1.0, 0.0], [2.0, 2.0]],
+            ]
+        )
+        q_matrix = torch.eye(3)
+
+        self.assertFalse(
+            any(
+                isinstance(module, torch.nn.Embedding)
+                for module in model.modules()
+            )
+        )
+        full = model(evidence, q_matrix, epoch=0, training=True)
+        subset = model(
+            evidence,
+            q_matrix,
+            student_ids=torch.tensor([3, 1]),
+            epoch=0,
+            training=True,
+        )
+
+        self.assertEqual(tuple(subset.mastery.shape), (2, 3))
+        self.assertEqual(tuple(subset.student_state.shape), (2, 5))
+        self.assertEqual(tuple(subset.concept_state.shape), (3, 5))
+        torch.testing.assert_close(subset.mastery, full.mastery[[3, 1]])
+        torch.testing.assert_close(
+            subset.reconstruction_mask, full.reconstruction_mask[[3, 1]]
+        )
+        torch.testing.assert_close(subset.target, full.target[[3, 1]])
+        torch.testing.assert_close(
+            subset.student_state, full.student_state[[3, 1]]
+        )
+        torch.testing.assert_close(subset.concept_state, full.concept_state)
+
+        subset.mastery.sum().backward()
+        self.assertTrue(
+            all(parameter.grad is not None for parameter in model.parameters())
+        )
+        self.assertTrue(
+            all(
+                bool(torch.isfinite(parameter.grad).all())
+                for parameter in model.parameters()
+                if parameter.grad is not None
+            )
+        )
+
+    def test_positive_and_negative_relations_change_predictions(self) -> None:
+        torch.manual_seed(11)
+        model = EvidenceRelationGraphCompleter(3, 2, hidden_dim=4)
+        positive_evidence = torch.tensor(
+            [
+                [[4.0, 4.0], [4.0, 4.0]],
+                [[4.0, 4.0], [4.0, 4.0]],
+                [[4.0, 4.0], [4.0, 4.0]],
+            ]
+        )
+        negative_evidence = torch.tensor(
+            [
+                [[4.0, 0.0], [4.0, 0.0]],
+                [[4.0, 0.0], [4.0, 0.0]],
+                [[4.0, 0.0], [4.0, 0.0]],
+            ]
+        )
+        q_matrix = torch.eye(2)
+
+        positive = model(
+            positive_evidence, q_matrix, None, None, False
+        ).mastery
+        negative = model(
+            negative_evidence, q_matrix, None, None, False
+        ).mastery
+
+        self.assertFalse(torch.equal(positive, negative))
+
+    def test_relation_layer_uses_directed_degree_normalized_messages(
+        self,
+    ) -> None:
+        layer = RelationMessageLayer(hidden_dim=2)
+        with torch.no_grad():
+            layer.positive.weight.copy_(torch.eye(2))
+            layer.negative.weight.copy_(2.0 * torch.eye(2))
+        positive = torch.tensor(
+            [[2.0, 0.0, 1.0], [0.0, 1.0, 0.0]]
+        )
+        negative = torch.tensor(
+            [[0.0, 1.0, 0.0], [3.0, 0.0, 1.0]]
+        )
+        source = torch.tensor(
+            [[1.0, 2.0], [4.0, 1.0], [2.0, 3.0]]
+        )
+
+        actual = layer((positive, negative), source)
+
+        degree = (
+            (positive + negative).sum(dim=-1, keepdim=True).clamp_min(1.0)
+        )
+        expected_message = (
+            positive @ source + negative @ (2.0 * source)
+        ) / degree
+        expected = layer.norm(torch.relu(expected_message))
+        torch.testing.assert_close(actual, expected)
 
 
 if __name__ == "__main__":

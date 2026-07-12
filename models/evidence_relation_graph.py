@@ -4,6 +4,8 @@ import math
 from dataclasses import dataclass
 
 import torch
+from torch import nn
+from torch.nn import functional as F
 
 
 @dataclass(frozen=True)
@@ -12,6 +14,38 @@ class RelationGraphBatch:
     negative_weight: torch.Tensor
     reconstruction_mask: torch.Tensor
     target: torch.Tensor
+
+
+@dataclass(frozen=True)
+class GraphCompletionState:
+    mastery: torch.Tensor
+    reconstruction_mask: torch.Tensor
+    target: torch.Tensor
+    student_state: torch.Tensor
+    concept_state: torch.Tensor
+
+
+class RelationMessageLayer(nn.Module):
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        self.positive = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.negative = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.norm = nn.LayerNorm(hidden_dim)
+
+    def forward(
+        self,
+        adjacency: tuple[torch.Tensor, torch.Tensor],
+        source: torch.Tensor,
+    ) -> torch.Tensor:
+        positive, negative = adjacency
+        degree = (
+            (positive + negative).sum(dim=-1, keepdim=True).clamp_min(1.0)
+        )
+        message = (
+            positive @ self.positive(source)
+            + negative @ self.negative(source)
+        ) / degree
+        return self.norm(F.relu(message))
 
 
 def _evidence_counts(evidence: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -131,3 +165,76 @@ def node_summary_features(
         dim=-1,
     )
     return student_features, concept_features
+
+
+class EvidenceRelationGraphCompleter(nn.Module):
+    def __init__(
+        self,
+        num_students: int,
+        num_concepts: int,
+        hidden_dim: int,
+    ) -> None:
+        super().__init__()
+        self.num_students = num_students
+        self.num_concepts = num_concepts
+        self.student_encoder = nn.Linear(3, hidden_dim)
+        self.concept_encoder = nn.Linear(4, hidden_dim)
+        self.c2s = nn.ModuleList(
+            RelationMessageLayer(hidden_dim) for _ in range(2)
+        )
+        self.s2c = nn.ModuleList(
+            RelationMessageLayer(hidden_dim) for _ in range(2)
+        )
+        self.bilinear = nn.Parameter(torch.empty(hidden_dim, hidden_dim))
+        self.student_bias = nn.Linear(3, 1, bias=False)
+        self.concept_bias = nn.Linear(4, 1, bias=False)
+        nn.init.xavier_uniform_(self.bilinear)
+
+    def forward(
+        self,
+        evidence: torch.Tensor,
+        q_matrix: torch.Tensor,
+        student_ids: torch.Tensor | None = None,
+        epoch: int | None = None,
+        training: bool = False,
+    ) -> GraphCompletionState:
+        graph = build_relation_graph(
+            evidence,
+            epoch=epoch,
+            training=training,
+        )
+        student_features, concept_features = node_summary_features(
+            evidence,
+            q_matrix,
+        )
+        students = self.student_encoder(student_features)
+        concepts = self.concept_encoder(concept_features)
+        for concept_to_student, student_to_concept in zip(
+            self.c2s, self.s2c
+        ):
+            students = students + concept_to_student(
+                (graph.positive_weight, graph.negative_weight),
+                concepts,
+            )
+            concepts = concepts + student_to_concept(
+                (
+                    graph.positive_weight.T,
+                    graph.negative_weight.T,
+                ),
+                students,
+            )
+
+        logits = students @ self.bilinear @ concepts.T
+        logits = (
+            logits
+            + self.student_bias(student_features)
+            + self.concept_bias(concept_features).T
+        )
+        selected = slice(None) if student_ids is None else student_ids
+        return GraphCompletionState(
+            mastery=torch.sigmoid(logits[selected]),
+            reconstruction_mask=graph.reconstruction_mask[selected],
+            target=graph.target[selected],
+            student_state=students[selected],
+            concept_state=concepts,
+        )
