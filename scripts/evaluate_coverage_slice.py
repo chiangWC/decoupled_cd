@@ -46,9 +46,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--slice-csv", default=None)
     parser.add_argument("--summary-csv", default=None)
+    parser.add_argument(
+        "--prediction-output",
+        default=None,
+        help="Exclusive CSV output for row-ordered labels/probabilities; requires one summary.",
+    )
     args = parser.parse_args()
     if args.model_name is not None and len(args.model_name) != len(args.summary):
         raise ValueError("--model-name must be repeated the same number of times as --summary.")
+    if args.prediction_output is not None and len(args.summary) != 1:
+        raise ValueError("--prediction-output requires exactly one --summary.")
     return args
 
 
@@ -233,6 +240,11 @@ def main() -> None:
         prediction_frame = target_bundle.interactions.reset_index(drop=True).copy()
         prediction_frame["label"] = labels.numpy()
         prediction_frame["prob"] = probs.numpy()
+        if args.prediction_output is not None:
+            prediction_output = Path(args.prediction_output)
+            prediction_output.parent.mkdir(parents=True, exist_ok=True)
+            with prediction_output.open("x", newline="", encoding="utf-8") as handle:
+                prediction_frame.to_csv(handle, index=False)
         enriched = add_target_coverage(
             prediction_frame,
             train_frame=bundles["train"].interactions,
