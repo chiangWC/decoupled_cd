@@ -121,7 +121,12 @@ class UnifiedValidationControllerTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def initialize(self, *, architecture: str = "a1") -> dict[str, object]:
+    def initialize(
+        self,
+        *,
+        architecture: str = "a1",
+        cohort_expectations: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         completion = "lowrank" if architecture == "a1" else "prior"
         self.manifest = UnifiedArchitectureSpec(completion=completion).manifest()
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
@@ -134,6 +139,7 @@ class UnifiedValidationControllerTests(unittest.TestCase):
             baseline_rows_path=self.baseline_path,
             data_root=self.data_root,
             artifact_root=self.artifact_root,
+            cohort_expectations=cohort_expectations,
         )
 
     def issue(self) -> tuple[Path, dict[str, object]]:
@@ -471,6 +477,50 @@ print(attempt_dir)
             )
             self._advance_unit_launch()
 
+    def _complete_candidate(self) -> None:
+        self.initialize()
+        while True:
+            state = json.loads((self.state_dir / "state.json").read_text())
+            if state["complete"]:
+                return
+            token_path = self.root / f"candidate-{state['issuance_counter'] + 1}.json"
+            token = authorize_next(
+                state_dir=self.state_dir,
+                repo_root=self.repo_root,
+                output_path=token_path,
+            )
+            dataset_id = state["dataset_ids"][state["cursor"]]
+            self._prepare_pair_artifacts(
+                token_path, token, dataset_id=dataset_id, architecture="a1"
+            )
+            self._advance_unit_launch()
+
+    def test_candidate_replay_rejects_coordinated_state_and_proof_edit(self) -> None:
+        self._complete_candidate()
+        proof_path = sorted((self.state_dir / "proofs").glob("*.json"))[0]
+        proof = json.loads(proof_path.read_text())
+        proof["deltas"]["zero_auc"] += 0.25
+        proof_path.write_text(json.dumps(proof), encoding="utf-8")
+        state_path = self.state_dir / "state.json"
+        state = json.loads(state_path.read_text())
+        state["proof_sha256_by_counter"]["1"] = hashlib.sha256(
+            proof_path.read_bytes()
+        ).hexdigest()
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "raw proof|controller-owned replay"):
+            controller_module.replay_registered_candidate_proofs(self.state_dir)
+
+    def test_candidate_replay_rejects_hand_authored_proof_registry(self) -> None:
+        self._complete_candidate()
+        state_path = self.state_dir / "state.json"
+        state = json.loads(state_path.read_text())
+        state["proof_sha256_by_counter"].pop("2")
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "counter registry"):
+            controller_module.replay_registered_candidate_proofs(self.state_dir)
+
     def test_replay_rejects_changed_proof_deltas(self) -> None:
         from scripts.unified_a0_exploration import finalize_exploration
 
@@ -678,10 +728,48 @@ print(attempt_dir)
             json.dumps({"rows": self.baseline_rows}), encoding="utf-8"
         )
 
-        state = self.initialize()
+        expectations = {
+            "dataset_ids": list(DATASET_IDS),
+            "a0_fingerprints": dict(primary["a0_fingerprints"]),
+            "comparator_audit_sha256": primary["comparator_audit_sha256"],
+            "dataset_audit_sha256": primary["dataset_audit_sha256"],
+        }
+        state = self.initialize(cohort_expectations=expectations)
 
         self.assertEqual(state["cohort_sha256"], primary["cohort_sha256"])
         self.assertEqual(state["dataset_ids"], list(DATASET_IDS))
+
+    def test_primary_cohort_rejects_controller_expectation_mismatch(self) -> None:
+        fingerprint = self.baseline_rows[0]["architecture_fingerprint"]
+        primary = {
+            "schema_version": 2,
+            "dataset_ids": list(DATASET_IDS),
+            "a0_fingerprints": {
+                dataset_id: fingerprint for dataset_id in DATASET_IDS
+            },
+            "comparator_audit_sha256": "e" * 64,
+            "dataset_audit_sha256": "f" * 64,
+            "rankings": [
+                {"dataset_id": dataset_id, "rank_key": [0.0, 0.0, 1, 0]}
+                for dataset_id in DATASET_IDS
+            ],
+        }
+        primary["cohort_sha256"] = canonical_sha256(primary)
+        self.cohort_path.write_text(json.dumps(primary), encoding="utf-8")
+        for row in self.baseline_rows:
+            row["cohort_sha256"] = primary["cohort_sha256"]
+        self.baseline_path.write_text(
+            json.dumps({"rows": self.baseline_rows}), encoding="utf-8"
+        )
+        expectations = {
+            "dataset_ids": list(DATASET_IDS),
+            "a0_fingerprints": dict(primary["a0_fingerprints"]),
+            "comparator_audit_sha256": "0" * 64,
+            "dataset_audit_sha256": primary["dataset_audit_sha256"],
+        }
+
+        with self.assertRaisesRegex(ValueError, "comparator audit hash"):
+            self.initialize(cohort_expectations=expectations)
 
     def test_initialization_is_exclusive(self) -> None:
         self.initialize()

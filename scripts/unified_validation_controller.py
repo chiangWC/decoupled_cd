@@ -231,27 +231,63 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
     return payload
 
 
-def _load_registered_cohort(path: Path) -> dict[str, Any]:
-    payload = _load_json(path, label="registered cohort")
-    if payload.get("schema_version") != 2:
-        return load_verified_cohort(path)
-    dataset_ids = payload.get("dataset_ids")
-    fingerprints = payload.get("a0_fingerprints")
-    comparator_hash = payload.get("comparator_audit_sha256")
-    dataset_hash = payload.get("dataset_audit_sha256")
+def _validated_cohort_expectations(
+    value: object,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "dataset_ids",
+        "a0_fingerprints",
+        "comparator_audit_sha256",
+        "dataset_audit_sha256",
+    }:
+        raise ValueError("registered primary cohort expectations are invalid")
+    dataset_ids = value.get("dataset_ids")
+    fingerprints = value.get("a0_fingerprints")
+    comparator_hash = value.get("comparator_audit_sha256")
+    dataset_hash = value.get("dataset_audit_sha256")
     if (
         not isinstance(dataset_ids, list)
+        or len(dataset_ids) != 3
+        or len(set(dataset_ids)) != 3
+        or not all(isinstance(dataset_id, str) and dataset_id for dataset_id in dataset_ids)
         or not isinstance(fingerprints, Mapping)
+        or set(fingerprints) != set(dataset_ids)
+        or any(
+            not isinstance(fingerprint, str)
+            or NONCE_PATTERN.fullmatch(fingerprint) is None
+            for fingerprint in fingerprints.values()
+        )
         or not isinstance(comparator_hash, str)
+        or NONCE_PATTERN.fullmatch(comparator_hash) is None
         or not isinstance(dataset_hash, str)
+        or NONCE_PATTERN.fullmatch(dataset_hash) is None
     ):
         raise ValueError("registered primary cohort expectations are invalid")
+    return {
+        "dataset_ids": list(dataset_ids),
+        "a0_fingerprints": dict(fingerprints),
+        "comparator_audit_sha256": comparator_hash,
+        "dataset_audit_sha256": dataset_hash,
+    }
+
+
+def _load_registered_cohort(
+    path: Path, *, expectations: object = None
+) -> dict[str, Any]:
+    payload = _load_json(path, label="registered cohort")
+    if payload.get("schema_version") != 2:
+        if expectations is not None:
+            raise ValueError("schema version 1 cannot bind primary cohort expectations")
+        return load_verified_cohort(path)
+    trusted = _validated_cohort_expectations(expectations)
     return load_verified_cohort(
         path,
-        expected_dataset_ids=dataset_ids,
-        expected_a0_fingerprints=dict(fingerprints),
-        expected_comparator_audit_sha256=comparator_hash,
-        expected_dataset_audit_sha256=dataset_hash,
+        expected_dataset_ids=trusted["dataset_ids"],
+        expected_a0_fingerprints=trusted["a0_fingerprints"],
+        expected_comparator_audit_sha256=str(
+            trusted["comparator_audit_sha256"]
+        ),
+        expected_dataset_audit_sha256=str(trusted["dataset_audit_sha256"]),
     )
 
 
@@ -398,7 +434,10 @@ def _load_state(state_dir: Path, repo_root: Path) -> dict[str, Any]:
         raise ValueError(
             f"route HEAD mismatch: registered {registered_head}, actual {actual_head}"
         )
-    cohort = _load_registered_cohort(state_dir / "cohort.json")
+    cohort = _load_registered_cohort(
+        state_dir / "cohort.json",
+        expectations=state.get("cohort_expectations"),
+    )
     if (
         cohort.get("cohort_sha256") != state.get("cohort_sha256")
         or cohort.get("dataset_ids") != state.get("dataset_ids")
@@ -738,10 +777,18 @@ def initialize_controller(
     data_root: Path,
     artifact_root: Path,
     exploration: bool = False,
+    cohort_expectations: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     state_dir = state_dir.resolve()
     repo_root = repo_root.resolve()
-    cohort = _load_registered_cohort(cohort_path)
+    normalized_cohort_expectations = (
+        _validated_cohort_expectations(cohort_expectations)
+        if cohort_expectations is not None
+        else None
+    )
+    cohort = _load_registered_cohort(
+        cohort_path, expectations=normalized_cohort_expectations
+    )
     dataset_ids = cohort.get("dataset_ids")
     cohort_hash = cohort.get("cohort_sha256")
     if not isinstance(dataset_ids, list) or not all(
@@ -764,6 +811,15 @@ def initialize_controller(
         baseline_payload, dataset_ids=dataset_ids, cohort_sha256=cohort_hash
     )
     registered_baseline = {"rows": baseline_rows}
+    if normalized_cohort_expectations is not None:
+        expected_fingerprints = normalized_cohort_expectations["a0_fingerprints"]
+        assert isinstance(expected_fingerprints, Mapping)
+        if any(
+            row.get("architecture_fingerprint")
+            != expected_fingerprints.get(str(row.get("dataset_id")))
+            for row in baseline_rows
+        ):
+            raise ValueError("baseline A0 fingerprints mismatch primary cohort expectations")
     recipe_indices: dict[str, int] = {}
     registered_recipes: dict[str, Mapping[str, object] | None] = {}
     for row in baseline_rows:
@@ -823,6 +879,7 @@ def initialize_controller(
             "controller_id": secrets.token_hex(32),
             "route_commit": route_commit,
             "cohort_sha256": cohort_hash,
+            "cohort_expectations": normalized_cohort_expectations,
             "manifest_sha256": canonical_sha256(manifest),
             "architecture": architecture,
             "architecture_fingerprint": spec.fingerprint(),
@@ -965,7 +1022,10 @@ def _verify_split_proof(
     registered_manifest = _load_json(
         state_dir / "manifest.json", label="registered architecture manifest"
     )
-    registered_cohort = _load_registered_cohort(state_dir / "cohort.json")
+    registered_cohort = _load_registered_cohort(
+        state_dir / "cohort.json",
+        expectations=state.get("cohort_expectations"),
+    )
     immutable_inputs = status.get("immutable_inputs")
     if not isinstance(immutable_inputs, Mapping):
         raise ValueError(f"{split_id} outer status has no immutable inputs")
@@ -1141,19 +1201,37 @@ def _validated_replay_invocation(
 
 def _verified_replay_state(
     state_dir: Path,
+    *,
+    expected_mode: str,
+    cohort_expectations: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Mapping[str, Any]]]:
     state = _load_json(state_dir / "state.json", label="controller replay state")
+    state_expectations = state.get("cohort_expectations")
+    if state_expectations is not None and cohort_expectations is not None:
+        if _validated_cohort_expectations(state_expectations) != _validated_cohort_expectations(
+            cohort_expectations
+        ):
+            raise ValueError("controller primary cohort expectations mismatch")
+    effective_expectations = (
+        cohort_expectations if cohort_expectations is not None else state_expectations
+    )
     if (
         state.get("schema_version") != CONTROLLER_SCHEMA_VERSION
         or state.get("campaign_id") != CAMPAIGN_ID
-        or state.get("mode") != "a0_exploration"
+        or state.get("mode") != expected_mode
         or state.get("complete") is not True
         or state.get("active_pair") is not None
         or state.get("launch") is not None
         or state.get("split_seed") != 2024
     ):
-        raise ValueError("controller replay state is not a completed exploration")
-    cohort = _load_registered_cohort(state_dir / "cohort.json")
+        raise ValueError(f"controller replay state is not a completed {expected_mode}")
+    if effective_expectations is not None:
+        state["cohort_expectations"] = _validated_cohort_expectations(
+            effective_expectations
+        )
+    cohort = _load_registered_cohort(
+        state_dir / "cohort.json", expectations=effective_expectations
+    )
     manifest = _load_json(state_dir / "manifest.json", label="replay manifest")
     baseline = _load_json(state_dir / "baseline.json", label="replay baseline")
     if (
@@ -1279,20 +1357,36 @@ def _registered_replay_proof_anchor(
     }, legacy
 
 
-def replay_registered_exploration_proofs(
+def _replay_registered_proofs(
     state_dir: Path,
+    *,
+    expected_mode: str,
+    cohort_expectations: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Rebuild exploration proofs from controller registrations and outer artifacts."""
+    """Rebuild proofs from controller registrations and outer artifacts."""
     from scripts.run_unified_validation import RECIPES
 
     state_dir = state_dir.resolve()
-    state, baseline_by_dataset = _verified_replay_state(state_dir)
+    state, baseline_by_dataset = _verified_replay_state(
+        state_dir,
+        expected_mode=expected_mode,
+        cohort_expectations=cohort_expectations,
+    )
     grouped = _registered_replay_pairs(state_dir, state)
     issuance_counter = state.get("issuance_counter")
     assert isinstance(issuance_counter, int)
     registered_hashes, legacy_anchor = _registered_replay_proof_anchor(
         state, issuance_counter=issuance_counter
     )
+    if expected_mode == "candidate_gate":
+        dataset_ids = state.get("dataset_ids")
+        if (
+            not isinstance(dataset_ids, list)
+            or issuance_counter != len(dataset_ids)
+        ):
+            raise ValueError("candidate replay issuance count differs from frozen cohort")
+        if legacy_anchor is not None:
+            raise ValueError("candidate replay requires controller-registered proof SHA anchor")
     replayed: list[dict[str, Any]] = []
     raw_registry: dict[str, str] = {}
     for counter in range(1, issuance_counter + 1):
@@ -1302,6 +1396,11 @@ def replay_registered_exploration_proofs(
         dataset_id = str(pair["standard"]["dataset_id"])
         if pair["holdout"]["dataset_id"] != dataset_id:
             raise ValueError("replay issuance dataset pair mismatch")
+        if (
+            expected_mode == "candidate_gate"
+            and dataset_id != state["dataset_ids"][counter - 1]
+        ):
+            raise ValueError("candidate replay dataset order differs from frozen cohort")
         commands = {
             split_id: _validated_replay_invocation(
                 state_dir=state_dir, state=state, consumption=pair[split_id]
@@ -1343,6 +1442,13 @@ def replay_registered_exploration_proofs(
             "holdout_overall_auc": holdout_metrics["overall_auc"] - guard["holdout_overall_auc"],
             "zero_auc": holdout_metrics["zero_auc"] - guard["zero_auc"],
         }
+        if expected_mode == "candidate_gate":
+            deltas.update({
+                "weighted_doa": standard_metrics["weighted_doa"]
+                - guard["weighted_doa"],
+                "ordinary_doa": standard_metrics["ordinary_doa"]
+                - guard["ordinary_doa"],
+            })
         proof_path = state_dir / "proofs" / f"{counter:06d}-{dataset_id}.json"
         raw_proof = _load_json(proof_path, label="replay raw proof")
         if not isinstance(raw_proof, Mapping):
@@ -1388,6 +1494,26 @@ def replay_registered_exploration_proofs(
         state["proof_sha256_by_counter"] = raw_registry
         _atomic_json(state_dir / "state.json", state)
     return state, replayed
+
+
+def replay_registered_exploration_proofs(
+    state_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    return _replay_registered_proofs(
+        state_dir, expected_mode="a0_exploration"
+    )
+
+
+def replay_registered_candidate_proofs(
+    state_dir: Path,
+    *,
+    cohort_expectations: Mapping[str, object] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    return _replay_registered_proofs(
+        state_dir,
+        expected_mode="candidate_gate",
+        cohort_expectations=cohort_expectations,
+    )
 
 
 def _joint_gate_success(deltas: Mapping[str, float]) -> bool:

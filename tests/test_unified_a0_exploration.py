@@ -145,6 +145,21 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
         self.assertEqual(args.cohort, Path("/campaign/cohort.json"))
         self.assertIsNone(args.dataset_audit)
 
+    def test_controller_parser_exposes_verify_existing_without_overwrite(self) -> None:
+        from scripts.unified_a0_exploration import build_parser
+
+        args = build_parser().parse_args([
+            "verify-existing",
+            "--state", "/campaign/controllers/a1.json",
+            "--decision", "/campaign/decisions/a1-vs-a0.json",
+            "--expected-rows-sha256", "a" * 64,
+            "--expected-decision-sha256", "b" * 64,
+            "--output", "/campaign/decisions/a1-existing-verification.json",
+        ])
+
+        self.assertEqual(args.command, "verify-existing")
+        self.assertEqual(args.expected_rows_sha256, "a" * 64)
+
     def test_run_validation_without_parallel_flag_uses_sequential_controller_pair(self) -> None:
         from argparse import Namespace
         from scripts.unified_a0_exploration import _run_validation
@@ -192,6 +207,9 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
             "scripts.unified_a0_exploration.run_registered_pair"
         ) as run_pair, patch(
             "scripts.unified_a0_exploration.finalize_candidate", return_value=[]
+        ) as finalize_candidate, patch(
+            "scripts.unified_a0_exploration._independent_a1_context",
+            return_value=({"trusted": "expectations"}, wrapper),
         ), patch("scripts.unified_a0_exploration._exclusive_json"):
             _run_validation(Namespace(
                 state=Path(directory) / "wrapper.json", parallel_gpus=True
@@ -203,6 +221,10 @@ class UnifiedA0ExplorationTests(unittest.TestCase):
         self.assertEqual(
             authorize.call_args.kwargs["output_path"].name,
             "a1-000001.json",
+        )
+        self.assertEqual(
+            finalize_candidate.call_args.kwargs["cohort_expectations"],
+            {"trusted": "expectations"},
         )
 
     def test_finalization_rejects_hand_authored_proof_only_inputs(self) -> None:
