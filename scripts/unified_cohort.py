@@ -118,14 +118,28 @@ def load_verified_cohort(
     stored_hash = unhashed.pop("cohort_sha256", None)
     if stored_hash != canonical_sha256(unhashed):
         raise ValueError("canonical SHA-256 mismatch for frozen cohort")
+    expectations = (
+        expected_dataset_ids,
+        expected_a0_fingerprints,
+        expected_comparator_audit_sha256,
+        expected_dataset_audit_sha256,
+    )
     schema_version = existing.get("schema_version")
     if schema_version == 1:
+        if any(expectation is not None for expectation in expectations):
+            raise ValueError(
+                "schema version 1 cannot use trusted schema-v2 expectations"
+            )
         if set(existing) != _SCHEMA_V1_FIELDS:
             raise ValueError("schema version 1 field set mismatch")
         dataset_ids = existing.get("dataset_ids")
         if (
             not isinstance(dataset_ids, list)
             or len(dataset_ids) != 3
+            or not all(
+                isinstance(dataset_id, str) and bool(dataset_id)
+                for dataset_id in dataset_ids
+            )
             or len(set(dataset_ids)) != 3
             or not isinstance(existing.get("dataset_audit_sha256"), dict)
             or not isinstance(existing.get("b0_validation_references"), dict)
@@ -134,12 +148,6 @@ def load_verified_cohort(
     elif schema_version == 2:
         if set(existing) != _SCHEMA_V2_FIELDS:
             raise ValueError("schema version 2 field set mismatch")
-        expectations = (
-            expected_dataset_ids,
-            expected_a0_fingerprints,
-            expected_comparator_audit_sha256,
-            expected_dataset_audit_sha256,
-        )
         if any(expectation is None for expectation in expectations):
             raise ValueError("trusted schema-v2 expectations are required")
         if existing.get("dataset_ids") != list(expected_dataset_ids or ()):

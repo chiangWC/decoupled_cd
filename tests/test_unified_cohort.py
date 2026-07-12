@@ -539,6 +539,46 @@ class PrimaryCohortRankingTests(unittest.TestCase):
                             path, **self._trusted_expectations(cohort)
                         )
 
+    def test_trusted_v2_load_rejects_exact_rehashed_v1_replacement(self) -> None:
+        cohort = freeze_primary_cohort(
+            self.a0_rows, self.baseline_audit, self.audit_rows
+        )
+        legacy = {
+            "schema_version": 1,
+            "dataset_ids": cohort["dataset_ids"],
+            "audit_sha256": "a" * 64,
+            "dataset_audit_sha256": {
+                dataset_id: "b" * 64 for dataset_id in cohort["dataset_ids"]
+            },
+            "b0_validation_references": {
+                dataset_id: {"standard": "s", "holdout": "h"}
+                for dataset_id in cohort["dataset_ids"]
+            },
+        }
+        legacy["cohort_sha256"] = canonical_sha256(legacy)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.json"
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "trusted schema-v2 expectations"):
+                load_verified_cohort(path, **self._trusted_expectations(cohort))
+
+    def test_legacy_unhashable_dataset_id_raises_value_error(self) -> None:
+        legacy = {
+            "schema_version": 1,
+            "dataset_ids": [["unhashable"], "assist17", "moocradar"],
+            "audit_sha256": "a" * 64,
+            "dataset_audit_sha256": {},
+            "b0_validation_references": {},
+        }
+        legacy["cohort_sha256"] = canonical_sha256(legacy)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.json"
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "schema version 1 payload"):
+                load_verified_cohort(path)
+
     def test_cohort_boundary_rejects_rehashed_invalid_accepted_provenance(self) -> None:
         tampered = copy.deepcopy(self.baseline_audit)
         tampered["accepted_rows"][0]["seed"] = 7
