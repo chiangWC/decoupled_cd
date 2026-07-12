@@ -6,6 +6,11 @@ import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from scripts.unified_baseline_audit import (
+    REQUIRED_BASELINE_FIELDS,
+    SAME_PROTOCOL,
+    audit_baseline_rows,
+)
 from scripts.unified_dataset_audit import canonical_sha256
 
 
@@ -75,7 +80,14 @@ def _build_cohort(
     return cohort
 
 
-def load_verified_cohort(path: str | Path) -> dict[str, Any]:
+def load_verified_cohort(
+    path: str | Path,
+    *,
+    expected_dataset_ids: Sequence[str] | None = None,
+    expected_a0_fingerprints: Mapping[str, str] | None = None,
+    expected_comparator_audit_sha256: str | None = None,
+    expected_dataset_audit_sha256: str | None = None,
+) -> dict[str, Any]:
     cohort_path = Path(path)
     try:
         existing = json.loads(cohort_path.read_text(encoding="utf-8"))
@@ -87,6 +99,26 @@ def load_verified_cohort(path: str | Path) -> dict[str, Any]:
     stored_hash = unhashed.pop("cohort_sha256", None)
     if stored_hash != canonical_sha256(unhashed):
         raise ValueError("canonical SHA-256 mismatch for frozen cohort")
+    if existing.get("schema_version") == 2:
+        expectations = (
+            expected_dataset_ids,
+            expected_a0_fingerprints,
+            expected_comparator_audit_sha256,
+            expected_dataset_audit_sha256,
+        )
+        if any(expectation is None for expectation in expectations):
+            raise ValueError("trusted schema-v2 expectations are required")
+        if existing.get("dataset_ids") != list(expected_dataset_ids or ()):
+            raise ValueError("trusted dataset ID mismatch for frozen cohort")
+        if existing.get("a0_fingerprints") != dict(expected_a0_fingerprints or {}):
+            raise ValueError("trusted A0 fingerprint mismatch for frozen cohort")
+        if (
+            existing.get("comparator_audit_sha256")
+            != expected_comparator_audit_sha256
+        ):
+            raise ValueError("trusted comparator audit hash mismatch for frozen cohort")
+        if existing.get("dataset_audit_sha256") != expected_dataset_audit_sha256:
+            raise ValueError("trusted dataset audit hash mismatch for frozen cohort")
     return existing
 
 
@@ -170,44 +202,100 @@ def _rows_by_dataset(
     return indexed
 
 
-def _audit_records(
-    audit_rows: Mapping[str, Any] | Sequence[Mapping[str, Any]],
-) -> dict[str, Mapping[str, Any]]:
-    if isinstance(audit_rows, Mapping):
-        nested = audit_rows.get("datasets")
-        source = nested if isinstance(nested, Mapping) else audit_rows
-        return {
-            str(dataset_id): record
-            for dataset_id, record in source.items()
-            if isinstance(record, Mapping)
-        }
-    return _rows_by_dataset(audit_rows, row_kind="audit")
+def _verified_audit_records(
+    audit_rows: Mapping[str, Any],
+) -> tuple[dict[str, Mapping[str, Any]], str]:
+    audit_sha256 = _verify_canonical_hash(
+        audit_rows,
+        hash_field="audit_sha256",
+        mismatch_message="dataset audit canonical SHA-256 mismatch",
+    )
+    source = audit_rows.get("datasets")
+    if not isinstance(source, Mapping):
+        raise ValueError("dataset audit has no dataset records")
+    records: dict[str, Mapping[str, Any]] = {}
+    for dataset_id, record in source.items():
+        if not isinstance(dataset_id, str) or not isinstance(record, Mapping):
+            raise ValueError("dataset audit records must be keyed objects")
+        _verify_canonical_hash(
+            record,
+            hash_field="audit_sha256",
+            mismatch_message=f"dataset record canonical SHA-256 mismatch: {dataset_id}",
+        )
+        records[dataset_id] = record
+    return records, audit_sha256
+
+
+def _verified_strongest_comparators(
+    baseline_audit: Mapping[str, Any], dataset_audit: Mapping[str, Any]
+) -> tuple[Mapping[str, Any], str]:
+    audit_sha256 = _verify_canonical_hash(
+        baseline_audit,
+        hash_field="audit_sha256",
+        mismatch_message="baseline audit canonical SHA-256 mismatch",
+    )
+    accepted_rows = baseline_audit.get("accepted_rows")
+    rejected_rows = baseline_audit.get("rejected_rows")
+    strongest = baseline_audit.get("strongest_comparators")
+    if (
+        baseline_audit.get("schema_version") != 1
+        or baseline_audit.get("same_protocol") != SAME_PROTOCOL
+        or baseline_audit.get("required_fields") != list(REQUIRED_BASELINE_FIELDS)
+        or not isinstance(accepted_rows, list)
+        or not isinstance(rejected_rows, list)
+        or baseline_audit.get("accepted_count") != len(accepted_rows)
+        or baseline_audit.get("rejected_count") != len(rejected_rows)
+        or not isinstance(strongest, Mapping)
+    ):
+        raise ValueError("baseline audit has no accepted comparator registry")
+    verified = audit_baseline_rows(accepted_rows, dataset_audit)
+    if verified["rejected_count"]:
+        raise ValueError("baseline audit contains invalid accepted baseline provenance")
+    if verified["strongest_comparators"] != strongest:
+        raise ValueError("baseline strongest comparator registry mismatch")
+    return strongest, audit_sha256
+
+
+def _strongest_value(
+    strongest: Mapping[str, Any], dataset_id: str, split: str, metric: str
+) -> float:
+    try:
+        row = strongest[dataset_id][split][metric]
+        value = float(row["value"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            f"missing strongest comparator: {dataset_id}/{split}/{metric}"
+        ) from error
+    if not math.isfinite(value):
+        raise ValueError(f"non-finite strongest comparator: {dataset_id}/{split}/{metric}")
+    return value
 
 
 def _primary_cohort_record(
     a0_rows: Sequence[Mapping[str, Any]],
-    comparator_rows: Sequence[Mapping[str, Any]],
-    audit_rows: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+    baseline_audit: Mapping[str, Any],
+    audit_rows: Mapping[str, Any],
 ) -> dict[str, Any]:
     a0_by_dataset = _rows_by_dataset(a0_rows, row_kind="A0")
-    comparator_by_dataset = _rows_by_dataset(comparator_rows, row_kind="comparator")
-    audits = _audit_records(audit_rows)
+    audits, dataset_audit_sha256 = _verified_audit_records(audit_rows)
+    strongest, comparator_audit_sha256 = _verified_strongest_comparators(
+        baseline_audit, audit_rows
+    )
     ranking: list[tuple[tuple[float, float, int, int], str]] = []
     fingerprints: dict[str, str] = {}
     for dataset_id, a0 in a0_by_dataset.items():
-        comparator = comparator_by_dataset.get(dataset_id)
         audit = audits.get(dataset_id)
-        if comparator is None or audit is None or not audit.get("eligible"):
+        if audit is None or not audit.get("eligible"):
             continue
         try:
-            zero_margin = float(a0["a0_zero_auc"]) - float(
-                comparator["strongest_external_zero_auc"]
+            zero_margin = float(a0["a0_zero_auc"]) - _strongest_value(
+                strongest, dataset_id, "holdout", "zero_auc"
             )
             overall_margin = min(
                 float(a0["a0_standard_auc"])
-                - float(comparator["strongest_external_standard_auc"]),
+                - _strongest_value(strongest, dataset_id, "standard", "auc"),
                 float(a0["a0_holdout_auc"])
-                - float(comparator["strongest_external_holdout_auc"]),
+                - _strongest_value(strongest, dataset_id, "holdout", "auc"),
             )
             zero_count = int(audit["zero_count"])
             failed_attempt_count = int(a0["failed_attempt_count"])
@@ -217,7 +305,11 @@ def _primary_cohort_record(
         if not all(math.isfinite(value) for value in (zero_margin, overall_margin)):
             raise ValueError(f"non-finite primary cohort metric: {dataset_id}")
         fingerprint = a0.get("a0_fingerprint")
-        if not isinstance(fingerprint, str) or len(fingerprint) != 64:
+        if (
+            not isinstance(fingerprint, str)
+            or len(fingerprint) != 64
+            or any(character not in "0123456789abcdef" for character in fingerprint)
+        ):
             raise ValueError(f"invalid A0 fingerprint: {dataset_id}")
         fingerprints[dataset_id] = fingerprint
         ranking.append((rank_key, dataset_id))
@@ -225,17 +317,14 @@ def _primary_cohort_record(
     if len(ranking) < 3:
         raise ValueError("primary cohort requires exactly three eligible datasets")
     dataset_ids = [dataset_id for _, dataset_id in ranking[:3]]
-    audit_payload = {
-        dataset_id: dict(audits[dataset_id]) for dataset_id in sorted(audits)
-    }
     cohort: dict[str, Any] = {
         "schema_version": 2,
         "dataset_ids": dataset_ids,
         "a0_fingerprints": {
             dataset_id: fingerprints[dataset_id] for dataset_id in dataset_ids
         },
-        "comparator_sha256": canonical_sha256(list(comparator_rows)),
-        "audit_sha256": canonical_sha256(audit_payload),
+        "comparator_audit_sha256": comparator_audit_sha256,
+        "dataset_audit_sha256": dataset_audit_sha256,
         "rankings": [
             {"dataset_id": dataset_id, "rank_key": list(rank_key)}
             for rank_key, dataset_id in ranking
@@ -247,8 +336,8 @@ def _primary_cohort_record(
 
 def freeze_primary_cohort(
     a0_rows: Sequence[Mapping[str, Any]],
-    comparator_rows: Sequence[Mapping[str, Any]],
-    audit_rows: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+    comparator_rows: Mapping[str, Any],
+    audit_rows: Mapping[str, Any],
     *,
     path: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -266,8 +355,22 @@ def freeze_primary_cohort(
             handle.flush()
             os.fsync(handle.fileno())
     except FileExistsError:
-        existing = load_verified_cohort(cohort_path)
+        existing = load_verified_cohort(
+            cohort_path,
+            expected_dataset_ids=cohort["dataset_ids"],
+            expected_a0_fingerprints=cohort["a0_fingerprints"],
+            expected_comparator_audit_sha256=cohort[
+                "comparator_audit_sha256"
+            ],
+            expected_dataset_audit_sha256=cohort["dataset_audit_sha256"],
+        )
         _verify_existing(existing, cohort)
         return existing
+    except BaseException:
+        try:
+            cohort_path.unlink()
+        except OSError:
+            pass
+        raise
     _fsync_parent(cohort_path)
     return cohort

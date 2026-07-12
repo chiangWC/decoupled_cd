@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import math
 from pathlib import Path
+import sys
 from typing import Any, Iterable, Mapping, Sequence
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.unified_dataset_audit import canonical_sha256
 
@@ -67,6 +72,148 @@ def inventory_baseline_sources(
                 "source_sha256": _file_sha256(source_file), "reasons": [],
             })
     return inventory
+
+
+def _expand_source_paths(paths: Iterable[str | Path]) -> list[Path]:
+    files: list[Path] = []
+    for raw_path in paths:
+        path = Path(raw_path)
+        if path.is_dir():
+            files.extend(sorted(item for item in path.rglob("*") if item.is_file()))
+        else:
+            files.append(path)
+    return files
+
+
+def _canonicalize_artifact_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    canonical = dict(row)
+    for field in ("seed", "split_seed"):
+        value = canonical.get(field)
+        if isinstance(value, str):
+            try:
+                canonical[field] = int(value)
+            except ValueError:
+                pass
+    value = canonical.get("value")
+    if isinstance(value, str):
+        try:
+            canonical["value"] = float(value)
+        except ValueError:
+            pass
+    return canonical
+
+
+def _json_rows(payload: Any) -> list[Mapping[str, Any]]:
+    if isinstance(payload, Mapping):
+        nested = payload.get("rows")
+        if isinstance(nested, list):
+            payload = nested
+        else:
+            payload = [payload]
+    if not isinstance(payload, list):
+        raise ValueError("JSON artifact must contain an object or list of objects")
+    if not all(isinstance(row, Mapping) for row in payload):
+        raise ValueError("JSON artifact rows must be objects")
+    return payload
+
+
+def _read_artifact_rows(path: Path) -> list[dict[str, Any]]:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        with path.open(newline="", encoding="utf-8") as handle:
+            return [
+                _canonicalize_artifact_row(row) for row in csv.DictReader(handle)
+            ]
+    if suffix == ".json":
+        with path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return [_canonicalize_artifact_row(row) for row in _json_rows(payload)]
+    if suffix == ".jsonl":
+        rows: list[dict[str, Any]] = []
+        with path.open(encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                if not isinstance(payload, Mapping):
+                    raise ValueError(f"JSONL row {line_number} is not an object")
+                rows.append(_canonicalize_artifact_row(payload))
+        return rows
+    shown_suffix = suffix if suffix else "(none)"
+    raise ValueError(f"unsupported source artifact type: {shown_suffix}")
+
+
+def audit_baseline_sources(
+    paths: Iterable[str | Path], dataset_audits: Mapping[str, Any]
+) -> dict[str, Any]:
+    normalized_paths = [Path(path) for path in paths]
+    source_roots: list[dict[str, Any]] = []
+    for path in normalized_paths:
+        reasons: list[str] = []
+        if not path.exists():
+            kind = "missing"
+            reasons.append("source path does not exist")
+        elif path.is_dir():
+            kind = "directory"
+            if not any(item.is_file() for item in path.rglob("*")):
+                reasons.append("source directory contains no files")
+        else:
+            kind = "file"
+        source_roots.append({
+            "source_path": str(path.resolve()),
+            "kind": kind,
+            "reasons": reasons,
+        })
+    discovered: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    for source_path in _expand_source_paths(normalized_paths):
+        source: dict[str, Any] = {
+            "source_path": str(source_path.resolve()),
+            "source_sha256": None,
+            "rows": [],
+            "reasons": [],
+        }
+        if not source_path.is_file():
+            source["reasons"].append("source path does not exist")
+            discovered.append(source)
+            continue
+        source["source_sha256"] = _file_sha256(source_path)
+        try:
+            source["rows"] = _read_artifact_rows(source_path)
+        except (OSError, UnicodeError, csv.Error, json.JSONDecodeError, ValueError) as error:
+            source["reasons"].append(str(error))
+        rows.extend(source["rows"])
+        discovered.append(source)
+
+    result = audit_baseline_rows(rows, dataset_audits)
+    accepted_sources: list[dict[str, Any]] = []
+    rejected_sources: list[dict[str, Any]] = []
+    for source in discovered:
+        source_record = {
+            "source_path": source["source_path"],
+            "source_sha256": source["source_sha256"],
+            "row_count": len(source["rows"]),
+            "reasons": list(source["reasons"]),
+        }
+        if not source_record["row_count"] and not source_record["reasons"]:
+            source_record["reasons"].append("source artifact contains no rows")
+        for index, row in enumerate(source["rows"], start=1):
+            row_audit = audit_baseline_rows([row], dataset_audits)
+            if row_audit["rejected_rows"]:
+                reasons = row_audit["rejected_rows"][0]["reasons"]
+                source_record["reasons"].append(
+                    f"row {index}: " + "; ".join(reasons)
+                )
+        target = accepted_sources if not source_record["reasons"] else rejected_sources
+        target.append(source_record)
+    result["discovered_source_count"] = len(discovered)
+    result["source_root_count"] = len(source_roots)
+    result["source_roots"] = source_roots
+    result["accepted_source_records"] = accepted_sources
+    result["rejected_source_records"] = rejected_sources
+    result.pop("audit_sha256")
+    result["audit_sha256"] = canonical_sha256(result)
+    return result
 
 
 def _dataset_records(dataset_audits: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -155,23 +302,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Audit same-protocol external baseline rows."
     )
-    parser.add_argument("--rows", type=Path, required=True)
     parser.add_argument("--dataset-audit", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source", action="append", type=Path)
     return parser
 
 
-def main() -> None:
-    args = build_parser().parse_args()
-    rows = json.loads(args.rows.read_text(encoding="utf-8"))
+def main(argv: Sequence[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
     audits = json.loads(args.dataset_audit.read_text(encoding="utf-8"))
-    result = audit_baseline_rows(rows, audits)
-    result["source_inventory"] = inventory_baseline_sources(
-        args.source or BASELINE_SOURCE_PATHS
-    )
-    result.pop("audit_sha256")
-    result["audit_sha256"] = canonical_sha256(result)
+    paths = [*BASELINE_SOURCE_PATHS, *(args.source or ())]
+    result = audit_baseline_sources(paths, audits)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"

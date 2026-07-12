@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts.unified_baseline_audit import (
     BASELINE_SOURCE_PATHS,
     REQUIRED_BASELINE_FIELDS,
     audit_baseline_rows,
+    audit_baseline_sources,
     inventory_baseline_sources,
+    main as baseline_audit_main,
 )
+from scripts.unified_dataset_audit import canonical_sha256
 
 
 class UnifiedBaselineAuditTests(unittest.TestCase):
@@ -104,6 +111,105 @@ class UnifiedBaselineAuditTests(unittest.TestCase):
         self.assertEqual(inventory[0]["reasons"], [])
         self.assertEqual(inventory[1]["reasons"], ["source path does not exist"])
         self.assertEqual(len(BASELINE_SOURCE_PATHS), 6)
+
+    def test_cli_discovers_six_defaults_and_extends_with_optional_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            default_sources = tuple(
+                root / f"default-{index}{suffix}"
+                for index, suffix in enumerate(
+                    (".json", ".json", ".json", ".csv", ".csv", ".csv")
+                )
+            )
+            for source in default_sources:
+                row = dict(self.row, source_path=str(source.resolve()))
+                if source.suffix == ".json":
+                    source.write_text(json.dumps(row), encoding="utf-8")
+                else:
+                    source.write_text(
+                        ",".join(REQUIRED_BASELINE_FIELDS) + "\n"
+                        + ",".join(str(row[field]) for field in REQUIRED_BASELINE_FIELDS)
+                        + "\n",
+                        encoding="utf-8",
+                    )
+            extra = root / "extra.json"
+            extra.write_text(json.dumps({"dataset_id": "assist17"}), encoding="utf-8")
+            dataset_audit = root / "dataset-audit.json"
+            dataset_audit.write_text(json.dumps(self.audits), encoding="utf-8")
+            output = root / "baseline-audit.json"
+
+            with mock.patch(
+                "scripts.unified_baseline_audit.BASELINE_SOURCE_PATHS",
+                default_sources,
+            ):
+                baseline_audit_main([
+                    "--dataset-audit", str(dataset_audit),
+                    "--output", str(output),
+                    "--source", str(extra),
+                ])
+
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["accepted_count"], 6)
+        self.assertEqual(result["rejected_count"], 1)
+        self.assertEqual(result["discovered_source_count"], 7)
+        self.assertEqual(result["source_root_count"], 7)
+        self.assertEqual(
+            [record["source_path"] for record in result["source_roots"][:6]],
+            [str(path.resolve()) for path in default_sources],
+        )
+        self.assertEqual(len(result["accepted_source_records"]), 6)
+        rejected_source = result["rejected_source_records"][0]
+        self.assertEqual(len(rejected_source["source_sha256"]), 64)
+        self.assertEqual(
+            rejected_source["reasons"][0],
+            "row 1: missing required fields: model, seed, split_seed, split, metric, "
+            "value, data_sha256, q_sha256, prediction_sha256, "
+            "prediction_order_sha256, config_sha256, checkpoint_sha256, source_path",
+        )
+        unhashed = dict(result)
+        stored = unhashed.pop("audit_sha256")
+        self.assertEqual(stored, canonical_sha256(unhashed))
+
+    def test_direct_script_entrypoint_imports_from_project_root(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        completed = subprocess.run(
+            [sys.executable, str(root / "scripts" / "unified_baseline_audit.py"), "--help"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("--dataset-audit", completed.stdout)
+        self.assertNotIn("--rows", completed.stdout)
+
+    def test_empty_and_unsupported_artifacts_are_hashed_rejected_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty = root / "empty.json"
+            empty.write_text("[]", encoding="utf-8")
+            unsupported = root / "checkpoint.pt"
+            unsupported.write_bytes(b"checkpoint")
+
+            result = audit_baseline_sources([empty, unsupported], self.audits)
+
+        self.assertEqual(result["accepted_source_records"], [])
+        self.assertEqual(len(result["rejected_source_records"]), 2)
+        self.assertEqual(
+            result["rejected_source_records"][0]["reasons"],
+            ["source artifact contains no rows"],
+        )
+        self.assertEqual(
+            result["rejected_source_records"][1]["reasons"],
+            ["unsupported source artifact type: .pt"],
+        )
+        self.assertTrue(
+            all(
+                len(record["source_sha256"]) == 64
+                for record in result["rejected_source_records"]
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from scripts.unified_baseline_audit import audit_baseline_rows
 from scripts.unified_cohort import (
     freeze_cohort,
     freeze_primary_cohort,
@@ -384,37 +385,79 @@ class PrimaryCohortRankingTests(unittest.TestCase):
                 ("assist09", 0.78, 0.80, 0.79, "d", 0),
             )
         ]
-        self.comparator_rows = [
-            {
-                "dataset_id": dataset_id,
-                "strongest_external_zero_auc": zero_auc,
-                "strongest_external_standard_auc": standard_auc,
-                "strongest_external_holdout_auc": holdout_auc,
-            }
-            for dataset_id, zero_auc, standard_auc, holdout_auc in (
-                ("assist17", 0.77, 0.80, 0.79),
-                ("moocradar", 0.80, 0.80, 0.80),
-                ("xes3g5m", 0.75, 0.82, 0.81),
-                ("assist09", 0.77, 0.78, 0.77),
-            )
-        ]
-        self.audit_rows = {
-            dataset_id: {
+        audit_records = {}
+        for dataset_id, count, character in (
+            ("assist17", 3000, "1"),
+            ("moocradar", 4000, "2"),
+            ("xes3g5m", 2000, "3"),
+            ("assist09", 5000, "4"),
+        ):
+            record = {
                 "eligible": True,
                 "zero_count": count,
-                "audit_sha256": character * 64,
+                "standard": {
+                    "data_sha256": character * 64,
+                    "q_sha256": "a" * 64,
+                    "prediction_order_sha256": "b" * 64,
+                },
+                "holdout": {
+                    "data_sha256": character * 64,
+                    "q_sha256": "a" * 64,
+                    "prediction_order_sha256": "c" * 64,
+                },
             }
-            for dataset_id, count, character in (
-                ("assist17", 3000, "1"),
-                ("moocradar", 4000, "2"),
-                ("xes3g5m", 2000, "3"),
-                ("assist09", 5000, "4"),
-            )
+            record["audit_sha256"] = canonical_sha256(record)
+            audit_records[dataset_id] = record
+        self.audit_rows = {"datasets": audit_records}
+        self.audit_rows["audit_sha256"] = canonical_sha256(self.audit_rows)
+        metric_values = {
+            "assist17": (0.77, 0.80, 0.79),
+            "moocradar": (0.80, 0.80, 0.80),
+            "xes3g5m": (0.75, 0.82, 0.81),
+            "assist09": (0.77, 0.78, 0.77),
+        }
+        baseline_rows = []
+        for dataset_id, (zero_auc, standard_auc, holdout_auc) in metric_values.items():
+            for split, metric, value in (
+                ("holdout", "zero_auc", zero_auc),
+                ("standard", "auc", standard_auc),
+                ("holdout", "auc", holdout_auc),
+            ):
+                split_audit = audit_records[dataset_id][split]
+                baseline_rows.append({
+                    "dataset_id": dataset_id,
+                    "model": "ORCDF",
+                    "seed": 42,
+                    "split_seed": 2024,
+                    "split": split,
+                    "metric": metric,
+                    "value": value,
+                    "data_sha256": split_audit["data_sha256"],
+                    "q_sha256": split_audit["q_sha256"],
+                    "prediction_sha256": "d" * 64,
+                    "prediction_order_sha256": split_audit[
+                        "prediction_order_sha256"
+                    ],
+                    "config_sha256": "e" * 64,
+                    "checkpoint_sha256": "f" * 64,
+                    "source_path": f"/baseline/{dataset_id}-{split}-{metric}.json",
+                })
+        self.baseline_audit = audit_baseline_rows(baseline_rows, self.audit_rows)
+
+    @staticmethod
+    def _trusted_expectations(cohort: dict[str, object]) -> dict[str, object]:
+        return {
+            "expected_dataset_ids": cohort["dataset_ids"],
+            "expected_a0_fingerprints": cohort["a0_fingerprints"],
+            "expected_comparator_audit_sha256": cohort[
+                "comparator_audit_sha256"
+            ],
+            "expected_dataset_audit_sha256": cohort["dataset_audit_sha256"],
         }
 
     def test_exact_rank_key_selects_exactly_three_datasets(self) -> None:
         cohort = freeze_primary_cohort(
-            self.a0_rows, self.comparator_rows, self.audit_rows
+            self.a0_rows, self.baseline_audit, self.audit_rows
         )
         self.assertEqual(
             cohort["dataset_ids"], ["xes3g5m", "assist17", "moocradar"]
@@ -426,26 +469,26 @@ class PrimaryCohortRankingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "cohort.json"
             first = freeze_primary_cohort(
-                self.a0_rows, self.comparator_rows, self.audit_rows, path=path
+                self.a0_rows, self.baseline_audit, self.audit_rows, path=path
             )
             repeated = freeze_primary_cohort(
-                self.a0_rows, self.comparator_rows, self.audit_rows, path=path
+                self.a0_rows, self.baseline_audit, self.audit_rows, path=path
             )
             self.assertEqual(repeated, first)
             changed = copy.deepcopy(self.a0_rows)
             changed[0]["a0_fingerprint"] = "f" * 64
-            with self.assertRaisesRegex(ValueError, "frozen cohort metadata mismatch"):
+            with self.assertRaisesRegex(ValueError, "A0 fingerprint mismatch"):
                 freeze_primary_cohort(
-                    changed, self.comparator_rows, self.audit_rows, path=path
+                    changed, self.baseline_audit, self.audit_rows, path=path
                 )
 
     def test_loader_rejects_comparator_or_audit_hash_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "cohort.json"
             cohort = freeze_primary_cohort(
-                self.a0_rows, self.comparator_rows, self.audit_rows, path=path
+                self.a0_rows, self.baseline_audit, self.audit_rows, path=path
             )
-            for field in ("comparator_sha256", "audit_sha256"):
+            for field in ("comparator_audit_sha256", "dataset_audit_sha256"):
                 with self.subTest(field=field):
                     tampered = copy.deepcopy(cohort)
                     tampered[field] = "0" * 64
@@ -453,3 +496,65 @@ class PrimaryCohortRankingTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "canonical SHA-256 mismatch"):
                         load_verified_cohort(path)
                     path.write_text(json.dumps(cohort), encoding="utf-8")
+
+    def test_schema_v2_loader_requires_and_checks_trusted_expectations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.json"
+            cohort = freeze_primary_cohort(
+                self.a0_rows, self.baseline_audit, self.audit_rows, path=path
+            )
+            with self.assertRaisesRegex(ValueError, "trusted schema-v2 expectations"):
+                load_verified_cohort(path)
+
+            tampered = copy.deepcopy(cohort)
+            selected = tampered["dataset_ids"][0]
+            tampered["a0_fingerprints"][selected] = "0" * 64
+            unhashed = dict(tampered)
+            unhashed.pop("cohort_sha256")
+            tampered["cohort_sha256"] = canonical_sha256(unhashed)
+            path.write_text(json.dumps(tampered), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "A0 fingerprint mismatch"):
+                load_verified_cohort(path, **self._trusted_expectations(cohort))
+
+    def test_cohort_boundary_rejects_rehashed_invalid_accepted_provenance(self) -> None:
+        tampered = copy.deepcopy(self.baseline_audit)
+        tampered["accepted_rows"][0]["seed"] = 7
+        tampered.pop("audit_sha256")
+        tampered["audit_sha256"] = canonical_sha256(tampered)
+
+        with self.assertRaisesRegex(ValueError, "accepted baseline provenance"):
+            freeze_primary_cohort(self.a0_rows, tampered, self.audit_rows)
+
+    def test_cohort_boundary_rejects_rehashed_non_strongest_registry(self) -> None:
+        tampered = copy.deepcopy(self.baseline_audit)
+        strongest = tampered["strongest_comparators"]["assist17"]["holdout"][
+            "zero_auc"
+        ]
+        tampered["strongest_comparators"]["assist17"]["holdout"]["zero_auc"] = {
+            **strongest,
+            "value": 0.99,
+        }
+        tampered.pop("audit_sha256")
+        tampered["audit_sha256"] = canonical_sha256(tampered)
+
+        with self.assertRaisesRegex(ValueError, "strongest comparator registry"):
+            freeze_primary_cohort(self.a0_rows, tampered, self.audit_rows)
+
+    def test_primary_freeze_removes_partial_file_after_fsync_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.json"
+            with mock.patch(
+                "scripts.unified_cohort.os.fsync", side_effect=OSError("injected")
+            ):
+                with self.assertRaisesRegex(OSError, "injected"):
+                    freeze_primary_cohort(
+                        self.a0_rows, self.baseline_audit, self.audit_rows, path=path
+                    )
+            self.assertFalse(path.exists())
+
+    def test_a0_fingerprint_must_be_lowercase_sha256(self) -> None:
+        invalid = copy.deepcopy(self.a0_rows)
+        invalid[0]["a0_fingerprint"] = "A" * 64
+        with self.assertRaisesRegex(ValueError, "invalid A0 fingerprint"):
+            freeze_primary_cohort(invalid, self.baseline_audit, self.audit_rows)
