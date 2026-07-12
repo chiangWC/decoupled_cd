@@ -94,3 +94,45 @@ DOA 仅作为内部软排序证据，不覆盖 AUC hard gate。
 ## Test 状态
 
 `TEST CLOSED`。没有运行 `external-gate`、`authorize-test` 或 `run-test`，也没有读取真实 test label/metric。只有未来经批准的新 brainstorming/plan 完成单模块替换，并依次通过相对 A0 candidate gate 与从 Task 5 audited strongest registry 动态重建的 external gate，才可重新讨论 test authorization。
+
+## Review-fix：anchored A1 replay（2026-07-12）
+
+Blocking provenance finding 已修复于
+`93877cf9c0e22f57f8aece630b63d072420379a5`（`fix: anchor A1 candidate replay`）。
+原 `finalize_candidate` 只读取 mutable `state.json` 和 raw proof metrics；现在 A0/A1
+共用 Task 7 anchored replay core，并对 A1 强制执行：
+
+- `proof_sha256_by_counter` 的 key 必须精确等于 `1..issuance_counter`；
+- 三个 counter 必须按冻结 cohort 顺序一一对应 MOO、ASSIST17、XES；
+- 从 consumed capability 重放 outer status、注册命令、输入 snapshots、split summary、
+  DOA、architecture/cohort、recipe、seed/split seed 与 parameter count；
+- 重新计算 standard/holdout/zero/ordinary-DOA/weighted-DOA delta，并与 raw proof
+  语义及 controller-registered raw SHA 比较；
+- candidate rows 只从重放后的 split proofs 组装，不再信任 proof 内 metric 副本。
+
+新增 tamper tests 证明 coordinated state+proof hash 修改和缺失 proof counter 均失败。
+Schema-2 cohort 也不再从同一 cohort payload 自派生 expectations；新 campaign 在 init
+时从 independently verified A0 proof registry、dataset audit 和 comparator audit 计算并写入
+controller state，completed legacy A1 verification 则显式传入同一独立重放结果。CLI 描述已改为
+A0/A1 shared validation。
+
+在 clean committed verifier 上运行 `verify-existing`，没有覆盖既有 A1 rows 或 decision；
+它逐字节重建并确认：
+
+- existing rows SHA-256：
+  `635fe863f625eb7cc6d77012b4af43e040a39fae3cffdc3237fdc7c7f0121447`；
+- existing decision SHA-256：
+  `2c29c5190f5c01327c16497e0ae0bfef7bd7a36b08d67fe790a901fcc6e4218f`；
+- verifier route commit：`93877cf9c0e22f57f8aece630b63d072420379a5`；
+- candidate training route commit：`561faf830069a3dbbad5e6e88c330113e69c739b`；
+- verification canonical SHA：
+  `088c3165dab400d77f6e868c344cec11185a0d7fe3850203d82909337664706a`；
+- verification file SHA-256：
+  `31048af248217c26611b62c0802a09de2271cbce37c7b8f40d1bbed39aa86fe5`；
+- verification artifact：`$ROOT/decisions/a1-existing-verification.json`；
+- `test_opened=false`。
+
+Review-fix focused exploration/controller/campaign verification：`104` tests，OK；
+`compileall` 和 `git diff --check` exit 0。没有运行 GPU、full suite、external gate 或 test。
+此前未经授权的两次 pre-attempt full-suite 运行及其 MKL/timing 结果仍按上文原样保留，
+没有改写为 suite-green claim。
