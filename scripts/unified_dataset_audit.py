@@ -20,6 +20,8 @@ DATASET_LAYOUTS: dict[str, tuple[str, str]] = {
 
 PROVISIONAL_DATASET_IDS = frozenset({"Junyi", "EdNet-ICDM"})
 SPLIT_FILES = ("train.csv", "valid.csv", "test.csv", "Q_matrix.csv")
+ZERO_COUNT_MINIMUM = 1000
+ZERO_LABEL_COUNT_MINIMUM = 100
 
 
 def canonical_sha256(payload: object) -> str:
@@ -37,6 +39,18 @@ def _file_sha256(path: Path) -> str:
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
+    return digest.hexdigest()
+
+
+def _data_sha256(paths: Iterable[Path]) -> str:
+    digest = hashlib.sha256()
+    for path in paths:
+        encoded_name = path.name.encode("utf-8")
+        digest.update(len(encoded_name).to_bytes(4, "big"))
+        digest.update(encoded_name)
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
     return digest.hexdigest()
 
 
@@ -86,7 +100,7 @@ def _training_history(
 def _validation_coverage(
     path: Path,
     history: dict[str, set[str]],
-) -> tuple[dict[str, int], set[str], set[str]]:
+) -> tuple[dict[str, Any], set[str], set[str]]:
     counts = {
         "validation_rows": 0,
         "exact_zero_validation_rows": 0,
@@ -94,29 +108,46 @@ def _validation_coverage(
         "rows_with_unseen_target_concepts": 0,
         "unseen_target_concepts": 0,
         "empty_target_rows": 0,
+        "zero_count": 0,
+        "zero_positive_count": 0,
+        "zero_negative_count": 0,
     }
     exercises: set[str] = set()
     concepts: set[str] = set()
+    prediction_order: list[tuple[str, str]] = []
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
-        _require_columns(reader.fieldnames, {"stu_id", "exer_id", "cpt_seq"})
+        _require_columns(reader.fieldnames, {"stu_id", "exer_id", "cpt_seq", "label"})
         for row in reader:
             counts["validation_rows"] += 1
             target = _concepts(row["cpt_seq"])
             seen = history.get(row["stu_id"].strip(), set())
             exercises.add(row["exer_id"].strip())
             concepts.update(target)
+            prediction_order.append((row["stu_id"].strip(), row["exer_id"].strip()))
             if not target:
                 counts["empty_target_rows"] += 1
                 continue
             unseen = target - seen
             if len(unseen) == len(target):
                 counts["exact_zero_validation_rows"] += 1
+                counts["zero_count"] += 1
+                try:
+                    label = float(row["label"])
+                except (TypeError, ValueError) as error:
+                    raise ValueError("validation label is not numeric") from error
+                if label == 1.0:
+                    counts["zero_positive_count"] += 1
+                elif label == 0.0:
+                    counts["zero_negative_count"] += 1
+                else:
+                    raise ValueError("validation labels must be binary")
             elif unseen:
                 counts["partial_unseen_validation_rows"] += 1
             if unseen:
                 counts["rows_with_unseen_target_concepts"] += 1
                 counts["unseen_target_concepts"] += len(unseen)
+    counts["prediction_order_sha256"] = canonical_sha256(prediction_order)
     return counts, exercises, concepts
 
 
@@ -136,6 +167,7 @@ def _split_record(path: Path) -> tuple[dict[str, Any], tuple[set[str], set[str]]
         "test_path": str((path / "test.csv").resolve()),
         "q_path": str(q_path.resolve()),
         "q_sha256": _file_sha256(q_path),
+        "data_sha256": _data_sha256((path / "train.csv", path / "valid.csv")),
         "test_sha256": _file_sha256(path / "test.csv"),
         "test_content_hash_only": True,
         "exercise_id_count": len(q_exercises),
@@ -205,6 +237,12 @@ def audit_dataset(root: Path, dataset_id: str) -> dict[str, Any]:
             "split_summary_sha256": _file_sha256(summary_path),
             "id_domains_match": standard_domain == holdout_domain,
             "q_hashes_match": standard["q_sha256"] == holdout["q_sha256"],
+            "zero_count": holdout["zero_count"],
+            "zero_positive_count": holdout["zero_positive_count"],
+            "zero_negative_count": holdout["zero_negative_count"],
+            "data_sha256": holdout["data_sha256"],
+            "q_sha256": holdout["q_sha256"],
+            "prediction_order_sha256": holdout["prediction_order_sha256"],
         }
     )
     record["asset_ready"] = bool(
@@ -227,12 +265,33 @@ def audit_dataset(root: Path, dataset_id: str) -> dict[str, Any]:
             record["reasons"].append(
                 f"{split_name} validation has no exact-zero coverage rows"
             )
+        for count_name, minimum in (
+            ("zero_count", ZERO_COUNT_MINIMUM),
+            ("zero_positive_count", ZERO_LABEL_COUNT_MINIMUM),
+            ("zero_negative_count", ZERO_LABEL_COUNT_MINIMUM),
+        ):
+            if split[count_name] < minimum:
+                record["reasons"].append(
+                    f"{split_name} {count_name} below eligibility threshold"
+                )
     record["eligible"] = bool(
         record["asset_ready"]
-        and standard["exact_zero_validation_rows"] > 0
-        and holdout["exact_zero_validation_rows"] > 0
+        and all(
+            split["zero_count"] >= ZERO_COUNT_MINIMUM
+            and split["zero_positive_count"] >= ZERO_LABEL_COUNT_MINIMUM
+            and split["zero_negative_count"] >= ZERO_LABEL_COUNT_MINIMUM
+            for split in (standard, holdout)
+        )
     )
-    record["status"] = "eligible" if record["eligible"] else "ineligible"
+    if record["eligible"]:
+        record["status"] = "eligible"
+    elif all(
+        split["zero_count"] == 0 and split["partial_unseen_validation_rows"] > 0
+        for split in (standard, holdout)
+    ):
+        record["status"] = "partial-only"
+    else:
+        record["status"] = "ineligible"
     record["audit_sha256"] = canonical_sha256(record)
     return record
 

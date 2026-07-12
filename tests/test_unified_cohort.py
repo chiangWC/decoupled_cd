@@ -9,7 +9,11 @@ import tempfile
 import unittest
 from unittest import mock
 
-from scripts.unified_cohort import freeze_cohort, load_verified_cohort
+from scripts.unified_cohort import (
+    freeze_cohort,
+    freeze_primary_cohort,
+    load_verified_cohort,
+)
 from scripts.unified_dataset_audit import (
     DATASET_LAYOUTS,
     audit_pool,
@@ -59,8 +63,12 @@ class DatasetFixtureMixin:
             encoding="utf-8",
         )
         valid_concepts = '"1,2"' if partial_only else "2"
+        valid_rows = [
+            f"0,11,{valid_concepts},{1 if index < 100 else 0}"
+            for index in range(1000)
+        ]
         (path / "valid.csv").write_text(
-            f"stu_id,exer_id,cpt_seq,label\n0,11,{valid_concepts},0\n",
+            "stu_id,exer_id,cpt_seq,label\n" + "\n".join(valid_rows) + "\n",
             encoding="utf-8",
         )
         (path / "test.csv").write_bytes(b"\xfftest-content-must-only-be-hashed\n")
@@ -91,12 +99,47 @@ class UnifiedDatasetAuditTests(DatasetFixtureMixin, unittest.TestCase):
         nips = audit["datasets"]["NIPS34"]
         self.assertEqual(nips["standard"]["exact_zero_validation_rows"], 0)
         self.assertEqual(nips["holdout"]["exact_zero_validation_rows"], 0)
-        self.assertEqual(nips["standard"]["rows_with_unseen_target_concepts"], 1)
-        self.assertEqual(nips["standard"]["partial_unseen_validation_rows"], 1)
+        self.assertEqual(nips["standard"]["rows_with_unseen_target_concepts"], 1000)
+        self.assertEqual(nips["standard"]["partial_unseen_validation_rows"], 1000)
         assist = audit["datasets"]["ASSIST09"]["standard"]
-        self.assertEqual(assist["exact_zero_validation_rows"], 1)
-        self.assertEqual(assist["rows_with_unseen_target_concepts"], 1)
+        self.assertEqual(assist["exact_zero_validation_rows"], 1000)
+        self.assertEqual(assist["zero_count"], 1000)
+        self.assertEqual(assist["zero_positive_count"], 100)
+        self.assertEqual(assist["zero_negative_count"], 900)
+        self.assertEqual(assist["rows_with_unseen_target_concepts"], 1000)
         self.assertEqual(assist["partial_unseen_validation_rows"], 0)
+        self.assertEqual(len(assist["data_sha256"]), 64)
+        self.assertEqual(len(assist["q_sha256"]), 64)
+        self.assertEqual(len(assist["prediction_order_sha256"]), 64)
+        self.assertFalse(nips["eligible"])
+
+    def test_zero_slice_thresholds_are_all_required_for_eligibility(self):
+        for label in ("zero_count", "zero_positive_count", "zero_negative_count"):
+            with self.subTest(label=label):
+                standard_name, holdout_name = DATASET_LAYOUTS["ASSIST09"]
+                for split_name in (standard_name, holdout_name):
+                    split = self.root / split_name / "valid.csv"
+                    if label == "zero_count":
+                        positive, negative = 100, 899
+                    elif label == "zero_positive_count":
+                        positive, negative = 99, 901
+                    else:
+                        positive, negative = 901, 99
+                    rows = ["0,11,2,1"] * positive + ["0,11,2,0"] * negative
+                    split.write_text(
+                        "stu_id,exer_id,cpt_seq,label\n" + "\n".join(rows) + "\n",
+                        encoding="utf-8",
+                    )
+                record = audit_pool(self.root)["datasets"]["ASSIST09"]
+                self.assertFalse(record["eligible"])
+                self.assertIn(
+                    f"standard {label} below eligibility threshold", record["reasons"]
+                )
+
+    def test_nips34_without_exact_zero_slice_remains_partial_only(self):
+        nips = audit_pool(self.root)["datasets"]["NIPS34"]
+        self.assertEqual(nips["status"], "partial-only")
+        self.assertEqual(nips["standard"]["zero_count"], 0)
         self.assertFalse(nips["eligible"])
 
     def test_junyi_and_ednet_remain_provisional_without_q_and_holdout(self):
@@ -149,14 +192,24 @@ class UnifiedCohortFreezeTests(DatasetFixtureMixin, unittest.TestCase):
         unhashed.pop("audit_sha256")
         audit["audit_sha256"] = canonical_sha256(unhashed)
 
-    def test_cohort_requires_at_least_three_datasets(self):
-        with self.assertRaisesRegex(ValueError, "at least three datasets"):
+    def test_cohort_requires_exactly_three_datasets(self):
+        with self.assertRaisesRegex(ValueError, "exactly three datasets"):
             freeze_cohort(
                 self.cohort_path,
                 self.dataset_ids[:2],
                 audit=self.audit,
                 b0_validation_references={
                     key: self.b0_references[key] for key in self.dataset_ids[:2]
+                },
+            )
+        with self.assertRaisesRegex(ValueError, "exactly three datasets"):
+            freeze_cohort(
+                self.cohort_path,
+                [*self.dataset_ids, "XES3G5M"],
+                audit=self.audit,
+                b0_validation_references={
+                    **self.b0_references,
+                    "XES3G5M": {"standard": "b0/xes/std", "holdout": "b0/xes/hold"},
                 },
             )
 
@@ -311,3 +364,92 @@ class UnifiedCohortFreezeTests(DatasetFixtureMixin, unittest.TestCase):
         )
         self.assertEqual(first_open.args[2], 0o644)
         self.assertEqual(fsync_mock.call_count, 2)
+
+
+class PrimaryCohortRankingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.a0_rows = [
+            {
+                "dataset_id": dataset_id,
+                "a0_zero_auc": zero_auc,
+                "a0_standard_auc": standard_auc,
+                "a0_holdout_auc": holdout_auc,
+                "a0_fingerprint": character * 64,
+                "failed_attempt_count": failures,
+            }
+            for dataset_id, zero_auc, standard_auc, holdout_auc, character, failures in (
+                ("assist17", 0.80, 0.82, 0.81, "a", 1),
+                ("moocradar", 0.82, 0.83, 0.82, "b", 2),
+                ("xes3g5m", 0.79, 0.84, 0.83, "c", 0),
+                ("assist09", 0.78, 0.80, 0.79, "d", 0),
+            )
+        ]
+        self.comparator_rows = [
+            {
+                "dataset_id": dataset_id,
+                "strongest_external_zero_auc": zero_auc,
+                "strongest_external_standard_auc": standard_auc,
+                "strongest_external_holdout_auc": holdout_auc,
+            }
+            for dataset_id, zero_auc, standard_auc, holdout_auc in (
+                ("assist17", 0.77, 0.80, 0.79),
+                ("moocradar", 0.80, 0.80, 0.80),
+                ("xes3g5m", 0.75, 0.82, 0.81),
+                ("assist09", 0.77, 0.78, 0.77),
+            )
+        ]
+        self.audit_rows = {
+            dataset_id: {
+                "eligible": True,
+                "zero_count": count,
+                "audit_sha256": character * 64,
+            }
+            for dataset_id, count, character in (
+                ("assist17", 3000, "1"),
+                ("moocradar", 4000, "2"),
+                ("xes3g5m", 2000, "3"),
+                ("assist09", 5000, "4"),
+            )
+        }
+
+    def test_exact_rank_key_selects_exactly_three_datasets(self) -> None:
+        cohort = freeze_primary_cohort(
+            self.a0_rows, self.comparator_rows, self.audit_rows
+        )
+        self.assertEqual(
+            cohort["dataset_ids"], ["xes3g5m", "assist17", "moocradar"]
+        )
+        self.assertEqual(len(cohort["dataset_ids"]), 3)
+        self.assertEqual(len(cohort["cohort_sha256"]), 64)
+
+    def test_exclusive_freeze_is_idempotent_and_rejects_fingerprint_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.json"
+            first = freeze_primary_cohort(
+                self.a0_rows, self.comparator_rows, self.audit_rows, path=path
+            )
+            repeated = freeze_primary_cohort(
+                self.a0_rows, self.comparator_rows, self.audit_rows, path=path
+            )
+            self.assertEqual(repeated, first)
+            changed = copy.deepcopy(self.a0_rows)
+            changed[0]["a0_fingerprint"] = "f" * 64
+            with self.assertRaisesRegex(ValueError, "frozen cohort metadata mismatch"):
+                freeze_primary_cohort(
+                    changed, self.comparator_rows, self.audit_rows, path=path
+                )
+
+    def test_loader_rejects_comparator_or_audit_hash_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cohort.json"
+            cohort = freeze_primary_cohort(
+                self.a0_rows, self.comparator_rows, self.audit_rows, path=path
+            )
+            for field in ("comparator_sha256", "audit_sha256"):
+                with self.subTest(field=field):
+                    tampered = copy.deepcopy(cohort)
+                    tampered[field] = "0" * 64
+                    path.write_text(json.dumps(tampered), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "canonical SHA-256 mismatch"):
+                        load_verified_cohort(path)
+                    path.write_text(json.dumps(cohort), encoding="utf-8")
