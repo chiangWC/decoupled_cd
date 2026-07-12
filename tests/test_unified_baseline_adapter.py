@@ -13,6 +13,27 @@ from scripts.unified_dataset_audit import canonical_sha256
 
 
 class UnifiedBaselineAdapterTests(unittest.TestCase):
+    def test_manifest_binds_exact_model_configuration(self) -> None:
+        from scripts.unified_baseline_adapter import main
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            train = root / "train.csv"
+            valid = root / "valid.csv"
+            train.touch()
+            valid.touch()
+            output = root / "manifest.json"
+            main([
+                "manifest", "--model", "ORCDF", "--dataset-id", "ASSIST17",
+                "--split-id", "standard", "--train-file", str(train),
+                "--valid-file", str(valid), "--config", "epochs=8",
+                "--config", "latent_dim=32", "--output", str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(
+            payload["configuration"], {"epochs": "8", "latent_dim": "32"}
+        )
+
     def test_internal_evaluator_exposes_bound_prediction_output(self) -> None:
         root = Path(__file__).resolve().parents[1]
         completed = subprocess.run(

@@ -173,6 +173,12 @@ def finalize_baseline_rows(
 
 
 def _write_manifest(args: argparse.Namespace) -> None:
+    configuration: dict[str, str] = {}
+    for item in args.config:
+        key, separator, value = item.partition("=")
+        if not separator or not key or key in configuration:
+            raise ValueError("--config must be repeated as unique key=value entries")
+        configuration[key] = value
     payload = {
         "schema_version": 1,
         "model": args.model,
@@ -184,6 +190,7 @@ def _write_manifest(args: argparse.Namespace) -> None:
         "train_file": str(args.train_file.resolve()),
         "valid_file": str(args.valid_file.resolve()),
         "test_file": str(args.valid_file.resolve()),
+        "configuration": configuration,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x", encoding="utf-8") as handle:
@@ -214,6 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--split-id", choices=("standard", "holdout"), required=True)
     manifest.add_argument("--train-file", type=Path, required=True)
     manifest.add_argument("--valid-file", type=Path, required=True)
+    manifest.add_argument("--config", action="append", default=[])
     manifest.add_argument("--output", type=Path, required=True)
     manifest.set_defaults(handler=_write_manifest)
     finalize = subparsers.add_parser("finalize")
