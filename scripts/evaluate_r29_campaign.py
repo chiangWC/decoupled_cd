@@ -160,13 +160,80 @@ def main() -> None:
                 )
                 / max(full["standard"]["active_parameter_count"], 1),
                 "capacity_common_initialization_equal": (
-                    full["standard"]["common_initialization_hash"]
-                    == results["capacity_control"]["standard"]["common_initialization_hash"]
+                    all(
+                        full[variant]["common_initialization_hash"]
+                        == results["capacity_control"][variant][
+                            "common_initialization_hash"
+                        ]
+                        for variant in ("standard", "holdout")
+                    )
                 ),
+                "standard_holdout_recipe_equal": all(
+                    results[mode]["standard"]["recipe_sha256"]
+                    == results[mode]["holdout"]["recipe_sha256"]
+                    for mode in MODES
+                ),
+                "full_architecture_fingerprint": full["standard"][
+                    "architecture_fingerprint"
+                ],
+                "full_standard_holdout_topology_equal": (
+                    full["standard"]["architecture_fingerprint"]
+                    == full["holdout"]["architecture_fingerprint"]
+                ),
+                "control_external_win": classify_external_win(
+                    {
+                        axis: control_values[axis]
+                        - (
+                            full_values[axis] - margins[axis]
+                        )
+                        for axis in ("S", "H", "T")
+                    }
+                )[0],
             }
         )
     winning = [row for row in rows if row["ordinary_win"]]
     target_two = [row for row in winning if row["delta"]["T"] >= 0.002]
+    clean_controls = all(
+        row["parameter_difference_ratio"] <= 0.10
+        and row["capacity_common_initialization_equal"]
+        and row["standard_holdout_recipe_equal"]
+        and row["full_standard_holdout_topology_equal"]
+        for row in rows
+    )
+    same_full_topology = len(
+        {row["full_architecture_fingerprint"] for row in rows}
+    ) == 1
+    new_external_wins = sum(
+        row["ordinary_win"] and not row["control_external_win"] for row in rows
+    )
+    worst_target_margin_improvement = min(
+        row["external_margin"]["T"] for row in rows
+    ) - min(
+        row["external_margin"]["T"] - row["delta"]["T"] for row in rows
+    )
+    target_delta_gate = (
+        len(target_two) >= 2
+        and any(row["delta"]["T"] >= 0.003 for row in winning)
+    )
+    bootstrap_gate = any(
+        row["target_bootstrap"]["lower_95"] > 0 for row in winning
+    )
+    preservation_gate = all(
+        row["no_axis_regression_beyond_0.001"] for row in winning
+    )
+    external_progress_gate = (
+        new_external_wins >= 1 or worst_target_margin_improvement >= 0.001
+    )
+    final_module_qualification = (
+        len(winning) >= 3
+        and sum(row["strict_win"] for row in rows) >= 2
+        and target_delta_gate
+        and bootstrap_gate
+        and preservation_gate
+        and external_progress_gate
+        and clean_controls
+        and same_full_topology
+    )
     payload = {
         "schema_version": 1,
         "candidate": "meta_implicit",
@@ -185,12 +252,21 @@ def main() -> None:
             "all_winning_axes_preserved": all(
                 row["no_axis_regression_beyond_0.001"] for row in winning
             ),
-            "preliminary_module_gate": (
-                len(target_two) >= 2
-                and any(row["delta"]["T"] >= 0.003 for row in winning)
-                and any(row["target_bootstrap"]["lower_95"] > 0 for row in winning)
-                and all(row["no_axis_regression_beyond_0.001"] for row in winning)
+            "clean_controls": clean_controls,
+            "same_full_topology": same_full_topology,
+            "new_external_wins_vs_control": new_external_wins,
+            "worst_target_margin_improvement_vs_control": (
+                worst_target_margin_improvement
             ),
+            "external_progress_gate": external_progress_gate,
+            "preliminary_module_gate": (
+                target_delta_gate
+                and bootstrap_gate
+                and preservation_gate
+                and clean_controls
+                and same_full_topology
+            ),
+            "final_module_qualification": final_module_qualification,
         },
     }
     write_json(payload, args.output)
