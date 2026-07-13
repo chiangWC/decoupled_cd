@@ -1,0 +1,40 @@
+{
+  "schema_version": 2,
+  "updated_at": "2026-07-13",
+  "model_seed": 42,
+  "split_seed": 2024,
+  "base_registry": "configs/r28_registry.json",
+  "ordinary_overall_tolerance": 0.002,
+  "required_ordinary_wins": 3,
+  "required_strict_wins": 2,
+  "active_pool": ["assist_09", "assist_17", "moocradar", "nips34", "xes3g5m"],
+  "provisional_pool": ["junyi", "ednet"],
+  "datasets": {
+    "assist_09": {"status": "active", "source": "r28_registry"},
+    "assist_17": {"status": "active", "source": "r28_registry"},
+    "moocradar": {"status": "active", "source": "r28_registry"},
+    "nips34": {"status": "active", "source": "r28_registry"},
+    "xes3g5m": {"status": "active", "source": "r28_registry"},
+    "junyi": {
+      "status": "data_preparation_pending",
+      "standard_dir": "r29/junyi_standard_v2",
+      "holdout_dir": "r29/junyi_chold_v2",
+      "target_scope": "bucket:zero",
+      "target_semantics": "exercise-concept one-to-one; exact-zero is both unseen item and unseen concept",
+      "external_axes": {"S": null, "H": null, "T": null}
+    },
+    "ednet": {
+      "status": "data_preparation_pending",
+      "standard_dir": "r29/ednet_clean_v2",
+      "holdout_dir": "r29/ednet_clean_chold_v2",
+      "target_scope": null,
+      "target_scope_policy": "bucket:zero when valid/test each have >=100 rows and both labels; otherwise low_coverage",
+      "external_axes": {"S": null, "H": null, "T": null}
+    }
+  },
+  "external_axis_policy": {
+    "selection": "strongest row-aligned seed-42 validation prediction per axis",
+    "test_confirmation": "requires row-aligned seed-42 test predictions",
+    "historical_test_numbers": "sanity_check_only"
+  }
+}
