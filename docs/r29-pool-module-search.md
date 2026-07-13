@@ -18,6 +18,11 @@ MOOCRadar validation. Its S/H/T AUC is
 `+0.001097/+0.002755/+0.002808`; this is a strict win and confirms that the
 fixed Diagnosis and training harness can reach the live external line.
 
+After Junyi external admission, the same frozen anchor obtained S/H/T
+`0.826869/0.826044/0.826044`, with margins
+`+0.006435/+0.006055/+0.006055`. This is another strict validation win, but it
+does not change the anchor's non-contribution status.
+
 ## Pool admission
 
 The model seed is fixed to 42 and the data split seed to 2024.

@@ -7,8 +7,8 @@
   "ordinary_overall_tolerance": 0.002,
   "required_ordinary_wins": 3,
   "required_strict_wins": 2,
-  "active_pool": ["assist_09", "assist_17", "moocradar", "nips34", "xes3g5m", "junyi"],
-  "provisional_pool": ["ednet"],
+  "active_pool": ["assist_09", "assist_17", "moocradar", "nips34", "xes3g5m", "junyi", "ednet"],
+  "provisional_pool": [],
   "datasets": {
     "assist_09": {"status": "active", "source": "r28_registry"},
     "assist_17": {"status": "active", "source": "r28_registry"},
@@ -114,12 +114,76 @@
       }
     },
     "ednet": {
-      "status": "external_reproduction_pending",
+      "status": "active",
       "standard_dir": "r29/ednet_clean_v2",
       "holdout_dir": "r29/ednet_clean_chold_v2",
       "target_scope": "bucket:zero",
       "target_scope_policy": "bucket:zero when valid/test each have >=100 rows and both labels; otherwise low_coverage",
-      "external_axes": {"S": null, "H": null, "T": null},
+      "external_axes": {
+        "S": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7439332300899723,
+          "test_auc": 0.7433846964268638,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/r29/external_reproduction/orcdf/ednet/standard/valid_predictions.csv",
+          "validation_prediction_sha256": "3d2fbf1199aa1618ada81881dc21655821c3ab2d69b99c3a02f67f23af2bc6b4",
+          "validation_rows": 75321,
+          "test_prediction_path": "results/r29/external_reproduction/orcdf/ednet/standard/test_predictions.csv",
+          "test_prediction_sha256": "42150e16a61cf424ea9b38eac5bfbc6eeb6f9cbf02103414ff57e8dda98bd20a",
+          "test_rows": 150586,
+          "checkpoint": "results/r29/external_reproduction/orcdf/ednet/standard/best_model.pth",
+          "checkpoint_sha256": "c5a975464c7edca31ff2c100575584c4e9cdc89c1b2962f827362ebdead0b772",
+          "source_hashes": {
+            "model.py": "26ab8502f5ead7f518058f443eeed4f0066158cb88146012d6c6eb1930d0363a",
+            "dataset.py": "29590bbfa2ad0fc415681920e02ab07d6b14c04a70f1df40ff89a2e430ea18bc",
+            "trainer.py": "7b4b7fddc46900cd6d637d6abadace3da6fe44687b576a7b9e35c1ea791c92c7"
+          }
+        },
+        "H": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7404503224147613,
+          "test_auc": 0.740806965069497,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/r29/external_reproduction/orcdf/ednet/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "75559b9b788400da832861bc96a0749baaa5ffee2de5d207a2f8bdf4ce0b7b6e",
+          "validation_rows": 100364,
+          "test_prediction_path": "results/r29/external_reproduction/orcdf/ednet/holdout/test_predictions.csv",
+          "test_prediction_sha256": "80e5c36055bfe73082d954bc057311de171ad901492dbba740c810f09157e549",
+          "test_rows": 199982,
+          "checkpoint": "results/r29/external_reproduction/orcdf/ednet/holdout/best_model.pth",
+          "checkpoint_sha256": "6e1823c3393b4198804a50bb1ec6ac88598deec15660a3e150a08be958016754",
+          "source_hashes": {
+            "model.py": "26ab8502f5ead7f518058f443eeed4f0066158cb88146012d6c6eb1930d0363a",
+            "dataset.py": "29590bbfa2ad0fc415681920e02ab07d6b14c04a70f1df40ff89a2e430ea18bc",
+            "trainer.py": "7b4b7fddc46900cd6d637d6abadace3da6fe44687b576a7b9e35c1ea791c92c7"
+          }
+        },
+        "T": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7258983456369176,
+          "test_auc": 0.7240996310210297,
+          "validation_target_auc": 0.7258983456369176,
+          "test_target_auc": 0.7240996310210297,
+          "validation_prediction_path": "results/r29/external_reproduction/orcdf/ednet/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "75559b9b788400da832861bc96a0749baaa5ffee2de5d207a2f8bdf4ce0b7b6e",
+          "validation_rows": 100364,
+          "test_prediction_path": "results/r29/external_reproduction/orcdf/ednet/holdout/test_predictions.csv",
+          "test_prediction_sha256": "80e5c36055bfe73082d954bc057311de171ad901492dbba740c810f09157e549",
+          "test_rows": 199982,
+          "checkpoint": "results/r29/external_reproduction/orcdf/ednet/holdout/best_model.pth",
+          "checkpoint_sha256": "6e1823c3393b4198804a50bb1ec6ac88598deec15660a3e150a08be958016754",
+          "source_hashes": {
+            "model.py": "26ab8502f5ead7f518058f443eeed4f0066158cb88146012d6c6eb1930d0363a",
+            "dataset.py": "29590bbfa2ad0fc415681920e02ab07d6b14c04a70f1df40ff89a2e430ea18bc",
+            "trainer.py": "7b4b7fddc46900cd6d637d6abadace3da6fe44687b576a7b9e35c1ea791c92c7"
+          }
+        }
+      },
       "cleaning": {
         "raw_rows": 824329,
         "clean_rows": 753564,
