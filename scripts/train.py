@@ -24,6 +24,8 @@ from models import (
     DecoupledCDMV2,
     KaNCDBaseline,
     R28CompletionCDM,
+    R29_COMPLETER_MODES,
+    R29CompletionCDM,
 )
 from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
@@ -48,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
     parser.add_argument(
         "--model",
-        choices=["v1", "v2", "b0", "kancd", "r28_completion"],
+        choices=["v1", "v2", "b0", "kancd", "r28_completion", "r29_completion"],
         default="v1",
         help=(
             "Model variant. v1 is the frozen mainline (adapters allowed). v2 is the clean core with "
@@ -65,9 +67,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--state-completer",
-        choices=COMPLETER_MODES,
+        choices=tuple(sorted(set(COMPLETER_MODES) | set(R29_COMPLETER_MODES))),
         default="relational",
-        help="R28 replaceable state-completion implementation.",
+        help="R28/R29 replaceable state-completion implementation.",
     )
     parser.add_argument(
         "--completion-objective",
@@ -547,8 +549,12 @@ def parse_args() -> argparse.Namespace:
     )
     if args.weight_decay < 0.0:
         raise ValueError("--weight-decay must be non-negative.")
-    if args.model == "r28_completion" and args.seed != 42:
-        raise ValueError("r28_completion experiments are fixed to --seed 42.")
+    if args.model in {"r28_completion", "r29_completion"} and args.seed != 42:
+        raise ValueError(f"{args.model} experiments are fixed to --seed 42.")
+    if args.model == "r29_completion" and args.state_completer not in R29_COMPLETER_MODES:
+        raise ValueError(
+            f"r29_completion requires --state-completer in {R29_COMPLETER_MODES}."
+        )
     if args.dual_cdm_secondary_concept_dim < 1:
         raise ValueError("--dual-cdm-secondary-concept-dim must be positive.")
     if args.dual_cdm_branch_bce_weight < 0.0:
@@ -926,7 +932,21 @@ def main() -> None:
         history_evidence_logit_prior_prior_weight=args.history_evidence_logit_prior_prior_weight,
         history_evidence_logit_prior_mastery_confidence_cap=args.history_evidence_logit_prior_mastery_confidence_cap,
     )
-    if args.model == "r28_completion":
+    if args.model == "r29_completion":
+        model = R29CompletionCDM(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            concept_dim=args.concept_dim,
+            state_completer=args.state_completer,
+            completion_objective=args.completion_objective,
+            completion_mask_frac=args.completion_mask_frac,
+            evidence_cap=args.completion_evidence_cap,
+            readout_dropout=args.completion_readout_dropout,
+            max_guess=args.completion_max_guess,
+            max_slip=args.completion_max_slip,
+        )
+    elif args.model == "r28_completion":
         model = R28CompletionCDM(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
