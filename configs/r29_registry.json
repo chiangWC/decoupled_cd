@@ -7,8 +7,8 @@
   "ordinary_overall_tolerance": 0.002,
   "required_ordinary_wins": 3,
   "required_strict_wins": 2,
-  "active_pool": ["assist_09", "assist_17", "moocradar", "nips34", "xes3g5m"],
-  "provisional_pool": ["junyi", "ednet"],
+  "active_pool": ["assist_09", "assist_17", "moocradar", "nips34", "xes3g5m", "junyi"],
+  "provisional_pool": ["ednet"],
   "datasets": {
     "assist_09": {"status": "active", "source": "r28_registry"},
     "assist_17": {"status": "active", "source": "r28_registry"},
@@ -16,12 +16,76 @@
     "nips34": {"status": "active", "source": "r28_registry"},
     "xes3g5m": {"status": "active", "source": "r28_registry"},
     "junyi": {
-      "status": "external_reproduction_pending",
+      "status": "active",
       "standard_dir": "r29/junyi_standard_v2",
       "holdout_dir": "r29/junyi_chold_v2",
       "target_scope": "bucket:zero",
       "target_semantics": "exercise-concept one-to-one; exact-zero is both unseen item and unseen concept",
-      "external_axes": {"S": null, "H": null, "T": null},
+      "external_axes": {
+        "S": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.8204338172998951,
+          "test_auc": 0.8245865632675814,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/r29/external_reproduction/orcdf/junyi/standard/valid_predictions.csv",
+          "validation_prediction_sha256": "02418ec268e819ae07902d6e9ad40a01245e06991c0b99805eb3af60c6898439",
+          "validation_rows": 24299,
+          "test_prediction_path": "results/r29/external_reproduction/orcdf/junyi/standard/test_predictions.csv",
+          "test_prediction_sha256": "a91a4219e82b9940e6d5db11580f09aced7f3303f820c56a4c5653aebc38ac21",
+          "test_rows": 67063,
+          "checkpoint": "results/r29/external_reproduction/orcdf/junyi/standard/best_model.pth",
+          "checkpoint_sha256": "429f162bfd307f3f11b7daf9fdf903ba87958efb333912e7c3c7dbcf5f843b9b",
+          "source_hashes": {
+            "model.py": "26ab8502f5ead7f518058f443eeed4f0066158cb88146012d6c6eb1930d0363a",
+            "dataset.py": "29590bbfa2ad0fc415681920e02ab07d6b14c04a70f1df40ff89a2e430ea18bc",
+            "trainer.py": "7b4b7fddc46900cd6d637d6abadace3da6fe44687b576a7b9e35c1ea791c92c7"
+          }
+        },
+        "H": {
+          "model": "SVGCD",
+          "seed": 42,
+          "validation_auc": 0.8199889557783353,
+          "test_auc": 0.8193024724307135,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/r29/external_reproduction/svgcd/junyi/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "a70fdf2790b056800bee8a12ea60ef06ac8d60da219601d53d86e5108f64c97d",
+          "validation_rows": 35913,
+          "test_prediction_path": "results/r29/external_reproduction/svgcd/junyi/holdout/test_predictions.csv",
+          "test_prediction_sha256": "0387997aa2158275320d821fb9bc74a591a8c9f086ea24355263948e327c8e5b",
+          "test_rows": 70687,
+          "checkpoint": "results/r29/external_reproduction/svgcd/junyi/holdout/best_model.pth",
+          "checkpoint_sha256": "7541f8e8cb5f71fbd8f54816527a94410c2dfc579387dc4b25f79a56c284ecf9",
+          "source_hashes": {
+            "model.py": "e0f00210595aa52cf4c7e89ec19c53d7fac1343205f159d04e2a5e45b1ec67f4",
+            "dataset.py": "8b11e5a75fc7a502c0ccdcfa6d4c04ffdba642d12e305a8d0dab3a5977fd8cd1",
+            "trainer.py": "591b3a16edfbfa58dc3d9e4aa458a31cc1a09dbe657f113b8b4f86ffdcf19383"
+          }
+        },
+        "T": {
+          "model": "SVGCD",
+          "seed": 42,
+          "validation_auc": 0.8199889557783353,
+          "test_auc": 0.8193024724307135,
+          "validation_target_auc": 0.8199889557783353,
+          "test_target_auc": 0.8193024724307135,
+          "validation_prediction_path": "results/r29/external_reproduction/svgcd/junyi/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "a70fdf2790b056800bee8a12ea60ef06ac8d60da219601d53d86e5108f64c97d",
+          "validation_rows": 35913,
+          "test_prediction_path": "results/r29/external_reproduction/svgcd/junyi/holdout/test_predictions.csv",
+          "test_prediction_sha256": "0387997aa2158275320d821fb9bc74a591a8c9f086ea24355263948e327c8e5b",
+          "test_rows": 70687,
+          "checkpoint": "results/r29/external_reproduction/svgcd/junyi/holdout/best_model.pth",
+          "checkpoint_sha256": "7541f8e8cb5f71fbd8f54816527a94410c2dfc579387dc4b25f79a56c284ecf9",
+          "source_hashes": {
+            "model.py": "e0f00210595aa52cf4c7e89ec19c53d7fac1343205f159d04e2a5e45b1ec67f4",
+            "dataset.py": "8b11e5a75fc7a502c0ccdcfa6d4c04ffdba642d12e305a8d0dab3a5977fd8cd1",
+            "trainer.py": "591b3a16edfbfa58dc3d9e4aa458a31cc1a09dbe657f113b8b4f86ffdcf19383"
+          }
+        }
+      },
       "fingerprints": {
         "standard": {
           "train.csv": "57db7779a19f2daf719279115b57c6a59d8df9c4a1b8f85cc7fc0de42b25504c",
