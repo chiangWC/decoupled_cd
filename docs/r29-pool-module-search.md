@@ -12,6 +12,12 @@ Q-conditioned pooled NCF Diagnosis. Diagnosis receives `framework_state` as its
 only student-specific input. There is no student-ID embedding, legacy state
 path, residual prediction head, dataset router or per-dataset topology.
 
+The non-contribution marginal anchor was rerun under the r29 interface on
+MOOCRadar validation. Its S/H/T AUC is
+`0.930650/0.926934/0.935917`, with external margins
+`+0.001097/+0.002755/+0.002808`; this is a strict win and confirms that the
+fixed Diagnosis and training harness can reach the live external line.
+
 ## Pool admission
 
 The model seed is fixed to 42 and the data split seed to 2024.
@@ -74,6 +80,28 @@ for delta T was `[-0.000703, -0.000168]`. Full also missed every external axis.
 Because retaining the MOO ordinary win was a necessary first-screen condition,
 the two-dataset gate became unreachable and the candidate was rejected without
 using Junyi as a post-hoc rescue dataset.
+
+### Post-r29 response-distribution completion — rejected before implementation
+
+After all three ordered r29 candidates failed, the next literature question was
+whether the strong marginal anchor discarded useful shape information in each
+student's response/item-difficulty distribution. A fixed 32-dimensional random
+Fourier representation was compared with a same-dimensional degenerate
+marginal representation; both used the same downstream logistic model. The
+20% pseudo-holdout came only from training rows, and fit/evaluation students
+were disjoint.
+
+| Dataset | Delta AUC | Delta Brier |
+|---|---:|---:|
+| MOOCRadar | -0.006671 | +0.002030 |
+| Junyi | +0.000763 | -0.000273 |
+| EdNet | +0.000059 | +0.000025 |
+
+No dataset reached the fixed `+0.002` AUC activation threshold, and MOO moved
+materially in the wrong direction. The distribution-regression direction was
+therefore rejected at proxy level and was not turned into a framework module.
+The design was informed by distributional-input and kernel-embedding work, but
+no source model or code was adopted.
 
 ## Commands
 

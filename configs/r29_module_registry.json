@@ -9,9 +9,37 @@
     "name": "marginal_anchor",
     "source": "r28 difficulty_capacity",
     "paper_module": false,
-    "reason": "generic deterministic marginal encoder-decoder retained only as a performance floor"
+    "reason": "generic deterministic marginal encoder-decoder retained only as a performance floor",
+    "r29_validation": {
+      "moocradar_S_H_T": [0.930649681556784, 0.9269337275644205, 0.9359165167900014],
+      "moocradar_margin_S_H_T": [0.0010971534735737531, 0.0027552737567186902, 0.0028082654905242643],
+      "ordinary_win": true,
+      "strict_win": true
+    }
   },
   "candidate_order": ["peer_completion", "wasserstein_flow", "meta_implicit"],
+  "post_r29_rounds": {
+    "kernel_response_distribution": {
+      "status": "rejected_proxy_gate",
+      "failure_id": "r29_f04_complex_completion_loses_to_stable_marginals",
+      "sources": [
+        "Distribution Regression with Sliced Wasserstein Kernels (Meunier et al., 2022)",
+        "Kernel Quantile Embeddings (Naslidnyk et al., 2025)"
+      ],
+      "source_urls": [
+        "https://proceedings.mlr.press/v162/meunier22b.html",
+        "https://proceedings.mlr.press/v267/naslidnyk25a.html"
+      ],
+      "adoption": "train-only fixed random-feature proxy for response/item-difficulty distributions; no author code copied",
+      "audit": {
+        "moocradar_delta_auc_brier": [-0.006670721972250382, 0.00202975512804289],
+        "junyi_delta_auc_brier": [0.0007629947624836486, -0.00027281515004490275],
+        "ednet_delta_auc_brier": [0.000058812598760837886, 0.000024993293894687296],
+        "activation_threshold_delta_auc_brier": [0.002, 0.0],
+        "reason": "the response-distribution representation fails the preregistered proxy on all three datasets and is materially worse on MOO"
+      }
+    }
+  },
   "candidates": {
     "peer_completion": {
       "status": "rejected_activation_gate",
