@@ -223,16 +223,26 @@ def main() -> None:
                     reservations.get(running_task.gpu, 0) + expected_peak
                 )
         while pending and len(running) < args.max_parallel:
-            task = pending[0]
-            expected_peak = PEAK_MEMORY_MB[task.state_completer]
-            gpu = choose_gpu(
-                candidates=candidates,
-                expected_peak_mb=expected_peak,
-                reservations=reservations,
-            )
-            if gpu is None:
+            selected: tuple[int, CampaignTask, int, int] | None = None
+            for pending_index, candidate_task in enumerate(pending):
+                candidate_peak = PEAK_MEMORY_MB[candidate_task.state_completer]
+                candidate_gpu = choose_gpu(
+                    candidates=candidates,
+                    expected_peak_mb=candidate_peak,
+                    reservations=reservations,
+                )
+                if candidate_gpu is not None:
+                    selected = (
+                        pending_index,
+                        candidate_task,
+                        candidate_peak,
+                        candidate_gpu,
+                    )
+                    break
+            if selected is None:
                 break
-            pending.pop(0)
+            pending_index, task, expected_peak, gpu = selected
+            pending.pop(pending_index)
             process, handle = launch(task, args=args, gpu=gpu)
             reservations[gpu] = reservations.get(gpu, 0) + expected_peak
             running[process.pid] = (task, process, handle, expected_peak)
