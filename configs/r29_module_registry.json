@@ -27,13 +27,19 @@
       }
     },
     "wasserstein_flow": {
-      "status": "proxy_audit_active",
+      "status": "rejected_proxy_gate",
       "source": "NewImp distribution-flow idea",
       "source_url": "https://proceedings.neurips.cc/paper_files/paper/2024/hash/cb1ba6a42814bf83974ed45ffdb72efa-Abstract-Conference.html",
-      "adoption": "independent CD implementation; no author core model copied"
+      "adoption": "independent CD proxy; no author core model copied",
+      "audit": {
+        "moocradar_delta_auc_brier": [-0.009197654264226363, 0.004418955696404686],
+        "junyi_delta_auc_brier": [-0.004025858056799558, 0.0018484660246272377],
+        "ednet_delta_auc_brier": [-0.007506708039085153, 0.001553257163148386],
+        "reason": "four-step flow proxy is worse than the exact-parameter capacity control on all audited datasets"
+      }
     },
     "meta_implicit": {
-      "status": "ordered_pending",
+      "status": "validation_screen_active",
       "source": "TimeFlow fixed inner-loop adaptation idea",
       "source_url": "https://arxiv.org/abs/2306.05880",
       "adoption": "independent CD implementation; no author core model copied"
