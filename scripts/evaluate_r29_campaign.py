@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.train_r28 import load_json
 from utils import write_json
+from utils.r29_evaluation import classify_external_win
 
 
 MODES = ("meta_implicit", "direct_prior", "capacity_control")
@@ -131,8 +132,7 @@ def main() -> None:
             "H": float(full["holdout"]["overall_external_margin"]),
             "T": float(full["holdout"]["target_external_margin"]),
         }
-        ordinary = margins["S"] >= -0.002 and margins["H"] >= -0.002 and margins["T"] > 0
-        strict = margins["S"] >= 0 and margins["H"] >= 0 and margins["T"] > 0
+        ordinary, strict = classify_external_win(margins)
         bootstrap = clustered_bootstrap_delta(
             target_predictions(full["holdout"]),
             target_predictions(baseline["holdout"]),
