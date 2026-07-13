@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "current_candidate": null,
+  "active_framework_boxes": 2,
+  "candidate_module_slots": 1,
+  "qualified_paper_module_count": 0,
+  "fixed_diagnosis": "q_conditioned_pooled_ncf_state_only",
+  "performance_anchor": {
+    "name": "marginal_anchor",
+    "source": "r28 difficulty_capacity",
+    "paper_module": false,
+    "reason": "generic deterministic marginal encoder-decoder retained only as a performance floor"
+  },
+  "candidate_order": ["peer_completion", "wasserstein_flow", "meta_implicit"],
+  "candidates": {
+    "peer_completion": {
+      "status": "activation_audit_running",
+      "source": "Coral collaborative completion idea only",
+      "source_url": "https://proceedings.neurips.cc/paper_files/paper/2024/hash/013f9cd52b38e3e53475605d2b8e7c23-Abstract-Conference.html",
+      "adoption": "independent response-conditioned CD mapping; no author code or disentanglement model copied",
+      "activation": "MOO plus at least one of Junyi/EdNet must pass train-only pseudo-holdout audit"
+    },
+    "wasserstein_flow": {
+      "status": "ordered_pending",
+      "source": "NewImp distribution-flow idea",
+      "source_url": "https://proceedings.neurips.cc/paper_files/paper/2024/hash/cb1ba6a42814bf83974ed45ffdb72efa-Abstract-Conference.html",
+      "adoption": "independent CD implementation; no author core model copied"
+    },
+    "meta_implicit": {
+      "status": "ordered_pending",
+      "source": "TimeFlow fixed inner-loop adaptation idea",
+      "source_url": "https://arxiv.org/abs/2306.05880",
+      "adoption": "independent CD implementation; no author core model copied"
+    }
+  }
+}

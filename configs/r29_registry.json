@@ -16,20 +16,79 @@
     "nips34": {"status": "active", "source": "r28_registry"},
     "xes3g5m": {"status": "active", "source": "r28_registry"},
     "junyi": {
-      "status": "data_preparation_pending",
+      "status": "external_reproduction_pending",
       "standard_dir": "r29/junyi_standard_v2",
       "holdout_dir": "r29/junyi_chold_v2",
       "target_scope": "bucket:zero",
       "target_semantics": "exercise-concept one-to-one; exact-zero is both unseen item and unseen concept",
-      "external_axes": {"S": null, "H": null, "T": null}
+      "external_axes": {"S": null, "H": null, "T": null},
+      "fingerprints": {
+        "standard": {
+          "train.csv": "57db7779a19f2daf719279115b57c6a59d8df9c4a1b8f85cc7fc0de42b25504c",
+          "valid.csv": "b46aec516bb6575338abff80f709241a7dbd5e88f635ae07d164ec243ea45ca2",
+          "test.csv": "94f76bbbcb5288b351e33b1b8409a86c32c099feb44c2f24845e3fe4e68815df",
+          "Q_matrix.csv": "64b1039bf9a022069b1df5248f5335081427056aebac7902d8ce5b4f5bcfc13e"
+        },
+        "holdout": {
+          "train.csv": "85eeac0b393d01debf43afb922940cdd3efca167b30a0cb8fda8c1eb37d82500",
+          "valid.csv": "b7893f25c7f506dbb39bbed282e494ff5dd4f4327f7e5a52c11efef65e3cb4f5",
+          "test.csv": "5abb41edecf2a358860ca5e57d49b54e604c0cdb3609f3a6271ce364c0d605dd",
+          "Q_matrix.csv": "64b1039bf9a022069b1df5248f5335081427056aebac7902d8ce5b4f5bcfc13e"
+        }
+      },
+      "row_identity_hashes": {
+        "standard": {
+          "train": "bb1bedadded3e05023d8850ff5abcd6360cf18910c183daa005d7b883444ffb4",
+          "valid": "c15eb8b7c812926f318da8f03cb9369a593035c03ed96a31b65caf1e3e5aedae",
+          "test": "c6e50368e6790f29a3cdba05c4b2352776b2676c247738e4cbf536228373b2ea"
+        },
+        "holdout": {
+          "train": "78340ce740d10ec806541bbe0c5686f8098890051915872a0d41283620b17260",
+          "valid": "89a3042fb7290b94420f31a863155fa555c0cafeaffd7646d1a2786c1413b831",
+          "test": "188d945d33ba050f4c315e369b14256a1081c8e04b88245354f761c579f5a0dd"
+        }
+      }
     },
     "ednet": {
-      "status": "data_preparation_pending",
+      "status": "external_reproduction_pending",
       "standard_dir": "r29/ednet_clean_v2",
       "holdout_dir": "r29/ednet_clean_chold_v2",
-      "target_scope": null,
+      "target_scope": "bucket:zero",
       "target_scope_policy": "bucket:zero when valid/test each have >=100 rows and both labels; otherwise low_coverage",
-      "external_axes": {"S": null, "H": null, "T": null}
+      "external_axes": {"S": null, "H": null, "T": null},
+      "cleaning": {
+        "raw_rows": 824329,
+        "clean_rows": 753564,
+        "exact_duplicates_removed": 70765,
+        "conflicting_repeated_attempt_groups_retained": 42679,
+        "q_mapping_conflicts": 0
+      },
+      "fingerprints": {
+        "standard": {
+          "train.csv": "4982f68172f17f8736ebcc3473eafb1477073abc249eea8406b024a4bf4737fc",
+          "valid.csv": "819efc52cc5b4c0372e7b92577205a0ac1519e42ee884d0457dc13507acb61b7",
+          "test.csv": "12df1290dbb06479eecca9559fb95b8bebf8c28763d1180e2c5c7246818207c1",
+          "Q_matrix.csv": "468e9c405913f74a7f15859b7ded5a814d196200dcd9ad001fea22d7aced5a18"
+        },
+        "holdout": {
+          "train.csv": "c8dfa6d96939ea00dc58b09415f2cb21c23a19b581a5413204ae744fb064fe3a",
+          "valid.csv": "f4bf84cdf49a6242e9d4fa2a25ac27006f85c897858cfac35b5b9d30e96c0ab5",
+          "test.csv": "7b45edbd59533801ae38364776fbfcf17ea655f4365a3b26b7d3b99d49127436",
+          "Q_matrix.csv": "468e9c405913f74a7f15859b7ded5a814d196200dcd9ad001fea22d7aced5a18"
+        }
+      },
+      "row_identity_hashes": {
+        "standard": {
+          "train": "ae3668d5e93c53aef2460c9e5d572c9b5ebe0bcaf90432a932011a3d28a25786",
+          "valid": "9c7802c3e038e0bf03162a60d971d835dfaf53e8562d7ad122b4df6eaf5bdd10",
+          "test": "5c5505891448ae496878fff7aa0b7dca15c66512c1378f87a4068a5ba7c9eaf7"
+        },
+        "holdout": {
+          "train": "5e29a50b66a55c3f65ae27bab6bd6bdf137759b24c6b3b28e60d3643113ad94d",
+          "valid": "a29c63b3a90f7b599e2f6f694228be7ea05878763e0448f7dcf52751b594b8ad",
+          "test": "e831f87ddc333c5dbf085c20b901cb708aaa98af3418a69980ad787829d0328d"
+        }
+      }
     }
   },
   "external_axis_policy": {
