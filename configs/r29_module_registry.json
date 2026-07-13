@@ -39,10 +39,19 @@
       }
     },
     "meta_implicit": {
-      "status": "validation_screen_active",
+      "status": "rejected_clean_control",
       "source": "TimeFlow fixed inner-loop adaptation idea",
       "source_url": "https://arxiv.org/abs/2306.05880",
-      "adoption": "independent CD implementation; no author core model copied"
+      "adoption": "independent CD implementation; no author core model copied",
+      "audit": {
+        "screen_dataset": "moocradar",
+        "stronger_control": "capacity_control",
+        "full_S_H_T": [0.9076364105514013, 0.9044255956522322, 0.9134459497486137],
+        "delta_S_H_T": [-0.00057368282403647, -0.00045463316997718106, -0.00044056872977216166],
+        "target_delta_clustered_bootstrap_95ci": [-0.000703455576152448, -0.00016812604172112278],
+        "ordinary_win": false,
+        "reason": "the exact-parameter capacity control is better on S, H, and T; MOO also loses every external axis, so the two-dataset activation gate is logically unreachable"
+      }
     }
   }
 }
