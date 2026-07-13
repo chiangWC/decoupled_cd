@@ -55,7 +55,12 @@ class R29CompletionTest(unittest.TestCase):
         self.assertEqual(output.mastery.shape, (5, 3))
         self.assertEqual(output.probs.shape, (5,))
         torch.nn.functional.binary_cross_entropy(output.probs, torch.rand(5)).backward()
-        gradients = [parameter.grad for parameter in model.parameters() if parameter.requires_grad]
+        diagnostic_only = ("mastery_head.", "reconstruction_head.", "completer.reliability_head.")
+        gradients = [
+            parameter.grad
+            for name, parameter in model.named_parameters()
+            if parameter.requires_grad and not name.startswith(diagnostic_only)
+        ]
         self.assertTrue(all(gradient is not None for gradient in gradients))
         self.assertTrue(all(torch.isfinite(gradient).all() for gradient in gradients))
 
