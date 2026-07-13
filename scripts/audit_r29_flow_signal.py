@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--max-train-cells", type=int, default=100000)
+    parser.add_argument("--device", default="auto")
     return parser.parse_args()
 
 
@@ -143,10 +144,12 @@ def train_proxy(
     epochs: int,
     batch_size: int,
     seed: int,
+    device: torch.device,
 ) -> tuple[MatchedProxy, str]:
     set_seed(seed)
     model = MatchedProxy(flow=flow, steps=steps)
     initial_hash = state_hash(model)
+    model = model.to(device)
     generator = torch.Generator().manual_seed(seed)
     loader = DataLoader(
         TensorDataset(train_features, train_targets, train_weights),
@@ -158,6 +161,9 @@ def train_proxy(
     for _ in range(epochs):
         model.train()
         for features, targets, weights in loader:
+            features = features.to(device)
+            targets = targets.to(device)
+            weights = weights.to(device)
             optimizer.zero_grad()
             logits = model(features)
             losses = nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none")
@@ -167,16 +173,26 @@ def train_proxy(
     return model, initial_hash
 
 
-def predict_in_batches(model: nn.Module, features: torch.Tensor, *, batch_size: int) -> np.ndarray:
+def predict_in_batches(
+    model: nn.Module,
+    features: torch.Tensor,
+    *,
+    batch_size: int,
+    device: torch.device,
+) -> np.ndarray:
     model.eval()
     output: list[np.ndarray] = []
     with torch.no_grad():
         for start in range(0, len(features), batch_size):
-            output.append(torch.sigmoid(model(features[start : start + batch_size])).cpu().numpy())
+            batch = features[start : start + batch_size].to(device)
+            output.append(torch.sigmoid(model(batch)).cpu().numpy())
     return np.concatenate(output)
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    device = torch.device(
+        "cuda" if args.device == "auto" and torch.cuda.is_available() else "cpu" if args.device == "auto" else args.device
+    )
     frame = pd.read_csv(args.train, dtype={"stu_id": str, "exer_id": str, "cpt_seq": str})
     interactions, cells = expand_cells(frame)
     features = build_features(cells, seed=args.seed, mask_fraction=args.mask_fraction)
@@ -205,11 +221,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             epochs=args.epochs,
             batch_size=args.batch_size,
             seed=args.seed,
+            device=device,
         )
     if hashes["flow"] != hashes["capacity"]:
         raise RuntimeError("Flow and capacity proxy common initialization differs.")
     cell_predictions = {
-        name: predict_in_batches(model, heldout_x, batch_size=args.batch_size)
+        name: predict_in_batches(
+            model, heldout_x, batch_size=args.batch_size, device=device
+        )
         for name, model in models.items()
     }
     prediction_maps = {
