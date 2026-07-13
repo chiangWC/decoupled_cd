@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max-cells", type=int, default=50000)
+    parser.add_argument("--max-cells", type=int, default=20000)
     parser.add_argument("--retrieval-pool", type=int, default=256)
     parser.add_argument("--peer-k", type=int, default=32)
     parser.add_argument("--min-overlap", type=int, default=3)
@@ -57,6 +57,14 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
         concept_students[concept].append(student)
         cell_accuracy[(student, concept)] = float(row.accuracy)
 
+    concept_pools = {
+        concept: sorted(
+            students,
+            key=lambda peer: stable_fraction(args.seed, "peer-pool", concept, peer),
+        )[: args.retrieval_pool + 1]
+        for concept, students in concept_students.items()
+    }
+
     eligible = cells[cells["concept"].map(lambda value: len(concept_students[str(value)]) >= 2)].copy()
     eligible["sample_key"] = [
         stable_fraction(args.seed, "peer-audit", row.stu_id, row.concept)
@@ -71,11 +79,9 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
         student = str(row.stu_id)
         concept = str(row.concept)
         query = student_vectors[student]
-        candidates = [peer for peer in concept_students[concept] if peer != student]
-        candidates = sorted(
-            candidates,
-            key=lambda peer: stable_fraction(args.seed, "peer-pool", student, concept, peer),
-        )[: args.retrieval_pool]
+        candidates = [peer for peer in concept_pools[concept] if peer != student][
+            : args.retrieval_pool
+        ]
         scored: list[tuple[float, int, str]] = []
         for peer in candidates:
             common = (set(query) & set(student_vectors[peer])) - {concept}
@@ -107,9 +113,13 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
         overlap_counts.append(max(value[1] for value in selected))
 
     selected_keys = set(full_by_cell)
-    selected_rows = expanded[
-        expanded.apply(lambda row: (str(row["stu_id"]), str(row["concept"])) in selected_keys, axis=1)
-    ].copy()
+    selected_mask = [
+        (student, concept) in selected_keys
+        for student, concept in zip(
+            expanded["stu_id"].astype(str), expanded["concept"].astype(str), strict=True
+        )
+    ]
+    selected_rows = expanded.loc[selected_mask].copy()
     keys = list(zip(selected_rows["stu_id"].astype(str), selected_rows["concept"].astype(str), strict=True))
     labels = selected_rows["label"].astype(int).to_numpy()
     full = np.asarray([full_by_cell[key] for key in keys]).clip(1e-6, 1 - 1e-6)
