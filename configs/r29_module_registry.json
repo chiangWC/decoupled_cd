@@ -14,14 +14,20 @@
   "candidate_order": ["peer_completion", "wasserstein_flow", "meta_implicit"],
   "candidates": {
     "peer_completion": {
-      "status": "activation_audit_running",
+      "status": "rejected_activation_gate",
       "source": "Coral collaborative completion idea only",
       "source_url": "https://proceedings.neurips.cc/paper_files/paper/2024/hash/013f9cd52b38e3e53475605d2b8e7c23-Abstract-Conference.html",
       "adoption": "independent response-conditioned CD mapping; no author code or disentanglement model copied",
-      "activation": "MOO plus at least one of Junyi/EdNet must pass train-only pseudo-holdout audit"
+      "activation": "MOO plus at least one of Junyi/EdNet must pass train-only pseudo-holdout audit",
+      "audit": {
+        "junyi_delta_auc_brier": [0.0005317310094083982, -0.0002799969997465124],
+        "ednet_delta_auc_brier": [0.0008430675090924655, -0.00008311874704236555],
+        "threshold_delta_auc_brier": [0.002, -0.001],
+        "reason": "neither newly admitted dataset supplies the required second positive peer-completion signal"
+      }
     },
     "wasserstein_flow": {
-      "status": "ordered_pending",
+      "status": "proxy_audit_active",
       "source": "NewImp distribution-flow idea",
       "source_url": "https://proceedings.neurips.cc/paper_files/paper/2024/hash/cb1ba6a42814bf83974ed45ffdb72efa-Abstract-Conference.html",
       "adoption": "independent CD implementation; no author core model copied"
