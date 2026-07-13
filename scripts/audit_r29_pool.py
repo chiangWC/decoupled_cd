@@ -148,7 +148,7 @@ def audit_dataset(
     return {
         "dataset": dataset,
         "data_status": "passed",
-        "admission_status": "external_reproduction_pending",
+        "admission_status": spec["status"],
         "target_scope": target_scope,
         "standard": standard_report,
         "holdout": holdout_report,
