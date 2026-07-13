@@ -11,6 +11,12 @@ from .r28_completion import (
     R28CompletionCDM,
     R28ForwardOutput,
 )
+from .r29_completion import (
+    R29_COMPLETER_MODES,
+    R29_COMPLETION_OBJECTIVES,
+    R29CompletionCDM,
+    R29ForwardOutput,
+)
 
 __all__ = [
     "CountPriorBaseline",
@@ -23,6 +29,10 @@ __all__ = [
     "COMPLETION_OBJECTIVES",
     "R28CompletionCDM",
     "R28ForwardOutput",
+    "R29_COMPLETER_MODES",
+    "R29_COMPLETION_OBJECTIVES",
+    "R29CompletionCDM",
+    "R29ForwardOutput",
     "KaNCDBaseline",
     "HeterogeneousGraphPropagation",
     "PropagationOutput",
