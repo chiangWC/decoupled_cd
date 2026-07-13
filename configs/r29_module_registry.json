@@ -11,12 +11,23 @@
     "paper_module": false,
     "reason": "generic deterministic marginal encoder-decoder retained only as a performance floor",
     "r29_validation": {
+      "architecture_fingerprint": "60f529cf30394745",
+      "assist_09_S_H_T": [0.7638972122479031, 0.7555723558863281, 0.746240480536644],
+      "assist_09_margin_S_H_T": [-0.01253455136670556, -0.013374860859272308, -0.009199588683268978],
+      "assist_17_S_H_T": [0.801475786830572, 0.799769772704423, 0.794080759722386],
+      "assist_17_margin_S_H_T": [0.017102382345350886, 0.015917505989019642, 0.012743373664992008],
       "moocradar_S_H_T": [0.930649681556784, 0.9269337275644205, 0.9359165167900014],
       "moocradar_margin_S_H_T": [0.0010971534735737531, 0.0027552737567186902, 0.0028082654905242643],
       "junyi_S_H_T": [0.826868537133916, 0.8260439449899344, 0.8260439449899344],
       "junyi_margin_S_H_T": [0.0064347198340208855, 0.006054989211599082, 0.006054989211599082],
-      "ordinary_wins": ["moocradar", "junyi"],
-      "strict_wins": ["moocradar", "junyi"]
+      "ednet_S_H_T": [0.7408008209163276, 0.737802607733841, 0.7254960214769],
+      "ednet_margin_S_H_T": [-0.003132409173644657, -0.002647714680920288, -0.0004023241600176197],
+      "nips34_S_H_T": [0.7812726396382611, 0.7800621661349818, 0.7630655600770087],
+      "nips34_margin_S_H_T": [-0.007204949373599168, -0.004186363191240217, 0.0009458572124125819],
+      "xes3g5m_S_H_T": [0.792296417075113, 0.7872625696834284, 0.7852713458715768],
+      "xes3g5m_margin_S_H_T": [0.005900826675440118, 0.00564211654722524, 0.0067436839272161375],
+      "ordinary_wins": ["assist_17", "junyi", "moocradar", "xes3g5m"],
+      "strict_wins": ["assist_17", "junyi", "moocradar", "xes3g5m"]
     }
   },
   "candidate_order": ["peer_completion", "wasserstein_flow", "meta_implicit"],
@@ -83,5 +94,16 @@
         "reason": "the exact-parameter capacity control is better on S, H, and T; MOO also loses every external axis, so the two-dataset activation gate is logically unreachable"
       }
     }
+  },
+  "current_blocker": {
+    "status": "required_common_side_information_unavailable",
+    "evidence": "the non-contribution anchor has four strict validation wins, but Peer, Flow, Meta and the post-r29 response-distribution direction all failed their predeclared attribution gates",
+    "local_input_audit": "the seven admitted protocol directories expose only row identity, student/exercise/concept IDs, labels and Q; no stable exercise text, course hierarchy or item-metadata mapping is available across multiple datasets",
+    "why_this_blocks_next_replacement": "remaining untried cold-start transfer mechanisms require common semantic/course-resource features, while graph/query/low-rank/gate routes were explicitly prohibited or already rejected",
+    "needed_to_resume": [
+      "admit stable item/concept side information with reproducible ID mappings for at least two datasets",
+      "or authorize one explicitly prohibited complete relation/query mechanism for a new clean screen"
+    ],
+    "thresholds_lowered": false
   }
 }

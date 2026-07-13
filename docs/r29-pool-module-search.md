@@ -40,9 +40,14 @@ The model seed is fixed to 42 and the data split seed to 2024.
   are zero; holdout validation/test contain 16,366/32,706 eligible exact-zero
   rows.
 
-Both datasets remain `external_reproduction_pending` until seed-42 ORCDF and
-SVGCD predictions are trained and verified row-by-row. Historical Junyi numbers
-are sanity checks only.
+At initial admission both datasets remained `external_reproduction_pending`
+until seed-42 ORCDF and SVGCD predictions were trained and verified row-by-row;
+historical Junyi numbers were treated as sanity checks only.
+
+That reproduction is now complete. Junyi selects ORCDF for S (`0.820434`) and
+SVGCD for H/T (`0.819989/0.819989`) by validation AUC. EdNet selects ORCDF on
+all axes (`0.743933/0.740450/0.725898`). Both are active in the seven-dataset
+pool; every selected prediction file is row-aligned and hash-registered.
 
 ## Ordered mechanism decisions
 
@@ -107,6 +112,29 @@ materially in the wrong direction. The distribution-regression direction was
 therefore rejected at proxy level and was not turned into a framework module.
 The design was informed by distributional-input and kernel-embedding work, but
 no source model or code was adopted.
+
+## Seven-dataset anchor status and blocker
+
+All rows below are validation results from the same r29 architecture fingerprint
+`60f529cf30394745`. The anchor is deliberately not a paper module.
+
+| Dataset | S | H | T | Margin S/H/T | Ordinary | Strict |
+|---|---:|---:|---:|---|:---:|:---:|
+| ASSIST09 | 0.763897 | 0.755572 | 0.746240 | -0.012535 / -0.013375 / -0.009200 | no | no |
+| ASSIST17 | 0.801476 | 0.799770 | 0.794081 | +0.017102 / +0.015918 / +0.012743 | yes | yes |
+| MOOCRadar | 0.930650 | 0.926934 | 0.935917 | +0.001097 / +0.002755 / +0.002808 | yes | yes |
+| NIPS34 | 0.781273 | 0.780062 | 0.763066 | -0.007205 / -0.004186 / +0.000946 | no | no |
+| XES3G5M | 0.792296 | 0.787263 | 0.785271 | +0.005901 / +0.005642 / +0.006744 | yes | yes |
+| Junyi | 0.826869 | 0.826044 | 0.826044 | +0.006435 / +0.006055 / +0.006055 | yes | yes |
+| EdNet | 0.740801 | 0.737803 | 0.725496 | -0.003132 / -0.002648 / -0.000402 | no | no |
+
+The performance condition is therefore met with four ordinary and four strict
+wins, but the paper-module condition is not met. The local protocol assets for
+all seven datasets contain IDs, labels, Q and row identity only. They do not
+contain stable text/course-hierarchy metadata mappings shared by multiple
+datasets. After the complete relation/query/low-rank routes were either rejected
+or explicitly prohibited, this is now a concrete input blocker for the next
+cold-start transfer replacement. No attribution or win threshold was lowered.
 
 ## Commands
 

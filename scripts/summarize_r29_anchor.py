@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 import sys
 from typing import Any
@@ -63,6 +64,13 @@ def metric_fields(prefix: str, metrics: dict[str, Any]) -> dict[str, float]:
     }
 
 
+def finite_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    numeric = float(value)
+    return numeric if math.isfinite(numeric) else None
+
+
 def main() -> None:
     args = parse_args()
     rows: list[dict[str, Any]] = []
@@ -91,11 +99,11 @@ def main() -> None:
                 **{f"margin_{axis}": value for axis, value in margins.items()},
                 "ordinary_win": ordinary,
                 "strict_win": strict,
-                "doa": doa.get("doa"),
-                "doa_weighted": doa.get("doa_weighted"),
-                "doa_ci_low": doa.get("doa_ci_low"),
-                "doa_ci_high": doa.get("doa_ci_high"),
-                "doa_spearman": doa.get("doa_spearman"),
+                "doa": finite_or_none(doa.get("doa")),
+                "doa_weighted": finite_or_none(doa.get("doa_weighted")),
+                "doa_ci_low": finite_or_none(doa.get("doa_ci_low")),
+                "doa_ci_high": finite_or_none(doa.get("doa_ci_high")),
+                "doa_spearman": finite_or_none(doa.get("doa_spearman")),
                 "architecture_fingerprint": standard["architecture_fingerprint"],
                 "standard_prediction_sha256": standard["prediction_sha256"],
                 "holdout_prediction_sha256": holdout["prediction_sha256"],
