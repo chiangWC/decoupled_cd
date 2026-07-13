@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "seed": 42,
+  "defaults": {
+    "epochs": 40,
+    "student_batch_size": 128,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0,
+    "early_stop_patience": 10,
+    "scheduler_patience": 5,
+    "scheduler_factor": 0.5,
+    "min_learning_rate": 0.00001,
+    "concept_dim": 64,
+    "readout_dropout": 0.0,
+    "evidence_cap": 20.0,
+    "completion_mask_frac": 0.15,
+    "partial_vae_kl_weight": 0.001,
+    "max_guess": 0.3,
+    "max_slip": 0.3
+  },
+  "dataset_overrides": {
+    "assist_09": {},
+    "assist_17": {"learning_rate": 0.002},
+    "moocradar": {},
+    "nips34": {"epochs": 60},
+    "xes3g5m": {}
+  },
+  "rules": {
+    "standard_holdout_share_recipe": true,
+    "validation_only_selection": true,
+    "multi_seed_forbidden": true,
+    "silent_oom_recipe_change_forbidden": true
+  }
+}

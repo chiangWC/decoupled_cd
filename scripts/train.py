@@ -15,7 +15,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles, prepare_step_data_bundle
-from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2, KaNCDBaseline
+from models import (
+    COMPLETER_MODES,
+    COMPLETION_OBJECTIVES,
+    CountPriorBaseline,
+    DecoupledCDM,
+    DecoupledCDMEnsemble,
+    DecoupledCDMV2,
+    KaNCDBaseline,
+    R28CompletionCDM,
+)
 from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
@@ -39,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
     parser.add_argument(
         "--model",
-        choices=["v1", "v2", "b0", "kancd"],
+        choices=["v1", "v2", "b0", "kancd", "r28_completion"],
         default="v1",
         help=(
             "Model variant. v1 is the frozen mainline (adapters allowed). v2 is the clean core with "
@@ -54,6 +63,23 @@ def parse_args() -> argparse.Namespace:
         default=64,
         help="Latent dimension for the KaNCD baseline's low-rank factorization.",
     )
+    parser.add_argument(
+        "--state-completer",
+        choices=COMPLETER_MODES,
+        default="relational",
+        help="R28 replaceable state-completion implementation.",
+    )
+    parser.add_argument(
+        "--completion-objective",
+        choices=COMPLETION_OBJECTIVES,
+        default="none",
+        help="R28 completion objective; structural screens must use none.",
+    )
+    parser.add_argument("--completion-mask-frac", type=float, default=0.15)
+    parser.add_argument("--completion-evidence-cap", type=float, default=20.0)
+    parser.add_argument("--completion-readout-dropout", type=float, default=0.0)
+    parser.add_argument("--completion-max-guess", type=float, default=0.3)
+    parser.add_argument("--completion-max-slip", type=float, default=0.3)
     parser.add_argument(
         "--v2-ukc-propagation",
         action="store_true",
@@ -521,6 +547,8 @@ def parse_args() -> argparse.Namespace:
     )
     if args.weight_decay < 0.0:
         raise ValueError("--weight-decay must be non-negative.")
+    if args.model == "r28_completion" and args.seed != 42:
+        raise ValueError("r28_completion experiments are fixed to --seed 42.")
     if args.dual_cdm_secondary_concept_dim < 1:
         raise ValueError("--dual-cdm-secondary-concept-dim must be positive.")
     if args.dual_cdm_branch_bce_weight < 0.0:
@@ -898,7 +926,21 @@ def main() -> None:
         history_evidence_logit_prior_prior_weight=args.history_evidence_logit_prior_prior_weight,
         history_evidence_logit_prior_mastery_confidence_cap=args.history_evidence_logit_prior_mastery_confidence_cap,
     )
-    if args.model == "v2":
+    if args.model == "r28_completion":
+        model = R28CompletionCDM(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            concept_dim=args.concept_dim,
+            state_completer=args.state_completer,
+            completion_objective=args.completion_objective,
+            completion_mask_frac=args.completion_mask_frac,
+            evidence_cap=args.completion_evidence_cap,
+            readout_dropout=args.completion_readout_dropout,
+            max_guess=args.completion_max_guess,
+            max_slip=args.completion_max_slip,
+        )
+    elif args.model == "v2":
         model = DecoupledCDMV2(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
@@ -1019,6 +1061,13 @@ def main() -> None:
 
     v2_flag_snapshot = {
         "model": args.model,
+        "state_completer": args.state_completer,
+        "completion_objective": args.completion_objective,
+        "completion_mask_frac": args.completion_mask_frac,
+        "completion_evidence_cap": args.completion_evidence_cap,
+        "completion_readout_dropout": args.completion_readout_dropout,
+        "completion_max_guess": args.completion_max_guess,
+        "completion_max_slip": args.completion_max_slip,
         "v2_ukc_propagation": args.v2_ukc_propagation,
         "v2_ukc_layers": args.v2_ukc_layers,
         "v2_ukc_evidence_cap": args.v2_ukc_evidence_cap,
@@ -1152,6 +1201,17 @@ def main() -> None:
         "test_metrics": test_metrics,
         "history": result.history,
         "log_path": log_path,
+        "architecture_fingerprint": getattr(model, "architecture_fingerprint", None),
+        "common_initialization_hash": (
+            model.common_initialization_hash()
+            if hasattr(model, "common_initialization_hash")
+            else None
+        ),
+        "active_parameter_count": (
+            model.active_parameter_count()
+            if hasattr(model, "active_parameter_count")
+            else sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+        ),
     }
 
     write_json(output, args.output)

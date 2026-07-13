@@ -203,6 +203,16 @@ def _checkpoint_metric_mode(metric: str) -> str:
     raise ValueError("checkpoint_selection_metric must be one of auc, acc, loss, rmse, brier, ece.")
 
 
+def _completion_objective_loss(output: object) -> torch.Tensor | None:
+    """Return a model-owned completion objective without affecting evaluation loss."""
+    value = getattr(output, "completion_reconstruction_loss", None)
+    if value is None:
+        return None
+    if not torch.is_tensor(value) or value.ndim != 0:
+        raise ValueError("completion_reconstruction_loss must be a scalar tensor when provided.")
+    return value
+
+
 def _is_checkpoint_metric_improved(*, metric: str, value: float, best_value: float) -> bool:
     mode = _checkpoint_metric_mode(metric)
     if mode == "max":
@@ -898,6 +908,9 @@ def _train_full_batch_epoch(
         target_exercise_ids=forward_tensors["interaction_exercise_ids"],
     )
     loss = F.binary_cross_entropy(output.probs, tensors["interaction_labels"])
+    completion_loss = _completion_objective_loss(output)
+    if completion_loss is not None:
+        loss = loss + completion_loss
     if mastery_aux_bce_weight > 0.0:
         if getattr(output, "mastery_aux_logits", None) is None:
             raise ValueError("mastery_aux_bce_weight requires a model that emits mastery_aux_logits.")
@@ -1036,6 +1049,9 @@ def _train_recompute_minibatch_epoch(
             use_student_subset=True,
         )
         loss = F.binary_cross_entropy(output.probs, batch_labels)
+        completion_loss = _completion_objective_loss(output)
+        if completion_loss is not None:
+            loss = loss + completion_loss
         if dual_tower_branch_bce_weight > 0.0:
             loss = loss + _dual_tower_branch_bce_loss(
                 output=output,
@@ -1181,6 +1197,9 @@ def _train_student_recompute_minibatch_epoch(
             use_student_subset=True,
         )
         loss = F.binary_cross_entropy(output.probs, batch_labels)
+        completion_loss = _completion_objective_loss(output)
+        if completion_loss is not None:
+            loss = loss + completion_loss
         if mastery_aux_bce_weight > 0.0:
             if getattr(output, "mastery_aux_logits", None) is None:
                 raise ValueError("mastery_aux_bce_weight requires a model that emits mastery_aux_logits.")

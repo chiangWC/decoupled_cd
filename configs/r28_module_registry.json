@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "current_candidate": null,
+  "active_framework_boxes": 2,
+  "candidate_module_slots": 1,
+  "qualified_paper_module_count": 0,
+  "fixed_backbone": "q_conditioned_pooled_ncf_state_only",
+  "candidates": {
+    "evidence_relational_state_completion": {
+      "status": "rejected_validation_screen",
+      "input": "train-only student-concept evidence, observed mask, Q-derived concept features",
+      "output": "framework_state, mastery, state_reliability",
+      "declared_metric": "target_auc",
+      "source": "Graph Convolutional Matrix Completion (van den Berg, Kipf, Welling, 2017)",
+      "adoption": "formula-level CD mapping; no author model code copied",
+      "rejection": {
+        "reason": "zero validation external wins despite positive target deltas over controls",
+        "moocradar_delta_t_vs_stronger_control": 0.013997892616050889,
+        "xes3g5m_delta_t_vs_stronger_control": 0.003982391246723727,
+        "moocradar_external_margins_s_h_t": [-0.022982683484776834, -0.018540722062116433, -0.0033776846189245147],
+        "xes3g5m_external_margins_s_h_t": [-0.041502844169778896, -0.038951348226006766, -0.016467617468002183]
+      }
+    },
+    "exposure_aware_state_completion": {
+      "status": "skipped_mnar_gate_not_activated",
+      "mask_auc_gain": {"moocradar": 0.005169003950000195, "xes3g5m": 0.00042063105519296595}
+    },
+    "partial_vae_state_completion": {
+      "status": "rejected_validation_screen",
+      "input": "variable-size set of train-only observed student-concept evidence plus Q-derived concept features",
+      "output": "complete framework_state, mastery, posterior-derived state_reliability and uncertainty diagnostics",
+      "declared_metric": "target_auc",
+      "source": "Partial VAE for Hybrid Recommender System (Ma et al., 2018)",
+      "source_url": "https://www.bayesiandeeplearning.org/2018/papers/75.pdf",
+      "adoption": "formula-level permutation-invariant partial inference and Gaussian posterior mapping; no author code copied",
+      "capacity_control": "parameter-matched deterministic student-summary/concept encoder-decoder",
+      "rejection": {
+        "reason": "large clean deltas but zero validation external wins under exact registry thresholds",
+        "moocradar_delta_t_vs_stronger_control": 0.006736708145634096,
+        "xes3g5m_delta_t_vs_stronger_control": 0.018981081889893114,
+        "moocradar_external_margins_s_h_t": [0.0003011015573282094, 0.00015622464230169442, -0.0012944819985087896],
+        "xes3g5m_external_margins_s_h_t": [-0.0020615323934392027, -0.0010830293764109156, 0.0003724682447269201],
+        "paired_bootstrap_target_ci": {
+          "moocradar": [0.0025680920812227253, 0.01074704708122278],
+          "xes3g5m": [0.014134950961113469, 0.024224549115948384]
+        }
+      }
+    },
+    "difficulty_calibrated_response_set_completion": {
+      "status": "rejected_validation_screen",
+      "failure_id": "r28_f03_shared_concept_aggregate_loses_item_difficulty",
+      "input": "train-only student-exercise response set, global exercise evidence, Q-derived exercise/concept features",
+      "output": "complete framework_state, mastery, evidence reliability and calibration diagnostics",
+      "declared_metric": "standard and holdout overall AUC while preserving exact-zero target AUC",
+      "sources": [
+        "Deep-IRT (Yeung, 2019)",
+        "Performance Factors Analysis (Pavlik, Cen, Koedinger, 2009)"
+      ],
+      "source_urls": [
+        "https://arxiv.org/abs/1904.11738",
+        "https://pact.cs.cmu.edu/koedinger/pubs/AIED%202009%20final%20Pavlik%20Cen%20Keodinger%20corrected.pdf"
+      ],
+      "adoption": "new permutation-invariant state-completion design using item-difficulty-calibrated success/failure evidence; no source model code copied",
+      "capacity_control": "identical blocks and parameters after collapsing exercise-response pairs to student marginals",
+      "rejection": {
+        "reason": "item-conditioned response-set mechanism is significantly worse than its marginal capacity control on every S/H/T axis",
+        "moocradar_delta_s_h_t": [-0.02593917157993919, -0.02479761157481508, -0.023702522263383097],
+        "xes3g5m_delta_s_h_t": [-0.03618470778172833, -0.031767729696297264, -0.02931787560490906],
+        "paired_bootstrap_target_ci": {
+          "moocradar": [-0.028715469545303143, -0.018902000927678773],
+          "xes3g5m": [-0.03479362231574552, -0.0237256299297085]
+        }
+      }
+    },
+    "marginal_summary_performance_anchor": {
+      "status": "three_strict_validation_wins",
+      "paper_module": false,
+      "implementation": "difficulty_capacity",
+      "reason_not_contribution": "generic deterministic marginal encoder-decoder introduced as a mechanism-free capacity control",
+      "validation": {
+        "assist_09_s_h_t": [0.763934, 0.755558, 0.745305],
+        "assist_17_s_h_t": [0.801340641963994, 0.7994104871968513, 0.7935898943377144],
+        "moocradar_s_h_t": [0.9306629236770707, 0.926869207991272, 0.9357900091258934],
+        "nips34_s_h_t": [0.781219, 0.780008, 0.763613],
+        "xes3g5m_s_h_t": [0.792146871506709, 0.7872839733330448, 0.7853013430158486],
+        "ordinary_wins": ["assist_17", "moocradar", "xes3g5m"],
+        "strict_wins": ["assist_17", "moocradar", "xes3g5m"]
+      }
+    },
+    "product_of_experts_ability_completion": {
+      "status": "rejected_validation_screen",
+      "failure_id": "r28_f04_marginal_anchor_strong_but_not_a_contribution",
+      "input": "train-only observed exercise responses, Q-derived item features and global item evidence",
+      "output": "complete framework_state, mastery, posterior reliability and uncertainty diagnostics",
+      "declared_metric": "S/H/T improvement over the marginal-summary performance anchor",
+      "source": "Variational Item Response Theory (Wu et al., 2020)",
+      "source_url": "https://arxiv.org/abs/2002.00276",
+      "adoption": "formula-level Gaussian product-of-experts posterior with missing items contributing only the prior; response-BCE structural screen, no author code copied",
+      "capacity_control": "the stronger deterministic marginal-summary encoder-decoder anchor",
+      "rejection": {
+        "reason": "retained two strict validation wins but added no attributable target gain over the parameter-matched anchor",
+        "moocradar_delta_s_h_t": [0.0003946850276100866, 0.00003727119869756379, 0.00014619201967669415],
+        "xes3g5m_delta_s_h_t": [-0.0000030532220214318784, -0.0004680254258730976, -0.0008463934974130005],
+        "paired_bootstrap_target_ci": {
+          "moocradar": [-0.0011031320784695374, 0.00152979331925504],
+          "xes3g5m": [-0.0023665254733499204, 0.00065290765162139]
+        }
+      }
+    },
+    "hierarchical_bayesian_state_completion": {
+      "status": "rejected_validation_screen",
+      "failure_id": "r28_f06_probabilistic_item_experts_do_not_improve_strong_marginal_anchor",
+      "input": "train-only global student response evidence, population concept evidence, local student-concept counts and Q-derived concept features",
+      "output": "complete framework_state, continuous mastery posterior, state reliability and posterior diagnostics",
+      "declared_metric": "S/H/T improvement over the exact-parameter marginal-summary performance anchor",
+      "sources": [
+        "ReliCD: A Reliable Cognitive Diagnosis Framework with Confidence Awareness (Zhang et al., 2024)",
+        "Partial-Mastery Cognitive Diagnosis Models (Shang, Erosheva, Xu, 2021)"
+      ],
+      "source_urls": [
+        "https://arxiv.org/abs/2401.10749",
+        "https://arxiv.org/abs/2208.03252"
+      ],
+      "adoption": "new empirical-Bayes hierarchy for continuous student-concept posterior completion; no source model or author code copied",
+      "capacity_control": "exact same trainable blocks and parameter count using the existing marginal-summary/static-concept-prior data flow",
+      "objective": "response BCE only",
+      "rejection": {
+        "reason": "individual empirical-Bayes posterior replacement significantly degraded every S/H/T axis",
+        "moocradar_delta_s_h_t": [-0.017492719297057535, -0.015621486470350665, -0.018723134287966237],
+        "xes3g5m_delta_s_h_t": [-0.024721806298610205, -0.019270774755646092, -0.020133268498024215],
+        "paired_bootstrap_target_ci": {
+          "moocradar": [-0.02402333592219296, -0.013316317193732398],
+          "xes3g5m": [-0.025283769227424265, -0.015366306712968776]
+        }
+      }
+    },
+    "cohort_conditioned_state_completion": {
+      "status": "rejected_validation_screen",
+      "failure_id": "r28_f07_individual_posterior_discards_peer_evidence_for_unobserved_concepts",
+      "input": "train-only student response summaries, peer student-concept counts, local student-concept evidence and Q-derived features",
+      "output": "complete framework_state, mastery, cohort-conditioned reliability and module diagnostics",
+      "declared_metric": "S/H/T improvement over a parameter-matched population-profile capacity control",
+      "source": "HCD: Hierarchy Constraint-Aware Cognitive Diagnosis (Sun et al., 2025)",
+      "source_url": "https://arxiv.org/abs/2412.04488",
+      "adoption": "new non-parametric soft ability-cohort concept prior and local evidence update; no HCD architecture or author code copied",
+      "capacity_control": "exact same blocks and parameters with ability cohorts collapsed to one population concept profile",
+      "objective": "response BCE only",
+      "rejection": {
+        "reason": "ability-conditioned peer concept profiles significantly degraded every S/H/T axis",
+        "moocradar_delta_s_h_t": [-0.01714498502227957, -0.016023144549812685, -0.018768211731499007],
+        "xes3g5m_delta_s_h_t": [-0.016036012753744666, -0.016191794268966886, -0.017600161501662104],
+        "paired_bootstrap_target_ci": {
+          "moocradar": [-0.024074763036829545, -0.013698439602666122],
+          "xes3g5m": [-0.02252861125104024, -0.013035086987755235]
+        }
+      }
+    },
+    "bipolar_evidence_prototype_completion": {
+      "status": "rejected_validation_screen",
+      "failure_id": "r28_f08_concept_posterior_paths_hurt_so_revisit_global_behavior_evidence",
+      "input": "train-only correct and incorrect exercise sets, item evidence and Q-derived exercise/concept features",
+      "output": "complete framework_state, mastery, concept reliability and prototype diagnostics",
+      "declared_metric": "S/H/T improvement over a parameter-matched response-agnostic prototype control",
+      "sources": [
+        "README_spec Step 2 correct/incorrect behavior separation",
+        "Performance Factors Analysis (Pavlik, Cen, Koedinger, 2009)"
+      ],
+      "source_urls": [
+        "README_spec.md",
+        "https://pact.cs.cmu.edu/koedinger/pubs/AIED%202009%20final%20Pavlik%20Cen%20Keodinger%20corrected.pdf"
+      ],
+      "adoption": "new graph-free correct/incorrect sufficient-statistic prototype encoder; no Claude propagation code or external model code copied",
+      "capacity_control": "exact same blocks and parameters with the response-agnostic exercise centroid duplicated into both prototype channels",
+      "objective": "response BCE only",
+      "rejection": {
+        "reason": "retained two strict wins and improved MOO overall, but target AUC did not improve over the exact-parameter control",
+        "moocradar_delta_s_h_t": [0.0017051061690658287, 0.0006706269188535563, -0.00021006519533950385],
+        "xes3g5m_delta_s_h_t": [-0.00017042742615858142, -0.0006548779537075555, -0.000476280584014277],
+        "paired_bootstrap_target_ci": {
+          "moocradar": [-0.0038818868363987096, 0.0033536900390850944],
+          "xes3g5m": [-0.0020284251887755208, 0.0010411209050401825]
+        },
+        "performance_status": "two_strict_validation_wins_but_not_a_module"
+      }
+    }
+  },
+  "current_blocker": {
+    "status": "requires_new_input_or_scope_authority",
+    "evidence": "Every eligible complete replacement screened on MOO/XES either lost the external wins or had target delta below zero against its clean capacity control; the performance anchor still has three strict validation wins but no attributable module.",
+    "latest_literature_review": {
+      "item_response_ranking": "pairwise sampling/objective only; cannot count as a framework module",
+      "knowledge_sensed_cd": "requires the prohibited student-ID/low-rank knowledge-product route",
+      "cold_start_semantic_models": "strongest remaining concept-transfer mechanisms require semantic/course-resource inputs absent from the five-dataset harness or use prohibited multi-path gates"
+    },
+    "needed_to_continue": [
+      "provide a common semantic concept/exercise modality for at least three datasets",
+      "or authorize one currently prohibited complete relation/query mechanism",
+      "or change the fixed two-box/module-qualification constraints"
+    ]
+  },
+  "do_not_repeat": [
+    "orcdf_response_graph",
+    "icdm_cagt",
+    "feature_propagation_appnp",
+    "set_transformer_query_completion",
+    "disengcd_meta_multigraph",
+    "quality_state_composition",
+    "concept_similarity_diagnosis",
+    "tail_exercise_rgcn",
+    "low_rank_mastery",
+    "legacy_gate_residual_adapter_second_head"
+  ]
+}
