@@ -23,7 +23,7 @@ from models import (
     DecoupledCDMEnsemble,
     DecoupledCDMV2,
     KaNCDBaseline,
-    NeuralProcessCDM,
+    TKCUKCCompletionCDM,
 )
 from trainers.engine import _bundle_tensors, _validate_history_visibility
 from utils import compute_metrics, resolve_device, write_json
@@ -81,17 +81,19 @@ def load_model(
 ) -> DecoupledCDM | DecoupledCDMEnsemble | DecoupledCDMV2 | CountPriorBaseline:
     train_bundle = bundles["train"]
     model_variant = str(summary.get("model", "v1"))
-    if model_variant == "np_completion":
-        model = NeuralProcessCDM(
+    if model_variant == "tkc_ukc_completion":
+        model = TKCUKCCompletionCDM(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
             num_concepts=train_bundle.num_concepts,
             concept_dim=concept_dim,
-            evidence_mode=str(summary.get("np_evidence_mode", "induced_posterior")),
-            query_mode=str(summary.get("np_query_mode", "cross_attention")),
-            memory_slots=int(summary.get("np_memory_slots", 8)),
-            attention_heads=int(summary.get("np_attention_heads", 4)),
-            evidence_cap=float(summary.get("np_evidence_cap", 20.0)),
+            evidence_mode=str(summary.get("tkc_evidence_mode", "relational")),
+            completion_mode=str(
+                summary.get("ukc_completion_mode", "personalized_attention")
+            ),
+            attention_heads=int(summary.get("completion_attention_heads", 4)),
+            query_chunk_size=int(summary.get("completion_query_chunk_size", 64)),
+            evidence_cap=float(summary.get("completion_evidence_cap", 20.0)),
         )
         model.evaluation_student_batch_size = int(
             summary.get("student_batch_size") or 32
