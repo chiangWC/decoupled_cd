@@ -122,6 +122,8 @@ def test_all_variants_share_initialization_topology_and_contract() -> None:
         _model("identity_raw_control", "personalized_interaction"),
         _model("calibrated_summary_control", "personalized_interaction"),
         _model("calibrated_history", "additive_personalized_control"),
+        _model("calibrated_history", "query_attentive_field"),
+        _model("calibrated_history", "global_attentive_control"),
         _model("raw_summary_control", "personalized_interaction"),
         _model("calibrated_history", "direct_prior_control"),
         _model("raw_summary_control", "direct_prior_control"),
@@ -194,6 +196,33 @@ def test_module_gradients_are_isolated() -> None:
     assert model.cognitive_match[0].weight.grad is None
     assert model.control_cognitive_match[0].weight.grad is not None
 
+    model = _model("calibrated_history", "query_attentive_field")
+    model(**_inputs()).probs.mean().backward()
+    assert (
+        model.observed_anchor_state_field.query_branch
+        .query_projection.weight.grad
+        is not None
+    )
+    assert (
+        model.observed_anchor_state_field.global_control_branch
+        .query_projection.weight.grad
+        is None
+    )
+    assert model.state_completion.personalized_decoder[0].weight.grad is None
+
+    model = _model("calibrated_history", "global_attentive_control")
+    model(**_inputs()).probs.mean().backward()
+    assert (
+        model.observed_anchor_state_field.query_branch
+        .query_projection.weight.grad
+        is None
+    )
+    assert (
+        model.observed_anchor_state_field.global_control_branch
+        .query_projection.weight.grad
+        is not None
+    )
+
 
 def test_semantic_alignment_controls_remove_q_specific_routing() -> None:
     module = QSemanticNodeAlignment()
@@ -230,6 +259,21 @@ def test_semantic_alignment_controls_remove_q_specific_routing() -> None:
         )
         assert torch.equal(output.concept_nodes, output_permuted.concept_nodes)
         assert torch.equal(output.exercise_nodes, output_permuted.exercise_nodes)
+
+
+def test_attentive_field_has_query_specific_state_contract() -> None:
+    full = _model("calibrated_history", "query_attentive_field")
+    control = _model("calibrated_history", "global_attentive_control")
+    full_output = full(**_inputs())
+    control_output = control(**_inputs())
+    assert full_output.framework_state.shape == (2, 3, 16)
+    assert control_output.framework_state.shape == (2, 3, 16)
+    assert not torch.equal(
+        full_output.framework_state,
+        control_output.framework_state,
+    )
+    assert torch.isfinite(full_output.framework_state).all()
+    assert torch.isfinite(control_output.framework_state).all()
 
 
 def test_active_controls_are_capacity_matched() -> None:

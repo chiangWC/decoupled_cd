@@ -274,6 +274,14 @@ def predict_bundle(*, bundle: Any, model: DecoupledCDM | DecoupledCDMEnsemble, d
     frame = bundle.interactions.reset_index(drop=True).copy()
     frame["label"] = tensors["interaction_labels"].detach().cpu().numpy()
     frame["prob"] = output.probs.detach().cpu().numpy()
+    if hasattr(output, "cognitive_probs"):
+        frame["cognitive_prob"] = (
+            output.cognitive_probs.detach().cpu().numpy()
+        )
+    if hasattr(output, "guess_probs"):
+        frame["guess_prob"] = output.guess_probs.detach().cpu().numpy()
+    if hasattr(output, "slip_probs"):
+        frame["slip_prob"] = output.slip_probs.detach().cpu().numpy()
     frame["pred"] = (frame["prob"] >= 0.5).astype(int)
     frame["abs_error"] = (frame["label"] - frame["prob"]).abs()
     frame["squared_error"] = (frame["label"] - frame["prob"]) ** 2

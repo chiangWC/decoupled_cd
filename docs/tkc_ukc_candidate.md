@@ -1,16 +1,6 @@
 # Goal 两模块候选与拒绝记录
 
-## 重新激活候选：Calibrated Evidence Representation
-
-前面三类 Evidence 机制在 MOO/XES 上均未达到门槛：
-
-- Neural-Process Evidence Posterior：相对控制的 target 增益为 MOO +0.002264、XES +0.000652。
-- Relational TKC Evidence：相对控制的 target 增益为 MOO +0.001931、XES +0.001041。
-- 当前 Calibrated Evidence Representation：相对 raw summary control 的 target 增益为 MOO +0.000144、XES +0.001026。
-
-扩池后，同一个 Calibrated Evidence 机制在 Junyi 的 target 提升 +0.011985 且 Full 胜外部线；EdNet target 提升 +0.013519，但 Full 尚未胜外部线。ASSIST17 正在复核。因此该模块不再按 MOO/XES 两个数据集提前判废；是否晋级仍只看 Full 实际胜出数据集。
-
-## 待强对照复核：Personalized TKC/UKC State Completion
+## 已拒绝：Personalized TKC/UKC State Completion
 
 输入普通 student evidence、concept nodes、train-only population concept prior 和 observed concept evidence，输出下游唯一消费的完整 framework state：
 
@@ -26,7 +16,34 @@ Holdout validation 首屏：
 | MOOCRadar | 0.925962 | 0.935233 | 0.854393 | 0.760626 | +0.174607 |
 | XES3G5M | 0.786172 | 0.783953 | 0.720483 | 0.708437 | +0.075516 |
 
-Full 在两者均保持 validation strict win，但上表只相对弱 direct-prior control。只有相对新增 Strong Control 仍达到门槛后，该模块才算通过。
+Full 在两者均保持 validation strict win，但上表只相对弱 direct-prior control。加入同样消费 student evidence、concept 和 population prior 的 additive strong control 后，MOO/XES 的 target 增益仅 +0.000113/-0.000148；ASSIST17/Junyi 也只有 +0.001415/+0.000067。旧大幅度来自删除全部学生信息的弱对照，该模块拒绝。
+
+## 已通过：Calibrated Evidence Representation
+
+在修正逐行预测导出后，Full 相对 raw-summary control 的 holdout-validation target 结果为：
+
+| 数据集 | Full T | Control T | ΔT | student-clustered 95% CI |
+|---|---:|---:|---:|---:|
+| ASSIST17 | 0.795974 | 0.776803 | +0.019171 | [+0.016157, +0.022370] |
+| Junyi | 0.829230 | 0.817245 | +0.011985 | [+0.010426, +0.013657] |
+
+两者 Full 均胜 validation 外部线，因此 Evidence 是当前第一个正式通过的框架模块。
+
+## 已拒绝：Population-Calibrated Concept Prior
+
+相对较强 semantic-Q control，ASSIST17/Junyi target 均只提升约 +0.000306，拒绝。
+
+## 已拒绝：Q-Specific Semantic Node Alignment
+
+Full 使用 Q 特异双向邻域，对照为 raw identity 与 Q 无关的 global context。相对逐数据集较强对照，ASSIST17 target 提升 +0.002549，Junyi 下降 0.000181，拒绝。
+
+## 未激活：Peer Transfer 与 Response-Noise Calibration
+
+train-only peer 审计在四个胜出数据集与 Full 融合的最佳 target 增益均低于 0.003；现有 instance-dependent guess/slip 相对 cognitive probability 的 target 增益也均低于 0.004。二者不进入代码级模块探索。
+
+## 当前候选：Observed-Anchor Attentive State Field
+
+该候选借鉴 Attentive Neural Processes 的 query-specific context reading，将学生已观察概念及其作答统计作为 anchors、每个待诊断概念作为 query，一次输出完整 framework state。Capacity control 使用完全相同的 context encoder、Q/K/V、decoder 和参数量，但每个学生只生成一个 global query。Direct control 是已有 additive MLP。候选只在 validation 通过既定幅度门后扩展。
 
 ## 已拒绝：Target-Conditioned Diagnosis
 

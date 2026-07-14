@@ -96,6 +96,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--state-completion-mode",
         choices=[
+            "query_attentive_field",
+            "global_attentive_control",
             "personalized_interaction",
             "additive_personalized_control",
             "direct_prior_control",

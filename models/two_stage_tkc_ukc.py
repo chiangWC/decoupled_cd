@@ -566,6 +566,208 @@ class PersonalizedStateCompletion(nn.Module):
         )
 
 
+class _ObservedAnchorFieldBranch(nn.Module):
+    """One capacity-matched branch of the observed-anchor state field."""
+
+    def __init__(self, *, dim: int) -> None:
+        super().__init__()
+        self.context_encoder = nn.Sequential(
+            nn.Linear(dim + 3, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+            nn.LayerNorm(dim),
+        )
+        self.coordinate_encoder = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.ReLU(),
+            nn.LayerNorm(dim),
+        )
+        self.query_projection = nn.Linear(dim, dim)
+        self.key_projection = nn.Linear(dim, dim)
+        self.value_projection = nn.Linear(dim, dim)
+        self.direct_projection = nn.Linear(3, dim)
+        self.state_decoder = nn.Sequential(
+            nn.Linear(dim * 4, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+            nn.LayerNorm(dim),
+        )
+        self.reliability_head = nn.Sequential(
+            nn.Linear(3, max(8, dim // 2)),
+            nn.ReLU(),
+            nn.Linear(max(8, dim // 2), 1),
+        )
+
+    def forward(
+        self,
+        *,
+        student_evidence: torch.Tensor,
+        concept_nodes: torch.Tensor,
+        concept_prior: torch.Tensor,
+        raw_features: torch.Tensor,
+        seen: torch.Tensor,
+        confidence: torch.Tensor,
+        query_specific: bool,
+    ) -> StateCompletionOutput:
+        batch_size = student_evidence.size(0)
+        num_concepts = concept_nodes.size(0)
+        concept_grid = concept_nodes.unsqueeze(0).expand(batch_size, -1, -1)
+        prior_grid = concept_prior.unsqueeze(0).expand(batch_size, -1, -1)
+        coordinate = self.coordinate_encoder(
+            torch.cat([concept_grid, prior_grid], dim=-1)
+        )
+        context_tokens = self.context_encoder(
+            torch.cat([concept_grid, raw_features], dim=-1)
+        )
+        keys = self.key_projection(context_tokens)
+        values = self.value_projection(context_tokens)
+        if query_specific:
+            queries = self.query_projection(coordinate)
+        else:
+            queries = self.query_projection(student_evidence).unsqueeze(1)
+            queries = queries.expand(-1, num_concepts, -1)
+        attention_logits = torch.matmul(
+            queries,
+            keys.transpose(1, 2),
+        ) / math.sqrt(float(queries.size(-1)))
+        observed_keys = seen.unsqueeze(1) > 0.0
+        attention_logits = attention_logits.masked_fill(
+            ~observed_keys,
+            -1.0e4,
+        )
+        attention = torch.softmax(attention_logits, dim=-1)
+        attention = attention * observed_keys.to(dtype=attention.dtype)
+        attention = attention / attention.sum(
+            dim=-1, keepdim=True
+        ).clamp_min(1.0e-8)
+        attended_context = torch.matmul(attention, values)
+        direct_context = self.direct_projection(raw_features)
+        direct_context = direct_context * seen.unsqueeze(-1)
+        student_grid = student_evidence.unsqueeze(1).expand(
+            -1, num_concepts, -1
+        )
+        framework_state = coordinate + self.state_decoder(
+            torch.cat(
+                [
+                    student_grid,
+                    coordinate,
+                    attended_context,
+                    direct_context,
+                ],
+                dim=-1,
+            )
+        )
+        max_attention = attention.max(dim=-1).values
+        reliability = torch.sigmoid(
+            self.reliability_head(
+                torch.stack([seen, confidence, max_attention], dim=-1)
+            )
+        ).squeeze(-1)
+        attention_entropy = -(
+            attention.clamp_min(1.0e-8).log() * attention
+        ).sum(dim=-1)
+        return StateCompletionOutput(
+            framework_state=framework_state,
+            reliability=reliability,
+            diagnostics={
+                "observed_anchor_count": seen.sum(dim=1),
+                "mean_anchor_attention_entropy": attention_entropy.mean(
+                    dim=1
+                ),
+                "mean_anchor_attention_max": max_attention.mean(dim=1),
+                "mean_state_reliability": reliability.mean(dim=1),
+            },
+        )
+
+
+class ObservedAnchorStateField(nn.Module):
+    """Generate all concept states by reading observed concept anchors.
+
+    The Full path uses a concept-specific query, following the deterministic
+    cross-attention idea of Attentive Neural Processes.  The capacity control
+    uses an otherwise identical branch but one student-global query, so every
+    concept receives the same compressed context.  Both produce the complete
+    state tensor consumed by diagnosis.
+    """
+
+    VALID_MODES = {
+        "query_attentive_field",
+        "global_attentive_control",
+    }
+
+    def __init__(self, *, dim: int, evidence_cap: float) -> None:
+        super().__init__()
+        self.evidence_cap = float(evidence_cap)
+        initial_rng_state = torch.random.get_rng_state()
+        self.query_branch = _ObservedAnchorFieldBranch(dim=dim)
+        post_branch_rng_state = torch.random.get_rng_state()
+        torch.random.set_rng_state(initial_rng_state)
+        self.global_control_branch = _ObservedAnchorFieldBranch(dim=dim)
+        torch.random.set_rng_state(post_branch_rng_state)
+
+    def active_parameter_counts(self) -> dict[str, int]:
+        return {
+            "query_attentive_field": sum(
+                parameter.numel()
+                for parameter in self.query_branch.parameters()
+            ),
+            "global_attentive_control": sum(
+                parameter.numel()
+                for parameter in self.global_control_branch.parameters()
+            ),
+        }
+
+    def _raw_features(
+        self,
+        evidence: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        attempts = evidence[..., 0].clamp_min(0.0)
+        correct = torch.minimum(evidence[..., 1].clamp_min(0.0), attempts)
+        seen = evidence[..., 5].clamp(0.0, 1.0)
+        accuracy = correct / attempts.clamp_min(1.0)
+        confidence = (
+            evidence[..., 4] / math.log1p(self.evidence_cap)
+        ).clamp(0.0, 1.0)
+        raw_features = torch.stack(
+            [
+                accuracy.mul(2.0).sub(1.0) * confidence,
+                confidence,
+                seen,
+            ],
+            dim=-1,
+        )
+        return raw_features, seen, confidence
+
+    def forward(
+        self,
+        *,
+        student_evidence: torch.Tensor,
+        concept_nodes: torch.Tensor,
+        concept_prior: torch.Tensor,
+        student_concept_evidence: torch.Tensor,
+        mode: str,
+    ) -> StateCompletionOutput:
+        if mode not in self.VALID_MODES:
+            raise ValueError(f"Unsupported observed-anchor field mode: {mode}")
+        raw_features, seen, confidence = self._raw_features(
+            student_concept_evidence.to(dtype=concept_nodes.dtype)
+        )
+        branch = (
+            self.query_branch
+            if mode == "query_attentive_field"
+            else self.global_control_branch
+        )
+        return branch(
+            student_evidence=student_evidence,
+            concept_nodes=concept_nodes,
+            concept_prior=concept_prior,
+            raw_features=raw_features,
+            seen=seen,
+            confidence=confidence,
+            query_specific=mode == "query_attentive_field",
+        )
+
+
 class TwoStageTKCUKCCDM(nn.Module):
     """Two claimed modules followed by a fixed Q-conditioned diagnosis."""
 
@@ -599,7 +801,11 @@ class TwoStageTKCUKCCDM(nn.Module):
             raise ValueError(
                 f"Unsupported concept prior mode: {concept_prior_mode}"
             )
-        if completion_mode not in PersonalizedStateCompletion.VALID_MODES:
+        valid_completion_modes = (
+            PersonalizedStateCompletion.VALID_MODES
+            | ObservedAnchorStateField.VALID_MODES
+        )
+        if completion_mode not in valid_completion_modes:
             raise ValueError(f"Unsupported completion mode: {completion_mode}")
         if diagnosis_mode not in VALID_DIAGNOSIS_MODES:
             raise ValueError(f"Unsupported diagnosis mode: {diagnosis_mode}")
@@ -677,11 +883,15 @@ class TwoStageTKCUKCCDM(nn.Module):
         self.control_discrimination_raw = nn.Parameter(
             torch.tensor(0.54132485)
         )
+        self.observed_anchor_state_field = ObservedAnchorStateField(
+            dim=concept_dim,
+            evidence_cap=evidence_cap,
+        )
 
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v5",
+            "family": "two_stage_tkc_ukc_v6",
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
@@ -732,6 +942,9 @@ class TwoStageTKCUKCCDM(nn.Module):
             ),
             "concept_prior": self.concept_prior.active_parameter_counts(),
             "state_completion": self.state_completion.active_parameter_counts(),
+            "observed_anchor_state_field": (
+                self.observed_anchor_state_field.active_parameter_counts()
+            ),
             "diagnosis": {
                 "target_conditioned": full_diagnosis,
                 "monotonic_control": control_diagnosis,
@@ -799,13 +1012,22 @@ class TwoStageTKCUKCCDM(nn.Module):
             q_matrix=q_matrix,
             mode=self.concept_prior_mode,
         )
-        completion_output = self.state_completion(
-            student_evidence=evidence_output.student_evidence,
-            concept_nodes=concept_nodes,
-            concept_prior=prior_output.concept_prior,
-            student_concept_evidence=concept_evidence,
-            mode=self.completion_mode,
-        )
+        if self.completion_mode in ObservedAnchorStateField.VALID_MODES:
+            completion_output = self.observed_anchor_state_field(
+                student_evidence=evidence_output.student_evidence,
+                concept_nodes=concept_nodes,
+                concept_prior=prior_output.concept_prior,
+                student_concept_evidence=concept_evidence,
+                mode=self.completion_mode,
+            )
+        else:
+            completion_output = self.state_completion(
+                student_evidence=evidence_output.student_evidence,
+                concept_nodes=concept_nodes,
+                concept_prior=prior_output.concept_prior,
+                student_concept_evidence=concept_evidence,
+                mode=self.completion_mode,
+            )
         framework_state = completion_output.framework_state
         mastery = torch.sigmoid(
             self.mastery_head(framework_state).squeeze(-1)
