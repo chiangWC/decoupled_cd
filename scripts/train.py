@@ -98,6 +98,19 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--target-requirement-mode",
+        choices=[
+            "exercise_specific",
+            "concept_prototype_control",
+            "q_only_control",
+        ],
+        default="exercise_specific",
+        help=(
+            "Exercise-specific target requirement query and controls that "
+            "remove target identity."
+        ),
+    )
+    parser.add_argument(
         "--concept-prior-mode",
         choices=[
             "population_q",
@@ -791,6 +804,7 @@ def validate_model_args(args: argparse.Namespace) -> None:
         args.semantic_node_mode != "bidirectional_q"
         or args.evidence_representation_mode != "calibrated_history"
         or args.evidence_refinement_mode != "identity_passthrough"
+        or args.target_requirement_mode != "exercise_specific"
         or args.concept_prior_mode != "population_q"
         or args.state_completion_mode != "personalized_interaction"
         or args.diagnosis_mode != "target_conditioned"
@@ -1026,6 +1040,7 @@ def main() -> None:
             semantic_node_mode=args.semantic_node_mode,
             evidence_mode=args.evidence_representation_mode,
             evidence_refinement_mode=args.evidence_refinement_mode,
+            target_requirement_mode=args.target_requirement_mode,
             concept_prior_mode=args.concept_prior_mode,
             completion_mode=args.state_completion_mode,
             diagnosis_mode=args.diagnosis_mode,
@@ -1202,6 +1217,7 @@ def main() -> None:
         "semantic_node_mode": args.semantic_node_mode,
         "evidence_representation_mode": args.evidence_representation_mode,
         "evidence_refinement_mode": args.evidence_refinement_mode,
+        "target_requirement_mode": args.target_requirement_mode,
         "concept_prior_mode": args.concept_prior_mode,
         "state_completion_mode": args.state_completion_mode,
         "diagnosis_mode": args.diagnosis_mode,

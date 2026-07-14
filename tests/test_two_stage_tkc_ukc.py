@@ -3,7 +3,10 @@ from __future__ import annotations
 import torch
 
 from models import TwoStageTKCUKCCDM
-from models.two_stage_tkc_ukc import QSemanticNodeAlignment
+from models.two_stage_tkc_ukc import (
+    ExerciseSpecificRequirementQuery,
+    QSemanticNodeAlignment,
+)
 from trainers.engine import _build_context_target_batch
 
 
@@ -78,6 +81,7 @@ def _model(
     concept_prior_mode: str = "population_q",
     semantic_node_mode: str = "bidirectional_q",
     evidence_refinement_mode: str = "identity_passthrough",
+    target_requirement_mode: str = "exercise_specific",
 ) -> TwoStageTKCUKCCDM:
     torch.manual_seed(42)
     return TwoStageTKCUKCCDM(
@@ -88,6 +92,7 @@ def _model(
         semantic_node_mode=semantic_node_mode,
         evidence_mode=evidence_mode,
         evidence_refinement_mode=evidence_refinement_mode,
+        target_requirement_mode=target_requirement_mode,
         concept_prior_mode=concept_prior_mode,
         completion_mode=completion_mode,
         diagnosis_mode=diagnosis_mode,
@@ -153,6 +158,16 @@ def test_all_variants_share_initialization_topology_and_contract() -> None:
             "calibrated_history",
             "personalized_interaction",
             evidence_refinement_mode="base_capacity_control",
+        ),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            target_requirement_mode="concept_prototype_control",
+        ),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            target_requirement_mode="q_only_control",
         ),
     ]
     assert len({_count(model) for model in variants}) == 1
@@ -378,6 +393,43 @@ def test_semantic_alignment_controls_remove_q_specific_routing() -> None:
         )
         assert torch.equal(output.concept_nodes, output_permuted.concept_nodes)
         assert torch.equal(output.exercise_nodes, output_permuted.exercise_nodes)
+
+
+def test_target_requirement_controls_remove_exercise_identity() -> None:
+    module = ExerciseSpecificRequirementQuery()
+    q_matrix = torch.tensor(
+        [
+            [1.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+        ]
+    )
+    concept_nodes = torch.tensor(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    )
+    exercise_nodes = torch.tensor(
+        [
+            [1.0, 0.0, 1.0],
+            [1.0, 0.0, -1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    )
+    common = {
+        "q_matrix": q_matrix,
+        "concept_nodes": concept_nodes,
+        "exercise_nodes": exercise_nodes,
+        "target_exercise_ids": torch.tensor([0, 1]),
+        "projection": torch.nn.Identity(),
+    }
+    full = module(**common, mode="exercise_specific")
+    prototype = module(**common, mode="concept_prototype_control")
+    q_only = module(**common, mode="q_only_control")
+    assert not torch.equal(full.q_repr[0], full.q_repr[1])
+    assert torch.equal(prototype.q_repr[0], prototype.q_repr[1])
+    assert torch.equal(q_only.q_repr[0], q_only.q_repr[1])
 
 
 def test_attentive_field_has_query_specific_state_contract() -> None:

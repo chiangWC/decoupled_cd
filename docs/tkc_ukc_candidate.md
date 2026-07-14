@@ -63,10 +63,16 @@ MOO target 只提升 +0.000783；XES target 反而下降 0.001070。动态扩池
 
 Capacity control 是当前 target-conditioned MLP，Direct control 是 monotonic NCD。三路共用完整 Evidence/State、初始化、数据顺序和训练配方，活跃参数量差异不得超过 10%。ASSIST17 Full 相对较强 capacity control 的 H/T 分别下降 0.014242/0.015678；MOO 的 H 下降 0.000098、T 只提升 0.000358。候选不调参，原样拒绝。
 
-## 当前候选：Outcome-Partitioned Multi-Set Evidence Refinement
+## 已拒绝：Outcome-Partitioned Multi-Set Evidence Refinement
 
 该候选借鉴 Selby 等人对“多个置换不变集合上的函数”的建模问题，将 train-only 正确作答与错误作答视为两个有关联但不可混同的 evidence sets；分别汇总题目语义，并显式提供 correct–incorrect contrast，再整块输出下游唯一消费的 student evidence。来源：[Learning Functions on Multiple Sets using Multi-Set Transformers](https://arxiv.org/abs/2206.15444)。这里只采用 multi-set 问题定义并独立实现紧凑关系池化，不复制其 Transformer 或作者代码。
 
-Capacity control 保留相同输入、全局作答统计、四倍语义输入宽度和完全相同参数量，但把两个集合都替换为不区分结果的 attempted-item set；Direct control 只消费原 Evidence 输出与全局统计。候选首先固定 ASSIST17/MOOCRadar 原配方运行，不做候选专属调参；若候选过门，还必须重新验证已通过 Evidence 模块在新数据流下仍满足幅度门。
+Capacity control 保留相同输入、全局作答统计、四倍语义输入宽度和完全相同参数量，但把两个集合都替换为不区分结果的 attempted-item set；Direct control 只消费原 Evidence 输出与全局统计。ASSIST17/MOOCRadar 相对逐数据集较强对照的 target 增益只有 +0.000391/+0.000741，拒绝。
+
+## 当前候选：Exercise-Specific Requirement Query
+
+该候选从已训练模型反向归因得到：Q view 表示题目要求哪些概念，exercise-specific view 表示同一 Q 组合在具体题目中的实现方式；二者共同生成下游 Diagnosis 唯一消费的 target requirement query。这个“协同身份 + 内容侧信息”映射借鉴 hybrid recommendation 的问题分解，例如 [Collaborative Deep Learning for Recommender Systems](https://dl.acm.org/doi/10.1145/2783258.2783273)，但 CD 模块与代码独立实现，不移植原模型。
+
+`w/o Module` 将 exercise-specific view 替换为 Q-only view；更强 Capacity control 使用 train-population 内按 Q 聚合的 concept-conditioned exercise prototype，保留完全相同的投影参数和输入宽度，但不能读取目标题 ID。初步 checkpoint 扰动中，Full 相对 Q-only 的 target 增益在 ASSIST17/XES3G5M 为 +0.081179/+0.057273；这只是激活证据。正式资格取 Full 相对重训后两个对照中较强者的结果，并固定原数据集配方。
 
 最终门槛不变：同一架构至少三胜；两个模块各自在至少两个 Full 胜出数据集 target 提升不低于 0.005，其中一个不低于 0.01，并至少一个 student-clustered paired-bootstrap CI 下界大于 0。

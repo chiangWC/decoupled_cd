@@ -100,6 +100,12 @@ def load_model(
                     "identity_passthrough",
                 )
             ),
+            target_requirement_mode=str(
+                summary.get(
+                    "target_requirement_mode",
+                    "exercise_specific",
+                )
+            ),
             concept_prior_mode=str(
                 summary.get("concept_prior_mode", "population_q")
             ),

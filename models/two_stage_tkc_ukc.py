@@ -52,6 +52,14 @@ class DiagnosisOutput:
 
 
 @dataclass
+class TargetRequirementOutput:
+    q_vectors: torch.Tensor
+    q_count: torch.Tensor
+    q_repr: torch.Tensor
+    diagnostics: dict[str, torch.Tensor]
+
+
+@dataclass
 class TwoStageForwardOutput:
     probs: torch.Tensor
     cognitive_probs: torch.Tensor
@@ -780,6 +788,65 @@ class ObservedAnchorStateField(nn.Module):
         )
 
 
+class ExerciseSpecificRequirementQuery(nn.Module):
+    """Represent what a target exercise requires beyond its Q concepts.
+
+    Full preserves the target exercise identity as a second view beside the
+    Q-conditioned concept requirement.  Controls replace that view with a
+    concept-conditioned population prototype or duplicate the Q-only view.
+    No target label or student response enters this module.
+    """
+
+    VALID_MODES = {
+        "exercise_specific",
+        "concept_prototype_control",
+        "q_only_control",
+    }
+
+    def forward(
+        self,
+        *,
+        q_matrix: torch.Tensor,
+        concept_nodes: torch.Tensor,
+        exercise_nodes: torch.Tensor,
+        target_exercise_ids: torch.Tensor,
+        projection: nn.Module,
+        mode: str,
+    ) -> TargetRequirementOutput:
+        if mode not in self.VALID_MODES:
+            raise ValueError(f"Unsupported target requirement mode: {mode}")
+        dtype = concept_nodes.dtype
+        q_binary = (q_matrix > 0.0).to(dtype=dtype)
+        q_vectors = q_binary.index_select(0, target_exercise_ids)
+        q_count = q_vectors.sum(dim=1, keepdim=True).clamp_min(1.0)
+        q_concept = q_vectors @ concept_nodes / q_count
+        if mode == "exercise_specific":
+            item_view = exercise_nodes.index_select(
+                0,
+                target_exercise_ids,
+            )
+        elif mode == "concept_prototype_control":
+            concept_item_count = q_binary.sum(dim=0).clamp_min(1.0)
+            concept_item_prototype = (
+                q_binary.transpose(0, 1) @ exercise_nodes
+            ) / concept_item_count.unsqueeze(-1)
+            item_view = q_vectors @ concept_item_prototype / q_count
+        else:
+            item_view = q_concept
+        q_repr = projection(torch.cat([q_concept, item_view], dim=-1))
+        return TargetRequirementOutput(
+            q_vectors=q_vectors,
+            q_count=q_count,
+            q_repr=q_repr,
+            diagnostics={
+                "target_requirement_view_distance": (
+                    q_concept - item_view
+                ).norm(dim=-1),
+                "target_requirement_q_count": q_count.squeeze(-1),
+            },
+        )
+
+
 class OutcomePartitionedEvidenceRefinement(nn.Module):
     """Refine student evidence from correct and incorrect history sets.
 
@@ -1021,6 +1088,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         semantic_node_mode: str = "bidirectional_q",
         evidence_mode: str = "calibrated_history",
         evidence_refinement_mode: str = "identity_passthrough",
+        target_requirement_mode: str = "exercise_specific",
         concept_prior_mode: str = "population_q",
         completion_mode: str = "personalized_interaction",
         diagnosis_mode: str = "target_conditioned",
@@ -1046,6 +1114,14 @@ class TwoStageTKCUKCCDM(nn.Module):
                 "Unsupported evidence refinement mode: "
                 f"{evidence_refinement_mode}"
             )
+        if (
+            target_requirement_mode
+            not in ExerciseSpecificRequirementQuery.VALID_MODES
+        ):
+            raise ValueError(
+                "Unsupported target requirement mode: "
+                f"{target_requirement_mode}"
+            )
         if concept_prior_mode not in PopulationCalibratedConceptPrior.VALID_MODES:
             raise ValueError(
                 f"Unsupported concept prior mode: {concept_prior_mode}"
@@ -1062,6 +1138,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         self.semantic_node_mode = semantic_node_mode
         self.evidence_mode = evidence_mode
         self.evidence_refinement_mode = evidence_refinement_mode
+        self.target_requirement_mode = target_requirement_mode
         self.concept_prior_mode = concept_prior_mode
         self.completion_mode = completion_mode
         self.diagnosis_mode = diagnosis_mode
@@ -1089,6 +1166,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             nn.ReLU(),
             nn.LayerNorm(concept_dim),
         )
+        self.target_requirement = ExerciseSpecificRequirementQuery()
         self.cognitive_match = nn.Sequential(
             nn.Linear(concept_dim * 4, concept_dim),
             nn.ReLU(),
@@ -1153,12 +1231,15 @@ class TwoStageTKCUKCCDM(nn.Module):
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v8",
+            "family": "two_stage_tkc_ukc_v9",
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
             "evidence_refinement": (
                 "outcome_multiset_or_capacity_controls_or_passthrough"
+            ),
+            "target_requirement": (
+                "exercise_specific_or_concept_prototype_or_q_only"
             ),
             "diagnosis": (
                 "item_hypernetwork_or_target_conditioned_or_"
@@ -1205,6 +1286,9 @@ class TwoStageTKCUKCCDM(nn.Module):
             self.concept_embedding.weight.numel()
             + self.exercise_embedding.weight.numel()
         )
+        target_requirement_capacity = sum(
+            parameter.numel() for parameter in self.q_projection.parameters()
+        )
         return {
             "semantic_node_alignment": {
                 "bidirectional_q": shared_semantic_capacity,
@@ -1217,6 +1301,11 @@ class TwoStageTKCUKCCDM(nn.Module):
             "outcome_evidence_refinement": (
                 self.outcome_evidence_refinement.active_parameter_counts()
             ),
+            "target_requirement": {
+                "exercise_specific": target_requirement_capacity,
+                "concept_prototype_control": target_requirement_capacity,
+                "q_only_control": target_requirement_capacity,
+            },
             "concept_prior": self.concept_prior.active_parameter_counts(),
             "state_completion": self.state_completion.active_parameter_counts(),
             "observed_anchor_state_field": (
@@ -1318,19 +1407,21 @@ class TwoStageTKCUKCCDM(nn.Module):
             self.mastery_head(framework_state).squeeze(-1)
         )
 
-        q_vectors = q_matrix.index_select(0, target_exercise_ids).to(
-            dtype=framework_state.dtype
+        requirement_output = self.target_requirement(
+            q_matrix=q_matrix,
+            concept_nodes=concept_nodes,
+            exercise_nodes=exercise_nodes,
+            target_exercise_ids=target_exercise_ids,
+            projection=self.q_projection,
+            mode=self.target_requirement_mode,
         )
-        q_count = q_vectors.sum(dim=1, keepdim=True).clamp_min(1.0)
+        q_vectors = requirement_output.q_vectors
+        q_count = requirement_output.q_count
         target_states = framework_state.index_select(0, target_state_rows)
         q_state = (
             target_states * q_vectors.unsqueeze(-1)
         ).sum(dim=1) / q_count
-        q_concept = q_vectors @ concept_nodes / q_count
-        target_exercise = exercise_nodes.index_select(0, target_exercise_ids)
-        q_repr = self.q_projection(
-            torch.cat([q_concept, target_exercise], dim=-1)
-        )
+        q_repr = requirement_output.q_repr
         match_features = torch.cat(
             [
                 q_state,
@@ -1421,6 +1512,7 @@ class TwoStageTKCUKCCDM(nn.Module):
                 **semantic_output.diagnostics,
                 **evidence_output.diagnostics,
                 **refinement_output.diagnostics,
+                **requirement_output.diagnostics,
                 **prior_output.diagnostics,
                 **completion_output.diagnostics,
             },
