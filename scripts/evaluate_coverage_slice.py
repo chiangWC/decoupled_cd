@@ -214,6 +214,11 @@ def main() -> None:
     device = str(resolve_device(args.device, args.gpus))
     model_names = args.model_name or [infer_model_name(path) for path in args.summary]
 
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    prediction_dir = output_path.with_name(f"{output_path.stem}_predictions")
+    prediction_dir.mkdir(parents=True, exist_ok=True)
+
     all_slice_rows: list[dict[str, Any]] = []
     summary_rows: list[dict[str, Any]] = []
     run_metadata: list[dict[str, Any]] = []
@@ -238,6 +243,12 @@ def main() -> None:
             train_frame=bundles["train"].interactions,
             q_matrix=bundles["shared"]["q_matrix"],
         )
+        safe_model_name = "".join(
+            character if character.isalnum() or character in {"-", "_"} else "_"
+            for character in model_name
+        )
+        prediction_path = prediction_dir / f"{safe_model_name}_{args.split}_predictions.csv"
+        enriched.to_csv(prediction_path, index=False)
         slice_rows = compute_slice_rows(enriched, dataset_name=args.dataset_name, model_name=model_name)
         all_slice_rows.extend(slice_rows)
         summary_rows.append(build_summary_row(slice_rows, dataset_name=args.dataset_name, model_name=model_name))
@@ -249,6 +260,7 @@ def main() -> None:
                 "split_paths": paths,
                 "loss": loss,
                 "original_metrics": original_metrics,
+                "prediction_path": str(prediction_path.resolve()),
                 "coverage_bucket_counts": {
                     str(key): int(value) for key, value in enriched["coverage_bucket"].value_counts().items()
                 },
@@ -264,8 +276,6 @@ def main() -> None:
         "slices": all_slice_rows,
         "summary": summary_rows,
     }
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(payload, output_path)
 
     slice_csv = Path(args.slice_csv) if args.slice_csv else output_path.with_name(f"{output_path.stem}_slices.csv")

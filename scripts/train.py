@@ -15,7 +15,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles, prepare_step_data_bundle
-from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2, KaNCDBaseline
+from models import (
+    CountPriorBaseline,
+    DecoupledCDM,
+    DecoupledCDMEnsemble,
+    DecoupledCDMV2,
+    KaNCDBaseline,
+    NeuralProcessCDM,
+)
 from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
 
@@ -39,13 +46,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
     parser.add_argument(
         "--model",
-        choices=["v1", "v2", "b0", "kancd"],
+        choices=["v1", "v2", "b0", "kancd", "np_completion"],
         default="v1",
         help=(
             "Model variant. v1 is the frozen mainline (adapters allowed). v2 is the clean core with "
             "independent module flags for single-module attribution runs. b0 is the count-prior "
             "logistic baseline over train-history statistics. kancd is a faithful in-harness "
-            "KaNCD reimplementation (low-rank mastery extrapolation baseline)."
+            "KaNCD reimplementation (low-rank mastery extrapolation baseline). "
+            "np_completion is the two-module evidence-posterior/concept-query candidate."
         ),
     )
     parser.add_argument(
@@ -54,6 +62,21 @@ def parse_args() -> argparse.Namespace:
         default=64,
         help="Latent dimension for the KaNCD baseline's low-rank factorization.",
     )
+    parser.add_argument(
+        "--np-evidence-mode",
+        choices=["induced_posterior", "summary_control"],
+        default="induced_posterior",
+        help="Module 1 data path for np_completion; summary_control is its clean ablation.",
+    )
+    parser.add_argument(
+        "--np-query-mode",
+        choices=["cross_attention", "latent_control"],
+        default="cross_attention",
+        help="Module 2 data path for np_completion; latent_control is its clean ablation.",
+    )
+    parser.add_argument("--np-memory-slots", type=int, default=8)
+    parser.add_argument("--np-attention-heads", type=int, default=4)
+    parser.add_argument("--np-evidence-cap", type=float, default=20.0)
     parser.add_argument(
         "--v2-ukc-propagation",
         action="store_true",
@@ -696,6 +719,26 @@ def validate_model_args(args: argparse.Namespace) -> None:
             raise ValueError(
                 f"v2 module flags require --model v2: " + ", ".join(enabled_v2_flags)
             )
+    np_nondefaults = (
+        args.np_evidence_mode != "induced_posterior"
+        or args.np_query_mode != "cross_attention"
+        or args.np_memory_slots != 8
+        or args.np_attention_heads != 4
+        or args.np_evidence_cap != 20.0
+    )
+    if args.model != "np_completion" and np_nondefaults:
+        raise ValueError("np_completion flags require --model np_completion.")
+    if args.model == "np_completion":
+        if args.seed != 42:
+            raise ValueError("The active research protocol fixes np_completion to --seed 42.")
+        if args.np_memory_slots < 1:
+            raise ValueError("--np-memory-slots must be positive.")
+        if args.np_attention_heads < 1:
+            raise ValueError("--np-attention-heads must be positive.")
+        if args.concept_dim % args.np_attention_heads != 0:
+            raise ValueError("--concept-dim must be divisible by --np-attention-heads.")
+        if args.np_evidence_cap <= 0.0:
+            raise ValueError("--np-evidence-cap must be positive.")
     if args.v2_monotonic_readout and not (args.v2_target_aware_readout or args.v2_hybrid_readout):
         raise ValueError("--v2-monotonic-readout requires --v2-target-aware-readout or --v2-hybrid-readout.")
     if args.v2_hybrid_readout and args.v2_target_aware_readout:
@@ -898,7 +941,19 @@ def main() -> None:
         history_evidence_logit_prior_prior_weight=args.history_evidence_logit_prior_prior_weight,
         history_evidence_logit_prior_mastery_confidence_cap=args.history_evidence_logit_prior_mastery_confidence_cap,
     )
-    if args.model == "v2":
+    if args.model == "np_completion":
+        model = NeuralProcessCDM(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            concept_dim=args.concept_dim,
+            evidence_mode=args.np_evidence_mode,
+            query_mode=args.np_query_mode,
+            memory_slots=args.np_memory_slots,
+            attention_heads=args.np_attention_heads,
+            evidence_cap=args.np_evidence_cap,
+        )
+    elif args.model == "v2":
         model = DecoupledCDMV2(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
@@ -952,6 +1007,10 @@ def main() -> None:
         model = DecoupledCDMEnsemble(**model_kwargs)
     else:
         model = DecoupledCDM(**model_kwargs)
+    architecture_fingerprint = getattr(model, "architecture_fingerprint", None)
+    initialization_hash = (
+        model.initialization_hash() if hasattr(model, "initialization_hash") else None
+    )
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_path = str(output_path.with_name(output_path.stem + "_best.pt"))
@@ -1054,6 +1113,13 @@ def main() -> None:
         "b0_prior_weight": args.b0_prior_weight,
         "b0_component_cap": args.b0_component_cap,
         "kancd_latent_dim": args.kancd_latent_dim,
+        "np_evidence_mode": args.np_evidence_mode,
+        "np_query_mode": args.np_query_mode,
+        "np_memory_slots": args.np_memory_slots,
+        "np_attention_heads": args.np_attention_heads,
+        "np_evidence_cap": args.np_evidence_cap,
+        "architecture_fingerprint": architecture_fingerprint,
+        "initialization_hash": initialization_hash,
     }
     output = {
         "dataset": args.dataset,

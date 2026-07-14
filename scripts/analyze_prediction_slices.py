@@ -17,7 +17,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles
 from data.q_matrix import normalize_concept_sequence
-from models import CountPriorBaseline, DecoupledCDM, DecoupledCDMEnsemble, DecoupledCDMV2, KaNCDBaseline
+from models import (
+    CountPriorBaseline,
+    DecoupledCDM,
+    DecoupledCDMEnsemble,
+    DecoupledCDMV2,
+    KaNCDBaseline,
+    NeuralProcessCDM,
+)
 from trainers.engine import _bundle_tensors, _validate_history_visibility
 from utils import compute_metrics, resolve_device, write_json
 
@@ -74,6 +81,22 @@ def load_model(
 ) -> DecoupledCDM | DecoupledCDMEnsemble | DecoupledCDMV2 | CountPriorBaseline:
     train_bundle = bundles["train"]
     model_variant = str(summary.get("model", "v1"))
+    if model_variant == "np_completion":
+        model = NeuralProcessCDM(
+            num_students=train_bundle.num_students,
+            num_exercises=train_bundle.num_exercises,
+            num_concepts=train_bundle.num_concepts,
+            concept_dim=concept_dim,
+            evidence_mode=str(summary.get("np_evidence_mode", "induced_posterior")),
+            query_mode=str(summary.get("np_query_mode", "cross_attention")),
+            memory_slots=int(summary.get("np_memory_slots", 8)),
+            attention_heads=int(summary.get("np_attention_heads", 4)),
+            evidence_cap=float(summary.get("np_evidence_cap", 20.0)),
+        )
+        model.evaluation_student_batch_size = int(
+            summary.get("student_batch_size") or 32
+        )
+        return _finalize_loaded_model(model, checkpoint_path=checkpoint_path, device=device)
     if model_variant == "v2":
         model = DecoupledCDMV2(
             num_students=train_bundle.num_students,

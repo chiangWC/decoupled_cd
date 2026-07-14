@@ -222,31 +222,68 @@ def build_hidden_bundle(
 def predict_bundle(
     *,
     bundle: StepDataBundle,
-    model: DecoupledCDM | DecoupledCDMEnsemble,
+    model: torch.nn.Module,
     device: str,
 ) -> tuple[torch.Tensor, torch.Tensor, float]:
     _validate_history_visibility(bundle)
     torch_device = torch.device(device)
     tensors = _bundle_tensors(bundle, torch_device)
+    labels = tensors["interaction_labels"]
+    student_batch_size = getattr(model, "evaluation_student_batch_size", None)
     with torch.no_grad():
-        output = model(
-            q_matrix=tensors["q_matrix"],
-            concept_graph=tensors["concept_graph"],
-            prerequisite_graph=tensors["prerequisite_graph"],
-            similarity_graph=tensors["similarity_graph"],
-            student_exercise_mask=tensors["student_exercise_mask"],
-            response_matrix=tensors["response_matrix"],
-            student_tkc_mask=tensors["student_tkc_mask"],
-            student_ukc_mask=tensors["student_ukc_mask"],
-            student_concept_evidence=tensors["student_concept_evidence"],
-            exercise_evidence=tensors["exercise_evidence"],
-            target_student_ids=tensors["interaction_student_ids"],
-            target_exercise_ids=tensors["interaction_exercise_ids"],
-            use_student_subset=True,
-        )
-        labels = tensors["interaction_labels"]
-        loss = torch.nn.functional.binary_cross_entropy(output.probs, labels)
-    return labels.detach().cpu(), output.probs.detach().cpu(), float(loss.item())
+        if student_batch_size is None:
+            output = model(
+                q_matrix=tensors["q_matrix"],
+                concept_graph=tensors["concept_graph"],
+                prerequisite_graph=tensors["prerequisite_graph"],
+                similarity_graph=tensors["similarity_graph"],
+                student_exercise_mask=tensors["student_exercise_mask"],
+                response_matrix=tensors["response_matrix"],
+                student_tkc_mask=tensors["student_tkc_mask"],
+                student_ukc_mask=tensors["student_ukc_mask"],
+                student_concept_evidence=tensors["student_concept_evidence"],
+                exercise_evidence=tensors["exercise_evidence"],
+                target_student_ids=tensors["interaction_student_ids"],
+                target_exercise_ids=tensors["interaction_exercise_ids"],
+                use_student_subset=True,
+            )
+            probs = output.probs
+        else:
+            probs = torch.empty_like(labels)
+            unique_students = torch.unique(
+                tensors["interaction_student_ids"],
+                sorted=True,
+            )
+            for start in range(0, unique_students.numel(), int(student_batch_size)):
+                student_ids = unique_students[start : start + int(student_batch_size)]
+                selected = torch.zeros(
+                    tensors["student_exercise_mask"].size(0),
+                    dtype=torch.bool,
+                    device=torch_device,
+                )
+                selected[student_ids] = True
+                row_indices = torch.nonzero(
+                    selected[tensors["interaction_student_ids"]],
+                    as_tuple=False,
+                ).squeeze(-1)
+                output = model(
+                    q_matrix=tensors["q_matrix"],
+                    concept_graph=tensors["concept_graph"],
+                    prerequisite_graph=tensors["prerequisite_graph"],
+                    similarity_graph=tensors["similarity_graph"],
+                    student_exercise_mask=tensors["student_exercise_mask"],
+                    response_matrix=tensors["response_matrix"],
+                    student_tkc_mask=tensors["student_tkc_mask"],
+                    student_ukc_mask=tensors["student_ukc_mask"],
+                    student_concept_evidence=tensors["student_concept_evidence"],
+                    exercise_evidence=tensors["exercise_evidence"],
+                    target_student_ids=tensors["interaction_student_ids"][row_indices],
+                    target_exercise_ids=tensors["interaction_exercise_ids"][row_indices],
+                    use_student_subset=True,
+                )
+                probs[row_indices] = output.probs
+        loss = torch.nn.functional.binary_cross_entropy(probs, labels)
+    return labels.detach().cpu(), probs.detach().cpu(), float(loss.item())
 
 
 def evaluate_bundle(
