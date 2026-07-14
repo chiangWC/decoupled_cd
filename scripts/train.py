@@ -526,6 +526,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument("--log-dir", default="logs")
     parser.add_argument("--output", default="results/train_summary.json")
+    parser.add_argument(
+        "--evaluation-stage",
+        choices=["validation", "confirmation"],
+        default="confirmation",
+        help="validation skips test evaluation; confirmation evaluates the frozen model on test.",
+    )
     args = parser.parse_args()
     args = apply_dataset_defaults(args, parser)
     args.student_gate_prior_alpha = resolve_student_gate_prior_arg(
@@ -1058,11 +1064,15 @@ def main() -> None:
     evaluation_student_batch_size = (
         args.student_batch_size if args.training_mode == "student_recompute_minibatch" else None
     )
-    test_metrics = evaluate_model(
-        bundle=test_bundle,
-        model=model,
-        device=resolved_device,
-        student_batch_size=evaluation_student_batch_size,
+    test_metrics = (
+        evaluate_model(
+            bundle=test_bundle,
+            model=model,
+            device=resolved_device,
+            student_batch_size=evaluation_student_batch_size,
+        )
+        if args.evaluation_stage == "confirmation"
+        else None
     )
     valid_metrics = (
         evaluate_model(
@@ -1123,6 +1133,7 @@ def main() -> None:
     }
     output = {
         "dataset": args.dataset,
+        "evaluation_stage": args.evaluation_stage,
         **v2_flag_snapshot,
         "train_interactions": args.train_interactions or args.interactions,
         "valid_interactions": args.valid_interactions,
@@ -1308,11 +1319,12 @@ def main() -> None:
         "best_epoch": result.best_epoch,
         "max_cuda_memory_allocated_gb": max_cuda_memory_allocated_gb,
         "best_val_auc": result.best_val_auc,
-        "test_auc": test_metrics["auc"],
-        "test_acc": test_metrics["acc"],
-        "test_rmse": test_metrics["rmse"],
-        "test_brier": test_metrics["brier"],
-        "test_ece": test_metrics["ece"],
+        "evaluation_stage": args.evaluation_stage,
+        "test_auc": None if test_metrics is None else test_metrics["auc"],
+        "test_acc": None if test_metrics is None else test_metrics["acc"],
+        "test_rmse": None if test_metrics is None else test_metrics["rmse"],
+        "test_brier": None if test_metrics is None else test_metrics["brier"],
+        "test_ece": None if test_metrics is None else test_metrics["ece"],
         "best_checkpoint_path": str(Path(checkpoint_path).resolve()),
         "output_json": str(output_path.resolve()),
         "history_csv": str(Path(history_path).resolve()),
@@ -1324,15 +1336,22 @@ def main() -> None:
         "results/experiment_results.csv" if args.model == "v1" else "results/experiment_results_v2.csv"
     )
     append_summary_csv(summary_row, summary_csv_path)
-    logger.info(
-        "Finished run: best_val_auc=%s test_auc=%.6f test_acc=%.6f test_rmse=%.6f test_brier=%.6f test_ece=%.6f",
-        result.best_val_auc,
-        test_metrics["auc"],
-        test_metrics["acc"],
-        test_metrics["rmse"],
-        test_metrics["brier"],
-        test_metrics["ece"],
-    )
+    if test_metrics is None:
+        logger.info(
+            "Finished validation run: best_val_auc=%s; test evaluation intentionally skipped.",
+            result.best_val_auc,
+        )
+    else:
+        logger.info(
+            "Finished confirmation run: best_val_auc=%s test_auc=%.6f test_acc=%.6f "
+            "test_rmse=%.6f test_brier=%.6f test_ece=%.6f",
+            result.best_val_auc,
+            test_metrics["auc"],
+            test_metrics["acc"],
+            test_metrics["rmse"],
+            test_metrics["brier"],
+            test_metrics["ece"],
+        )
 
     print(json.dumps(output, indent=2, ensure_ascii=False))
 
