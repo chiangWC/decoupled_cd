@@ -30,5 +30,8 @@ before a shared standard diagnosis function. Global student summaries, legacy
 states, residual prediction heads and dataset-specific routing may not bypass
 the UKC path.
 
-TKC/UKC remains the active research problem unless a different independent
-problem and contribution are explicitly approved before implementation.
+TKC/UKC is the preferred entry hypothesis because the repository already has
+explicit masks, protocols and failure evidence for it. It is not a mandatory
+final narrative: a model discovered through another data flow may be retained
+when it satisfies the external-win and clean-ablation contract in
+`docs/research_goal.md`. The final paper problem and contribution may then be

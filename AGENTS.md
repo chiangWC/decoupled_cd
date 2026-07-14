@@ -35,3 +35,5 @@ python scripts/evaluate.py --help
 GPU 主机的 `/home/xph/jwc/research/decoupled_cd_codex` 是本仓库的实验工作区；实验前确认其分支和 commit 与本地一致，并在远端激活 `decoupled_cd`。`/home/xph/jwc/research/decoupled_cd_v2` 是 Claude 实验参考目录，只用于接收结果和比较候选改动，不是 Codex 代码来源。`scripts/remote_exec.sh` 目前仍指向旧路径，更新前不要用于 Codex 实验。不得提交凭据、机器专用路径改写或私有数据。
 
 正式实验代码的开发、提交和运行统一在上述 xph 工作区完成。本地仓库只用于只读审查和同步已提交分支，不为实验轮次创建额外 worktree。启动训练前要求 `git status --short` 为空、HEAD 已推送到远端；禁止通过 `rsync`、`scp` 或其他文件级方式部署未提交源码。xph 同时只保留一个活动 worktree，失败轮次的结果先集中归档，再删除其工作树。
+
+新会话开始研究工作前必须依次读取 `docs/research_goal.md`、`docs/recovery_scope.md` 和 `configs/external_benchmark_registry.json`。研究成功条件以 `docs/research_goal.md` 为准；短期实验计划不得缩小或替换其中的终止条件。
