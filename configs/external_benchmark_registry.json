@@ -1,0 +1,507 @@
+{
+  "schema_version": 3,
+  "updated_at": "2026-07-14",
+  "model_seed": 42,
+  "split_seed": 2024,
+  "required_external_wins": 3,
+  "comparison_policy": {
+    "performance_opponents": "external_only",
+    "ordinary": "S >= external - 0.002; H >= external - 0.002; T > external",
+    "strict": "S >= external; H >= external; T > external",
+    "ablation_controls_are_attribution_only": true
+  },
+  "active_pool": [
+    "assist_09",
+    "assist_17",
+    "moocradar",
+    "nips34",
+    "xes3g5m",
+    "junyi",
+    "ednet"
+  ],
+  "datasets": {
+    "assist_09": {
+      "status": "active",
+      "standard_dir": "assist_09",
+      "holdout_dir": "assist_09_chold_v2",
+      "target_scope": "bucket:zero",
+      "data_version": "knofield-recent-2026-07-13",
+      "fingerprints": {
+        "standard": {
+          "train.csv": "f3bb0c1640b3961ff88a506bea1b73f91af2510c2feff07c907b075a72a64481",
+          "valid.csv": "0fb422a93a30e31d2bac64481a746cabdd9dc1552a0e555895c7359cfde74a20",
+          "test.csv": "29e7d169de375825531f65e48e0943dbb64364b1178e21c7df225213adffaf3d",
+          "Q_matrix.csv": "1d729d53e4285f555e2c747285d154997c77a2601b883f035e7466550e4ce0a3"
+        },
+        "holdout": {
+          "train.csv": "e266351a038366cda2f380bf649e8f6cb520e508ce1f3ad2b698890e724dab51",
+          "valid.csv": "33e813b197fbb4b7618f3b89c260caf2f2b0c4293508b0287df8aba5b1f9853c",
+          "test.csv": "abf65a0ec1296d3288f980f8b7b804b140598db09fb791a1b048255802363d2a",
+          "Q_matrix.csv": "1d729d53e4285f555e2c747285d154997c77a2601b883f035e7466550e4ce0a3"
+        }
+      },
+      "external_axes": {
+        "S": {
+          "model": "SVGCD",
+          "seed": 42,
+          "validation_auc": 0.7764317636146086,
+          "test_auc": 0.7782,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/svgcd/assist_09/standard/valid_predictions.csv",
+          "validation_prediction_sha256": "76b6350751ed1217f0110515995024fad11f5de9a02ca46c5bffec16e26b9c36",
+          "validation_rows": 20385
+        },
+        "H": {
+          "model": "SVGCD",
+          "seed": 42,
+          "validation_auc": 0.7689472167456004,
+          "test_auc": 0.7715416882105066,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/svgcd/assist_09/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "e67831f61bd48b2098723d961bf92d81c498f0ddcac9761ccd9220f530d9aa91",
+          "validation_rows": 26916
+        },
+        "T": {
+          "model": "SVGCD",
+          "seed": 42,
+          "validation_auc": 0.755440069219913,
+          "test_auc": 0.7571262988647898,
+          "validation_target_auc": 0.755440069219913,
+          "test_target_auc": 0.7571262988647898,
+          "validation_prediction_path": "results/external_benchmarks/legacy/svgcd/assist_09/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "e67831f61bd48b2098723d961bf92d81c498f0ddcac9761ccd9220f530d9aa91",
+          "validation_rows": 26916
+        }
+      }
+    },
+    "assist_17": {
+      "status": "active",
+      "standard_dir": "assist_17",
+      "holdout_dir": "assist_17_chold_v2",
+      "target_scope": "bucket:zero",
+      "data_version": "knofield-recent-2026-07-13",
+      "fingerprints": {
+        "standard": {
+          "train.csv": "c42ddeff9605896395b6e413b0583a0a71ac31f0895faecd7457cfac483ad899",
+          "valid.csv": "3065f9edbd33609a5e00e80503dc55e696d721497e4350805fb8897a667e8780",
+          "test.csv": "c28a31718fda45179d9ca7ba9264d2581fc0fa459a637093e19bef62e3897fbc",
+          "Q_matrix.csv": "23a59ec57c3b454d2d3fece3760aa91ec65a297e357766265466591b5bb0f9e3"
+        },
+        "holdout": {
+          "train.csv": "e3c281f01d2fedaafa289c6d950c6ae64c48e2d2d3b2f6a69bd28e88a3ef236b",
+          "valid.csv": "07b74bcfcd2c28693469d9eedddbe8b8d0fcc89d4659b079d75198886267fe70",
+          "test.csv": "af95d593487c4829f5398e531bf25b36172ae142a30115b5c11f1b95fbe4ccad",
+          "Q_matrix.csv": "23a59ec57c3b454d2d3fece3760aa91ec65a297e357766265466591b5bb0f9e3"
+        }
+      },
+      "external_axes": {
+        "S": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7843734044852211,
+          "test_auc": 0.7869,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf_a17_standard/valid_predictions.csv",
+          "validation_prediction_sha256": "ecca9deeca0eacc900f0241e62788843c9c0d4d46e2ffeb65d7a9d02d8dab201",
+          "validation_rows": 30541
+        },
+        "H": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7838522667154033,
+          "test_auc": 0.7836596180857167,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf_a17_holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "c1561b684670faf7de55da889f6304f5faa514b36316ae2eed3d8f7c637739ce",
+          "validation_rows": 39527
+        },
+        "T": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.781337386057394,
+          "test_auc": 0.7808065019879786,
+          "validation_target_auc": 0.781337386057394,
+          "test_target_auc": 0.7808065019879786,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf_a17_holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "c1561b684670faf7de55da889f6304f5faa514b36316ae2eed3d8f7c637739ce",
+          "validation_rows": 39527
+        }
+      }
+    },
+    "moocradar": {
+      "status": "active",
+      "standard_dir": "moocradar",
+      "holdout_dir": "moocradar_chold_v2",
+      "target_scope": "bucket:zero",
+      "data_version": "knofield-recent-2026-07-13",
+      "fingerprints": {
+        "standard": {
+          "train.csv": "43826e307ea3307bb9f39c88dcec84dcf07e79ac87a67729f5221918d0619998",
+          "valid.csv": "1a180c21af134a1a88b88038d2b3e9a986f92d1e1ba51cede3f535bc02dceae9",
+          "test.csv": "5fe2475e171486a4b3a0c3fe4cf7bbc96aa74f0016218c55446ec3f55067e28e",
+          "Q_matrix.csv": "b2526274cf733d0170028037b727c682eb81366804dc0f72703699fb90aaf8af"
+        },
+        "holdout": {
+          "train.csv": "a60037cffe8378f63e38a0b96dc79bc0ec8396abc2af620a513a11f1d5882f89",
+          "valid.csv": "53739593a1b0ca3ee33da267409acd2d26d35b7663b780a58b96b65bb915e60b",
+          "test.csv": "b829bdb50e4c33ccbb753faef7731898fdfad53cd2ff1d2b481cb17edb7f22b1",
+          "Q_matrix.csv": "b2526274cf733d0170028037b727c682eb81366804dc0f72703699fb90aaf8af"
+        }
+      },
+      "external_axes": {
+        "S": {
+          "model": "SVGCD",
+          "seed": 42,
+          "validation_auc": 0.9295525280832102,
+          "test_auc": 0.93,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/svgcd/moocradar/standard/valid_predictions.csv",
+          "validation_prediction_sha256": "7ce00cc81e7a4ab2d9f926f0e6771ccd4481c6d5c5a5a96807f37c7ba11cc108",
+          "validation_rows": 38608
+        },
+        "H": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.9241784538077018,
+          "test_auc": 0.9292987302721454,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf_moo_holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "0e8ba89d479b06ac70eabb068db6617efb48a26f47c6dc93f7743c9c3eb88894",
+          "validation_rows": 38631
+        },
+        "T": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.9331082512994772,
+          "test_auc": 0.9453954734796024,
+          "validation_target_auc": 0.9331082512994772,
+          "test_target_auc": 0.9453954734796024,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf_moo_holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "0e8ba89d479b06ac70eabb068db6617efb48a26f47c6dc93f7743c9c3eb88894",
+          "validation_rows": 38631
+        }
+      }
+    },
+    "nips34": {
+      "status": "active",
+      "standard_dir": "nips34_clean",
+      "holdout_dir": "nips34_chold_v2",
+      "target_scope": "low_coverage",
+      "data_version": "knofield-recent-2026-07-13",
+      "fingerprints": {
+        "standard": {
+          "train.csv": "e54b4f302d19c00c41d9ff2d69c9152145a7bd59d5c43ffa411b47ce90f36df5",
+          "valid.csv": "391f29f69f894fe342c0246cea24a119feb2c5143e30f5d61cf3470671be0838",
+          "test.csv": "84ec6efffa7d428b8fdd4466f5b761d31d4e198f869177c4d2eeafaac23fd04b",
+          "Q_matrix.csv": "cb11593103b55b184fc4e1eaea41449c49fce0b4783f5ed44563c23ca818088c"
+        },
+        "holdout": {
+          "train.csv": "64c8d02067cffe87ec8b1b1b747604425a5d1223d9097c9e904c61350b4312d7",
+          "valid.csv": "0ba37ad102168651e1d405492ee0186a6e2ebf295c49188b582b4df1450e0ce4",
+          "test.csv": "7e40f50bce6e7bc60c1125ff98d18c69818a59d7973eef53fbb56015407e50c3",
+          "Q_matrix.csv": "cb11593103b55b184fc4e1eaea41449c49fce0b4783f5ed44563c23ca818088c"
+        }
+      },
+      "external_axes": {
+        "S": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7884775890118603,
+          "test_auc": 0.7893,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf/nips34/standard/valid_predictions.csv",
+          "validation_prediction_sha256": "6af81e5c621d5f69ba38296e5df506f8461cf8bfebfa86ba37ddfba19a542e11",
+          "validation_rows": 138273
+        },
+        "H": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.784248529326222,
+          "test_auc": 0.7834435591807685,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf/nips34/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "efa1218d9b291b782432eafafef7b5f4e69909007fb1d8dcaa51c7f35df11043",
+          "validation_rows": 140121
+        },
+        "T": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7621197028645961,
+          "test_auc": 0.7552820799272424,
+          "validation_target_auc": 0.7621197028645961,
+          "test_target_auc": 0.7552820799272424,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf/nips34/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "efa1218d9b291b782432eafafef7b5f4e69909007fb1d8dcaa51c7f35df11043",
+          "validation_rows": 140121
+        }
+      }
+    },
+    "xes3g5m": {
+      "status": "active",
+      "standard_dir": "xes3g5m",
+      "holdout_dir": "xes3g5m_chold_v2",
+      "target_scope": "bucket:zero",
+      "data_version": "knofield-recent-2026-07-13",
+      "fingerprints": {
+        "standard": {
+          "train.csv": "27d0f8715176f83040048498f345ca1ca3af9a1dbaef9ea3083d1821f6621740",
+          "valid.csv": "59b1a462dd1853a20941164ca48661920d918972ff1a5eabde54d6e1701ceb2f",
+          "test.csv": "55d45ad44d0c278c41a210ed5e5737289b8ea713e2665e5fee175a6edac083fb",
+          "Q_matrix.csv": "13965c21cc2728281df235877805fcbf137bf851a4f9e232de6ec14620546df7"
+        },
+        "holdout": {
+          "train.csv": "6016884a69ba395650313668a6d3d511f5778160bfa94335e7ca2e6c3d7f0c1f",
+          "valid.csv": "104b637649d3a8c1d82d4ddd5171b2cbbd7e61754e8c480c0405fb2f3514357f",
+          "test.csv": "a60f0a0d0701d34a46057beeaa6424e6c44bcfb44c21df07220b6818ee1e49d2",
+          "Q_matrix.csv": "13965c21cc2728281df235877805fcbf137bf851a4f9e232de6ec14620546df7"
+        }
+      },
+      "external_axes": {
+        "S": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7863955903996729,
+          "test_auc": 0.7925,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf_xes_standard/valid_predictions.csv",
+          "validation_prediction_sha256": "35b33061210753150ec02a5f4651959a15805a3d29a5d427a66bcb90fba6aca7",
+          "validation_rows": 20714
+        },
+        "H": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7816204531362032,
+          "test_auc": 0.7848765165436676,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf_xes_holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "827d0f3835df4cc5661b4fb32c67296f6d732442bac3b7a82a846c44ca5ccef1",
+          "validation_rows": 20879
+        },
+        "T": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7785276619443606,
+          "test_auc": 0.7818908885717208,
+          "validation_target_auc": 0.7785276619443606,
+          "test_target_auc": 0.7818908885717208,
+          "validation_prediction_path": "results/external_benchmarks/legacy/orcdf_xes_holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "827d0f3835df4cc5661b4fb32c67296f6d732442bac3b7a82a846c44ca5ccef1",
+          "validation_rows": 20879
+        }
+      }
+    },
+    "junyi": {
+      "status": "active",
+      "standard_dir": "pool_v2/junyi_standard_v2",
+      "holdout_dir": "pool_v2/junyi_chold_v2",
+      "target_scope": "bucket:zero",
+      "target_semantics": "exercise-concept one-to-one; exact-zero is both unseen item and unseen concept",
+      "external_axes": {
+        "S": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.8204338172998951,
+          "test_auc": 0.8245865632675814,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/orcdf/junyi/standard/valid_predictions.csv",
+          "validation_prediction_sha256": "02418ec268e819ae07902d6e9ad40a01245e06991c0b99805eb3af60c6898439",
+          "validation_rows": 24299,
+          "test_prediction_path": "results/external_benchmarks/orcdf/junyi/standard/test_predictions.csv",
+          "test_prediction_sha256": "a91a4219e82b9940e6d5db11580f09aced7f3303f820c56a4c5653aebc38ac21",
+          "test_rows": 67063,
+          "checkpoint": "results/external_benchmarks/orcdf/junyi/standard/best_model.pth",
+          "checkpoint_sha256": "429f162bfd307f3f11b7daf9fdf903ba87958efb333912e7c3c7dbcf5f843b9b",
+          "source_hashes": {
+            "model.py": "26ab8502f5ead7f518058f443eeed4f0066158cb88146012d6c6eb1930d0363a",
+            "dataset.py": "29590bbfa2ad0fc415681920e02ab07d6b14c04a70f1df40ff89a2e430ea18bc",
+            "trainer.py": "7b4b7fddc46900cd6d637d6abadace3da6fe44687b576a7b9e35c1ea791c92c7"
+          }
+        },
+        "H": {
+          "model": "SVGCD",
+          "seed": 42,
+          "validation_auc": 0.8199889557783353,
+          "test_auc": 0.8193024724307135,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/svgcd/junyi/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "a70fdf2790b056800bee8a12ea60ef06ac8d60da219601d53d86e5108f64c97d",
+          "validation_rows": 35913,
+          "test_prediction_path": "results/external_benchmarks/svgcd/junyi/holdout/test_predictions.csv",
+          "test_prediction_sha256": "0387997aa2158275320d821fb9bc74a591a8c9f086ea24355263948e327c8e5b",
+          "test_rows": 70687,
+          "checkpoint": "results/external_benchmarks/svgcd/junyi/holdout/best_model.pth",
+          "checkpoint_sha256": "7541f8e8cb5f71fbd8f54816527a94410c2dfc579387dc4b25f79a56c284ecf9",
+          "source_hashes": {
+            "model.py": "e0f00210595aa52cf4c7e89ec19c53d7fac1343205f159d04e2a5e45b1ec67f4",
+            "dataset.py": "8b11e5a75fc7a502c0ccdcfa6d4c04ffdba642d12e305a8d0dab3a5977fd8cd1",
+            "trainer.py": "591b3a16edfbfa58dc3d9e4aa458a31cc1a09dbe657f113b8b4f86ffdcf19383"
+          }
+        },
+        "T": {
+          "model": "SVGCD",
+          "seed": 42,
+          "validation_auc": 0.8199889557783353,
+          "test_auc": 0.8193024724307135,
+          "validation_target_auc": 0.8199889557783353,
+          "test_target_auc": 0.8193024724307135,
+          "validation_prediction_path": "results/external_benchmarks/svgcd/junyi/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "a70fdf2790b056800bee8a12ea60ef06ac8d60da219601d53d86e5108f64c97d",
+          "validation_rows": 35913,
+          "test_prediction_path": "results/external_benchmarks/svgcd/junyi/holdout/test_predictions.csv",
+          "test_prediction_sha256": "0387997aa2158275320d821fb9bc74a591a8c9f086ea24355263948e327c8e5b",
+          "test_rows": 70687,
+          "checkpoint": "results/external_benchmarks/svgcd/junyi/holdout/best_model.pth",
+          "checkpoint_sha256": "7541f8e8cb5f71fbd8f54816527a94410c2dfc579387dc4b25f79a56c284ecf9",
+          "source_hashes": {
+            "model.py": "e0f00210595aa52cf4c7e89ec19c53d7fac1343205f159d04e2a5e45b1ec67f4",
+            "dataset.py": "8b11e5a75fc7a502c0ccdcfa6d4c04ffdba642d12e305a8d0dab3a5977fd8cd1",
+            "trainer.py": "591b3a16edfbfa58dc3d9e4aa458a31cc1a09dbe657f113b8b4f86ffdcf19383"
+          }
+        }
+      },
+      "fingerprints": {
+        "standard": {
+          "train.csv": "57db7779a19f2daf719279115b57c6a59d8df9c4a1b8f85cc7fc0de42b25504c",
+          "valid.csv": "b46aec516bb6575338abff80f709241a7dbd5e88f635ae07d164ec243ea45ca2",
+          "test.csv": "94f76bbbcb5288b351e33b1b8409a86c32c099feb44c2f24845e3fe4e68815df",
+          "Q_matrix.csv": "64b1039bf9a022069b1df5248f5335081427056aebac7902d8ce5b4f5bcfc13e"
+        },
+        "holdout": {
+          "train.csv": "85eeac0b393d01debf43afb922940cdd3efca167b30a0cb8fda8c1eb37d82500",
+          "valid.csv": "b7893f25c7f506dbb39bbed282e494ff5dd4f4327f7e5a52c11efef65e3cb4f5",
+          "test.csv": "5abb41edecf2a358860ca5e57d49b54e604c0cdb3609f3a6271ce364c0d605dd",
+          "Q_matrix.csv": "64b1039bf9a022069b1df5248f5335081427056aebac7902d8ce5b4f5bcfc13e"
+        }
+      },
+      "row_identity_hashes": {
+        "standard": {
+          "train": "bb1bedadded3e05023d8850ff5abcd6360cf18910c183daa005d7b883444ffb4",
+          "valid": "c15eb8b7c812926f318da8f03cb9369a593035c03ed96a31b65caf1e3e5aedae",
+          "test": "c6e50368e6790f29a3cdba05c4b2352776b2676c247738e4cbf536228373b2ea"
+        },
+        "holdout": {
+          "train": "78340ce740d10ec806541bbe0c5686f8098890051915872a0d41283620b17260",
+          "valid": "89a3042fb7290b94420f31a863155fa555c0cafeaffd7646d1a2786c1413b831",
+          "test": "188d945d33ba050f4c315e369b14256a1081c8e04b88245354f761c579f5a0dd"
+        }
+      }
+    },
+    "ednet": {
+      "status": "active",
+      "standard_dir": "pool_v2/ednet_clean_v2",
+      "holdout_dir": "pool_v2/ednet_clean_chold_v2",
+      "target_scope": "bucket:zero",
+      "target_scope_policy": "bucket:zero when valid/test each have >=100 rows and both labels; otherwise low_coverage",
+      "external_axes": {
+        "S": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7439332300899723,
+          "test_auc": 0.7433846964268638,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/orcdf/ednet/standard/valid_predictions.csv",
+          "validation_prediction_sha256": "3d2fbf1199aa1618ada81881dc21655821c3ab2d69b99c3a02f67f23af2bc6b4",
+          "validation_rows": 75321,
+          "test_prediction_path": "results/external_benchmarks/orcdf/ednet/standard/test_predictions.csv",
+          "test_prediction_sha256": "42150e16a61cf424ea9b38eac5bfbc6eeb6f9cbf02103414ff57e8dda98bd20a",
+          "test_rows": 150586,
+          "checkpoint": "results/external_benchmarks/orcdf/ednet/standard/best_model.pth",
+          "checkpoint_sha256": "c5a975464c7edca31ff2c100575584c4e9cdc89c1b2962f827362ebdead0b772",
+          "source_hashes": {
+            "model.py": "26ab8502f5ead7f518058f443eeed4f0066158cb88146012d6c6eb1930d0363a",
+            "dataset.py": "29590bbfa2ad0fc415681920e02ab07d6b14c04a70f1df40ff89a2e430ea18bc",
+            "trainer.py": "7b4b7fddc46900cd6d637d6abadace3da6fe44687b576a7b9e35c1ea791c92c7"
+          }
+        },
+        "H": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7404503224147613,
+          "test_auc": 0.740806965069497,
+          "validation_target_auc": null,
+          "test_target_auc": null,
+          "validation_prediction_path": "results/external_benchmarks/orcdf/ednet/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "75559b9b788400da832861bc96a0749baaa5ffee2de5d207a2f8bdf4ce0b7b6e",
+          "validation_rows": 100364,
+          "test_prediction_path": "results/external_benchmarks/orcdf/ednet/holdout/test_predictions.csv",
+          "test_prediction_sha256": "80e5c36055bfe73082d954bc057311de171ad901492dbba740c810f09157e549",
+          "test_rows": 199982,
+          "checkpoint": "results/external_benchmarks/orcdf/ednet/holdout/best_model.pth",
+          "checkpoint_sha256": "6e1823c3393b4198804a50bb1ec6ac88598deec15660a3e150a08be958016754",
+          "source_hashes": {
+            "model.py": "26ab8502f5ead7f518058f443eeed4f0066158cb88146012d6c6eb1930d0363a",
+            "dataset.py": "29590bbfa2ad0fc415681920e02ab07d6b14c04a70f1df40ff89a2e430ea18bc",
+            "trainer.py": "7b4b7fddc46900cd6d637d6abadace3da6fe44687b576a7b9e35c1ea791c92c7"
+          }
+        },
+        "T": {
+          "model": "ORCDF",
+          "seed": 42,
+          "validation_auc": 0.7258983456369176,
+          "test_auc": 0.7240996310210297,
+          "validation_target_auc": 0.7258983456369176,
+          "test_target_auc": 0.7240996310210297,
+          "validation_prediction_path": "results/external_benchmarks/orcdf/ednet/holdout/valid_predictions.csv",
+          "validation_prediction_sha256": "75559b9b788400da832861bc96a0749baaa5ffee2de5d207a2f8bdf4ce0b7b6e",
+          "validation_rows": 100364,
+          "test_prediction_path": "results/external_benchmarks/orcdf/ednet/holdout/test_predictions.csv",
+          "test_prediction_sha256": "80e5c36055bfe73082d954bc057311de171ad901492dbba740c810f09157e549",
+          "test_rows": 199982,
+          "checkpoint": "results/external_benchmarks/orcdf/ednet/holdout/best_model.pth",
+          "checkpoint_sha256": "6e1823c3393b4198804a50bb1ec6ac88598deec15660a3e150a08be958016754",
+          "source_hashes": {
+            "model.py": "26ab8502f5ead7f518058f443eeed4f0066158cb88146012d6c6eb1930d0363a",
+            "dataset.py": "29590bbfa2ad0fc415681920e02ab07d6b14c04a70f1df40ff89a2e430ea18bc",
+            "trainer.py": "7b4b7fddc46900cd6d637d6abadace3da6fe44687b576a7b9e35c1ea791c92c7"
+          }
+        }
+      },
+      "cleaning": {
+        "raw_rows": 824329,
+        "clean_rows": 753564,
+        "exact_duplicates_removed": 70765,
+        "conflicting_repeated_attempt_groups_retained": 42679,
+        "q_mapping_conflicts": 0
+      },
+      "fingerprints": {
+        "standard": {
+          "train.csv": "4982f68172f17f8736ebcc3473eafb1477073abc249eea8406b024a4bf4737fc",
+          "valid.csv": "819efc52cc5b4c0372e7b92577205a0ac1519e42ee884d0457dc13507acb61b7",
+          "test.csv": "12df1290dbb06479eecca9559fb95b8bebf8c28763d1180e2c5c7246818207c1",
+          "Q_matrix.csv": "468e9c405913f74a7f15859b7ded5a814d196200dcd9ad001fea22d7aced5a18"
+        },
+        "holdout": {
+          "train.csv": "c8dfa6d96939ea00dc58b09415f2cb21c23a19b581a5413204ae744fb064fe3a",
+          "valid.csv": "f4bf84cdf49a6242e9d4fa2a25ac27006f85c897858cfac35b5b9d30e96c0ab5",
+          "test.csv": "7b45edbd59533801ae38364776fbfcf17ea655f4365a3b26b7d3b99d49127436",
+          "Q_matrix.csv": "468e9c405913f74a7f15859b7ded5a814d196200dcd9ad001fea22d7aced5a18"
+        }
+      },
+      "row_identity_hashes": {
+        "standard": {
+          "train": "ae3668d5e93c53aef2460c9e5d572c9b5ebe0bcaf90432a932011a3d28a25786",
+          "valid": "9c7802c3e038e0bf03162a60d971d835dfaf53e8562d7ad122b4df6eaf5bdd10",
+          "test": "5c5505891448ae496878fff7aa0b7dca15c66512c1378f87a4068a5ba7c9eaf7"
+        },
+        "holdout": {
+          "train": "5e29a50b66a55c3f65ae27bab6bd6bdf137759b24c6b3b28e60d3643113ad94d",
+          "valid": "a29c63b3a90f7b599e2f6f694228be7ea05878763e0448f7dcf52751b594b8ad",
+          "test": "e831f87ddc333c5dbf085c20b901cb708aaa98af3418a69980ad787829d0328d"
+        }
+      }
+    }
+  }
+}
