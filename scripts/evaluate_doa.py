@@ -77,6 +77,13 @@ def extract_mastery(*, model: Any, bundle: Any, device: str) -> torch.Tensor | N
     model = model.to(torch_device)
     model.eval()
     tensors = _bundle_tensors(bundle, torch_device)
+    # DOA consumes the complete per-student mastery matrix, not interaction
+    # predictions.  A single valid target satisfies model forward contracts
+    # without materializing a redundant state tensor for every test row.
+    target_student_ids = tensors["interaction_student_ids"][:1]
+    target_exercise_ids = tensors["interaction_exercise_ids"][:1]
+    if target_student_ids.numel() == 0:
+        raise ValueError("Cannot extract mastery from an empty split.")
     with torch.no_grad():
         output = model(
             q_matrix=tensors["q_matrix"],
@@ -89,8 +96,8 @@ def extract_mastery(*, model: Any, bundle: Any, device: str) -> torch.Tensor | N
             student_ukc_mask=tensors["student_ukc_mask"],
             student_concept_evidence=tensors["student_concept_evidence"],
             exercise_evidence=tensors["exercise_evidence"],
-            target_student_ids=tensors["interaction_student_ids"],
-            target_exercise_ids=tensors["interaction_exercise_ids"],
+            target_student_ids=target_student_ids,
+            target_exercise_ids=target_exercise_ids,
         )
     mastery = getattr(output, "mastery", None)
     return mastery.detach().cpu() if mastery is not None else None
