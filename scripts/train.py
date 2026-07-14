@@ -64,7 +64,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--evidence-representation-mode",
-        choices=["calibrated_history", "raw_summary_control"],
+        choices=[
+            "calibrated_history",
+            "identity_raw_control",
+            "calibrated_summary_control",
+            "raw_summary_control",
+        ],
         default="calibrated_history",
         help="Module 1 path; raw_summary_control is its clean capacity control.",
     )

@@ -94,6 +94,8 @@ def _count(module: torch.nn.Module) -> int:
 def test_all_variants_share_initialization_topology_and_contract() -> None:
     variants = [
         _model("calibrated_history", "personalized_interaction"),
+        _model("identity_raw_control", "personalized_interaction"),
+        _model("calibrated_summary_control", "personalized_interaction"),
         _model("calibrated_history", "additive_personalized_control"),
         _model("raw_summary_control", "personalized_interaction"),
         _model("calibrated_history", "direct_prior_control"),
@@ -124,6 +126,8 @@ def test_module_gradients_are_isolated() -> None:
     model(**_inputs()).probs.mean().backward()
     assert model.evidence_representation.calibrated_encoder[0].weight.grad is not None
     assert model.evidence_representation.raw_control_encoder[0].weight.grad is None
+    assert model.evidence_representation.identity_raw_encoder[0].weight.grad is None
+    assert model.evidence_representation.calibrated_summary_encoder[0].weight.grad is None
     assert model.state_completion.personalized_decoder[0].weight.grad is not None
     assert model.state_completion.additive_control_decoder[0].weight.grad is None
     assert model.state_completion.direct_control_decoder[0].weight.grad is None

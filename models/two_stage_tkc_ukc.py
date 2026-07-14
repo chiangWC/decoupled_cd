@@ -54,7 +54,12 @@ class CalibratedEvidenceRepresentation(nn.Module):
     and return the same tensor contract.
     """
 
-    VALID_MODES = {"calibrated_history", "raw_summary_control"}
+    VALID_MODES = {
+        "calibrated_history",
+        "identity_raw_control",
+        "calibrated_summary_control",
+        "raw_summary_control",
+    }
 
     def __init__(self, *, dim: int, evidence_cap: float) -> None:
         super().__init__()
@@ -79,12 +84,34 @@ class CalibratedEvidenceRepresentation(nn.Module):
             nn.ReLU(),
             nn.Linear(dim * 2, dim),
         )
+        full_rng_state = torch.random.get_rng_state()
+        self.identity_raw_encoder = nn.Sequential(
+            nn.Linear(dim + 4, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+            nn.LayerNorm(dim),
+        )
+        self.calibrated_summary_encoder = nn.Sequential(
+            nn.Linear(dim + 4, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+            nn.LayerNorm(dim),
+        )
+        torch.random.set_rng_state(full_rng_state)
 
     def active_parameter_counts(self) -> dict[str, int]:
         return {
             "calibrated_history": sum(
                 parameter.numel()
                 for parameter in self.calibrated_encoder.parameters()
+            ),
+            "identity_raw_control": sum(
+                parameter.numel()
+                for parameter in self.identity_raw_encoder.parameters()
+            ),
+            "calibrated_summary_control": sum(
+                parameter.numel()
+                for parameter in self.calibrated_summary_encoder.parameters()
             ),
             "raw_summary_control": sum(
                 parameter.numel()
@@ -155,9 +182,22 @@ class CalibratedEvidenceRepresentation(nn.Module):
         raw_control = self.raw_control_encoder(
             torch.cat([torch.zeros_like(pooled_exercise), raw_features], dim=-1)
         )
-        student_evidence = (
-            calibrated if mode == "calibrated_history" else raw_control
+        identity_raw = self.identity_raw_encoder(
+            torch.cat([pooled_exercise, raw_features], dim=-1)
         )
+        calibrated_summary = self.calibrated_summary_encoder(
+            torch.cat(
+                [torch.zeros_like(pooled_exercise), calibrated_features],
+                dim=-1,
+            )
+        )
+        evidence_by_mode = {
+            "calibrated_history": calibrated,
+            "identity_raw_control": identity_raw,
+            "calibrated_summary_control": calibrated_summary,
+            "raw_summary_control": raw_control,
+        }
+        student_evidence = evidence_by_mode[mode]
 
         population_features = torch.stack(
             [item_accuracy.mul(2.0).sub(1.0), item_confidence],
@@ -467,7 +507,7 @@ class TwoStageTKCUKCCDM(nn.Module):
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v2",
+            "family": "two_stage_tkc_ukc_v3",
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
