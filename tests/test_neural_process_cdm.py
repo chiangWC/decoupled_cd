@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from models import NeuralProcessCDM
+from trainers.engine import _build_context_target_batch
 
 
 def _inputs() -> dict[str, torch.Tensor]:
@@ -175,3 +176,33 @@ def test_framework_state_is_consumed_by_the_only_prediction_head() -> None:
     )
     assert torch.allclose(baseline, output.probs)
     assert not torch.allclose(changed, baseline)
+
+
+def test_context_target_training_removes_supervised_responses_from_history() -> None:
+    inputs = _inputs()
+    tensors: dict[str, torch.Tensor | None] = {
+        "q_matrix": inputs["q_matrix"],
+        "student_exercise_mask": inputs["student_exercise_mask"],
+        "response_matrix": inputs["response_matrix"],
+        "student_tkc_mask": inputs["student_tkc_mask"],
+        "student_ukc_mask": inputs["student_ukc_mask"],
+        "student_concept_evidence": inputs["student_concept_evidence"],
+        "interaction_student_ids": inputs["target_student_ids"],
+        "interaction_exercise_ids": inputs["target_exercise_ids"],
+        "interaction_labels": torch.tensor([0.0, 1.0, 0.0]),
+    }
+    torch.manual_seed(42)
+    forward_tensors, supervised_indices = _build_context_target_batch(
+        tensors=tensors,
+        student_ids=torch.tensor([0, 2]),
+        batch_indices=torch.arange(3),
+        context_target_frac=0.5,
+    )
+    assert supervised_indices.numel() >= 1
+    assert forward_tensors["student_concept_evidence"].shape[-1] == 6
+    for row_index in supervised_indices.tolist():
+        student_id = int(tensors["interaction_student_ids"][row_index])
+        exercise_id = int(tensors["interaction_exercise_ids"][row_index])
+        assert forward_tensors["student_exercise_mask"][student_id, exercise_id] == 0.0
+    assert forward_tensors["student_exercise_mask"][0].sum() >= 1.0
+    assert forward_tensors["student_exercise_mask"][2].sum() >= 1.0

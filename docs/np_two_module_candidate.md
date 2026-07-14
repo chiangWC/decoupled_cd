@@ -27,7 +27,7 @@ Full 与全部消融始终实例化四条路径；模式开关只替换数据流
 | w/o Module 2 | induced posterior | latent control |
 | Double control | summary control | latent control |
 
-首屏只使用 response BCE，不启用 KL、masked reconstruction 或一致性目标，避免将训练目标收益混入结构消融。
+首轮纯 response BCE 出现 train AUC shortcut：训练损失持续下降而 validation AUC 从首 epoch 后快速退化。现改为四个变体完全共享的 context-target BCE：随机遮蔽 20% train-only observed cells，状态只消费剩余 context，并只监督被遮蔽 responses。不启用 KL 或一致性目标；后续另报 objective_off，结构消融始终使用同一目标。
 
 ## 晋级条件
 

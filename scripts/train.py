@@ -78,6 +78,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--np-attention-heads", type=int, default=4)
     parser.add_argument("--np-evidence-cap", type=float, default=20.0)
     parser.add_argument(
+        "--np-context-target-frac",
+        type=float,
+        default=0.0,
+        help="Hide this fraction of each student's train history and supervise only hidden responses.",
+    )
+    parser.add_argument(
         "--v2-ukc-propagation",
         action="store_true",
         help="V2 module 1: student-conditioned TKC->UKC propagation (zero-init residual on the static UKC).",
@@ -731,6 +737,7 @@ def validate_model_args(args: argparse.Namespace) -> None:
         or args.np_memory_slots != 8
         or args.np_attention_heads != 4
         or args.np_evidence_cap != 20.0
+        or args.np_context_target_frac != 0.0
     )
     if args.model != "np_completion" and np_nondefaults:
         raise ValueError("np_completion flags require --model np_completion.")
@@ -745,6 +752,15 @@ def validate_model_args(args: argparse.Namespace) -> None:
             raise ValueError("--concept-dim must be divisible by --np-attention-heads.")
         if args.np_evidence_cap <= 0.0:
             raise ValueError("--np-evidence-cap must be positive.")
+        if not 0.0 <= args.np_context_target_frac < 1.0:
+            raise ValueError("--np-context-target-frac must be in [0, 1).")
+        if (
+            args.np_context_target_frac > 0.0
+            and args.training_mode != "student_recompute_minibatch"
+        ):
+            raise ValueError(
+                "--np-context-target-frac requires student_recompute_minibatch."
+            )
     if args.v2_monotonic_readout and not (args.v2_target_aware_readout or args.v2_hybrid_readout):
         raise ValueError("--v2-monotonic-readout requires --v2-target-aware-readout or --v2-hybrid-readout.")
     if args.v2_hybrid_readout and args.v2_target_aware_readout:
@@ -1060,6 +1076,7 @@ def main() -> None:
         history_dropout_frac=args.v2_history_dropout_frac,
         masked_response_weight=args.v2_masked_response_weight,
         masked_response_frac=args.v2_masked_response_frac,
+        context_target_frac=args.np_context_target_frac,
     )
     evaluation_student_batch_size = (
         args.student_batch_size if args.training_mode == "student_recompute_minibatch" else None
@@ -1128,6 +1145,7 @@ def main() -> None:
         "np_memory_slots": args.np_memory_slots,
         "np_attention_heads": args.np_attention_heads,
         "np_evidence_cap": args.np_evidence_cap,
+        "np_context_target_frac": args.np_context_target_frac,
         "architecture_fingerprint": architecture_fingerprint,
         "initialization_hash": initialization_hash,
     }

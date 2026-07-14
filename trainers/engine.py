@@ -273,9 +273,33 @@ def train_model(
     consistency_weight: float = 0.0,
     consistency_adaptive: bool = False,
     curriculum: bool = False,
+    context_target_frac: float = 0.0,
 ) -> TrainResult:
     if training_mode not in {"full_batch", "recompute_minibatch", "student_recompute_minibatch"}:
         raise ValueError(f"Unsupported training_mode: {training_mode}")
+    if not 0.0 <= context_target_frac < 1.0:
+        raise ValueError("context_target_frac must be in [0, 1).")
+    if context_target_frac > 0.0:
+        if training_mode != "student_recompute_minibatch":
+            raise ValueError(
+                "context_target_frac requires student_recompute_minibatch training."
+            )
+        incompatible = {
+            "mastery_aux_bce_weight": mastery_aux_bce_weight,
+            "contrastive_weight": contrastive_weight,
+            "consistency_weight": consistency_weight,
+            "history_evidence_cognitive_alignment_weight": history_evidence_cognitive_alignment_weight,
+            "history_evidence_cognitive_rank_alignment_weight": history_evidence_cognitive_rank_alignment_weight,
+            "history_evidence_output_alignment_weight": history_evidence_output_alignment_weight,
+            "checkpoint_distillation_weight": checkpoint_distillation_weight,
+            "dual_tower_branch_bce_weight": dual_tower_branch_bce_weight,
+        }
+        enabled = [name for name, value in incompatible.items() if float(value) > 0.0]
+        if enabled:
+            raise ValueError(
+                "context-target training currently requires auxiliary objectives off: "
+                + ", ".join(enabled)
+            )
     if ukc_consistency_weight < 0.0:
         raise ValueError("ukc_consistency_weight must be non-negative.")
     if ukc_consistency_weight > 0.0 and training_mode != "full_batch":
@@ -596,6 +620,7 @@ def train_model(
                     consistency_weight=consistency_weight,
                     consistency_adaptive=consistency_adaptive,
                     curriculum=curriculum,
+                    context_target_frac=context_target_frac,
                     exercise_evidence_difficulty_regularization_weight=exercise_evidence_difficulty_regularization_weight,
                     difficulty_prior_target=difficulty_prior_target,
                     difficulty_prior_mask=difficulty_prior_mask,
@@ -1101,6 +1126,95 @@ def _train_recompute_minibatch_epoch(
     return EpochTrainStats(mean_loss=total_loss / float(num_targets), optimizer_steps=optimizer_steps)
 
 
+def _build_context_target_batch(
+    *,
+    tensors: dict[str, torch.Tensor | None],
+    student_ids: torch.Tensor,
+    batch_indices: torch.Tensor,
+    context_target_frac: float,
+) -> tuple[dict[str, torch.Tensor | None], torch.Tensor]:
+    """
+    Hide a train-only subset of each selected student's observed exercises and
+    supervise only the corresponding interaction rows. The model therefore
+    cannot consume the response it is currently asked to predict.
+    """
+    full_mask = tensors["student_exercise_mask"]
+    response_matrix = tensors["response_matrix"]
+    q_matrix = tensors["q_matrix"]
+    concept_evidence = tensors["student_concept_evidence"]
+    if (
+        full_mask is None
+        or response_matrix is None
+        or q_matrix is None
+        or concept_evidence is None
+    ):
+        raise ValueError("context-target training requires complete history evidence tensors.")
+
+    selected_mask = full_mask.index_select(0, student_ids)
+    selected_responses = response_matrix.index_select(0, student_ids)
+    keep = torch.rand_like(selected_mask) >= context_target_frac
+
+    # Every student with at least two observed exercises keeps context and
+    # contributes at least one hidden target. One-observation students remain
+    # context-only because no leakage-free within-student target is possible.
+    for local_id in range(student_ids.numel()):
+        observed = torch.nonzero(
+            selected_mask[local_id] > 0.0,
+            as_tuple=False,
+        ).squeeze(-1)
+        if observed.numel() <= 1:
+            keep[local_id, observed] = True
+            continue
+        observed_keep = keep[local_id, observed]
+        if bool(observed_keep.all()):
+            keep[local_id, observed[0]] = False
+        elif not bool(observed_keep.any()):
+            keep[local_id, observed[0]] = True
+
+    dropped_mask = selected_mask * keep.to(dtype=selected_mask.dtype)
+    q_binary = (q_matrix > 0.0).to(dtype=selected_mask.dtype)
+    attempts = dropped_mask @ q_binary
+    correct = (dropped_mask * selected_responses) @ q_binary
+    incorrect = (attempts - correct).clamp_min(0.0)
+    accuracy = correct / attempts.clamp_min(1.0)
+    log_attempts = torch.log1p(attempts)
+    seen = (attempts > 0.0).to(dtype=selected_mask.dtype)
+    selected_concept_evidence = torch.stack(
+        [attempts, correct, incorrect, accuracy, log_attempts, seen],
+        dim=-1,
+    )
+
+    forward_tensors = dict(tensors)
+    forward_mask = full_mask.clone()
+    forward_mask.index_copy_(0, student_ids, dropped_mask)
+    forward_tkc = tensors["student_tkc_mask"].clone()
+    forward_tkc.index_copy_(0, student_ids, seen)
+    forward_ukc = tensors["student_ukc_mask"].clone()
+    forward_ukc.index_copy_(0, student_ids, 1.0 - seen)
+    forward_evidence = concept_evidence.clone()
+    forward_evidence.index_copy_(0, student_ids, selected_concept_evidence)
+    forward_tensors["student_exercise_mask"] = forward_mask
+    forward_tensors["student_tkc_mask"] = forward_tkc
+    forward_tensors["student_ukc_mask"] = forward_ukc
+    forward_tensors["student_concept_evidence"] = forward_evidence
+
+    student_to_local = torch.full(
+        (full_mask.size(0),),
+        -1,
+        dtype=torch.long,
+        device=student_ids.device,
+    )
+    student_to_local[student_ids] = torch.arange(
+        student_ids.numel(),
+        device=student_ids.device,
+    )
+    row_students = tensors["interaction_student_ids"][batch_indices]
+    row_exercises = tensors["interaction_exercise_ids"][batch_indices]
+    local_students = student_to_local[row_students]
+    hidden_rows = ~keep[local_students, row_exercises]
+    return forward_tensors, batch_indices[hidden_rows]
+
+
 def _train_student_recompute_minibatch_epoch(
     *,
     model: DecoupledCDM,
@@ -1132,6 +1246,7 @@ def _train_student_recompute_minibatch_epoch(
     consistency_weight: float = 0.0,
     consistency_adaptive: bool = False,
     curriculum: bool = False,
+    context_target_frac: float = 0.0,
 ) -> EpochTrainStats:
     model.train()
     num_targets = int(tensors["interaction_labels"].size(0))
@@ -1153,6 +1268,7 @@ def _train_student_recompute_minibatch_epoch(
         ]
     total_loss = 0.0
     optimizer_steps = 0
+    supervised_targets = 0
 
     for start in range(0, student_permutation.numel(), student_batch_size):
         student_ids = student_permutation[start : start + student_batch_size]
@@ -1163,21 +1279,32 @@ def _train_student_recompute_minibatch_epoch(
         )
         if batch_indices.numel() == 0:
             continue
-        batch_labels = tensors["interaction_labels"][batch_indices]
+        forward_tensors = tensors
+        supervised_indices = batch_indices
+        if context_target_frac > 0.0:
+            forward_tensors, supervised_indices = _build_context_target_batch(
+                tensors=tensors,
+                student_ids=student_ids,
+                batch_indices=batch_indices,
+                context_target_frac=context_target_frac,
+            )
+        if supervised_indices.numel() == 0:
+            continue
+        batch_labels = tensors["interaction_labels"][supervised_indices]
         optimizer.zero_grad()
         output = model(
-            q_matrix=tensors["q_matrix"],
-            concept_graph=tensors["concept_graph"],
-            prerequisite_graph=tensors["prerequisite_graph"],
-            similarity_graph=tensors["similarity_graph"],
-            student_exercise_mask=tensors["student_exercise_mask"],
-            response_matrix=tensors["response_matrix"],
-            student_tkc_mask=tensors["student_tkc_mask"],
-            student_ukc_mask=tensors["student_ukc_mask"],
-            student_concept_evidence=tensors["student_concept_evidence"],
-            exercise_evidence=tensors["exercise_evidence"],
-            target_student_ids=tensors["interaction_student_ids"][batch_indices],
-            target_exercise_ids=tensors["interaction_exercise_ids"][batch_indices],
+            q_matrix=forward_tensors["q_matrix"],
+            concept_graph=forward_tensors["concept_graph"],
+            prerequisite_graph=forward_tensors["prerequisite_graph"],
+            similarity_graph=forward_tensors["similarity_graph"],
+            student_exercise_mask=forward_tensors["student_exercise_mask"],
+            response_matrix=forward_tensors["response_matrix"],
+            student_tkc_mask=forward_tensors["student_tkc_mask"],
+            student_ukc_mask=forward_tensors["student_ukc_mask"],
+            student_concept_evidence=forward_tensors["student_concept_evidence"],
+            exercise_evidence=forward_tensors["exercise_evidence"],
+            target_student_ids=tensors["interaction_student_ids"][supervised_indices],
+            target_exercise_ids=tensors["interaction_exercise_ids"][supervised_indices],
             use_student_subset=True,
         )
         loss = F.binary_cross_entropy(output.probs, batch_labels)
@@ -1284,9 +1411,13 @@ def _train_student_recompute_minibatch_epoch(
         loss.backward()
         optimizer.step()
         total_loss += float(loss.item()) * float(batch_labels.numel())
+        supervised_targets += int(batch_labels.numel())
         optimizer_steps += 1
 
-    return EpochTrainStats(mean_loss=total_loss / float(num_targets), optimizer_steps=optimizer_steps)
+    denominator = supervised_targets if context_target_frac > 0.0 else num_targets
+    if denominator == 0:
+        raise RuntimeError("context-target training produced no supervised interactions.")
+    return EpochTrainStats(mean_loss=total_loss / float(denominator), optimizer_steps=optimizer_steps)
 
 
 def _build_history_evidence_cognitive_alignment_prior(
