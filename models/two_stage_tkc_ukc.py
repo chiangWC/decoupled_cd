@@ -7,6 +7,10 @@ import math
 
 import torch
 from torch import nn
+import torch.nn.functional as F
+
+
+VALID_DIAGNOSIS_MODES = {"target_conditioned", "monotonic_control"}
 
 
 @dataclass
@@ -343,6 +347,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         concept_dim: int = 64,
         evidence_mode: str = "calibrated_history",
         completion_mode: str = "personalized_interaction",
+        diagnosis_mode: str = "target_conditioned",
         evidence_cap: float = 20.0,
         readout_dropout: float = 0.0,
         max_guess: float = 0.3,
@@ -355,9 +360,12 @@ class TwoStageTKCUKCCDM(nn.Module):
             raise ValueError(f"Unsupported evidence mode: {evidence_mode}")
         if completion_mode not in PersonalizedStateCompletion.VALID_MODES:
             raise ValueError(f"Unsupported completion mode: {completion_mode}")
+        if diagnosis_mode not in VALID_DIAGNOSIS_MODES:
+            raise ValueError(f"Unsupported diagnosis mode: {diagnosis_mode}")
         self.concept_dim = int(concept_dim)
         self.evidence_mode = evidence_mode
         self.completion_mode = completion_mode
+        self.diagnosis_mode = diagnosis_mode
         self.evidence_cap = float(evidence_cap)
         self.max_guess = float(max_guess)
         self.max_slip = float(max_slip)
@@ -399,6 +407,29 @@ class TwoStageTKCUKCCDM(nn.Module):
         nn.init.xavier_uniform_(self.exercise_embedding.weight)
         nn.init.zeros_(self.exercise_difficulty.weight)
 
+        # The capacity-matched monotonic diagnosis is instantiated only after
+        # all Full parameters are initialized, preserving the validated Full
+        # initialization while keeping one common state dict for new variants.
+        self.control_cognitive_match = nn.Sequential(
+            nn.Linear(concept_dim * 4, concept_dim),
+            nn.ReLU(),
+            nn.Dropout(readout_dropout),
+            nn.Linear(concept_dim, 1),
+        )
+        self.control_guess_head = nn.Sequential(
+            nn.Linear(concept_dim * 2, concept_dim),
+            nn.ReLU(),
+            nn.Linear(concept_dim, 1),
+        )
+        self.control_slip_head = nn.Sequential(
+            nn.Linear(concept_dim * 2, concept_dim),
+            nn.ReLU(),
+            nn.Linear(concept_dim, 1),
+        )
+        self.control_discrimination_raw = nn.Parameter(
+            torch.tensor(0.54132485)
+        )
+
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
@@ -406,7 +437,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
-            "diagnosis": "fixed_q_conditioned_pooled_ncf",
+            "diagnosis": "target_conditioned_or_monotonic_control",
         }
         return hashlib.sha256(
             json.dumps(payload, sort_keys=True).encode("utf-8")
@@ -420,11 +451,33 @@ class TwoStageTKCUKCCDM(nn.Module):
         return digest.hexdigest()
 
     def active_module_parameter_counts(self) -> dict[str, dict[str, int]]:
+        full_diagnosis = sum(
+            parameter.numel()
+            for module in [
+                self.cognitive_match,
+                self.guess_head,
+                self.slip_head,
+            ]
+            for parameter in module.parameters()
+        )
+        control_diagnosis = sum(
+            parameter.numel()
+            for module in [
+                self.control_cognitive_match,
+                self.control_guess_head,
+                self.control_slip_head,
+            ]
+            for parameter in module.parameters()
+        ) + self.control_discrimination_raw.numel()
         return {
             "evidence_representation": (
                 self.evidence_representation.active_parameter_counts()
             ),
             "state_completion": self.state_completion.active_parameter_counts(),
+            "diagnosis": {
+                "target_conditioned": full_diagnosis,
+                "monotonic_control": control_diagnosis,
+            },
         }
 
     def _concept_nodes(self, q_matrix: torch.Tensor) -> torch.Tensor:
@@ -530,16 +583,55 @@ class TwoStageTKCUKCCDM(nn.Module):
         difficulty = self.exercise_difficulty(
             target_exercise_ids
         ).squeeze(-1)
-        cognitive_probs = torch.sigmoid(
+        full_cognitive = torch.sigmoid(
             self.cognitive_match(match_features).squeeze(-1) - difficulty
         )
         state_condition = torch.cat([q_state, q_repr], dim=-1)
-        guess_probs = self.max_guess * torch.sigmoid(
+        full_guess = self.max_guess * torch.sigmoid(
             self.guess_head(state_condition).squeeze(-1)
         )
-        slip_probs = self.max_slip * torch.sigmoid(
+        full_slip = self.max_slip * torch.sigmoid(
             self.slip_head(state_condition).squeeze(-1)
         )
+
+        target_mastery = (
+            mastery.index_select(0, target_state_rows) * q_vectors
+        ).sum(dim=1) / q_count.squeeze(-1)
+        target_mastery = target_mastery.clamp(1.0e-5, 1.0 - 1.0e-5)
+        item_only_features = torch.cat(
+            [
+                q_repr,
+                q_repr,
+                q_repr * q_repr,
+                torch.zeros_like(q_repr),
+            ],
+            dim=-1,
+        )
+        item_condition = torch.cat([q_repr, q_repr], dim=-1)
+        item_bias = self.control_cognitive_match(
+            item_only_features
+        ).squeeze(-1)
+        discrimination = F.softplus(self.control_discrimination_raw)
+        control_cognitive = torch.sigmoid(
+            discrimination * torch.logit(target_mastery)
+            + item_bias
+            - difficulty
+        )
+        control_guess = self.max_guess * torch.sigmoid(
+            self.control_guess_head(item_condition).squeeze(-1)
+        )
+        control_slip = self.max_slip * torch.sigmoid(
+            self.control_slip_head(item_condition).squeeze(-1)
+        )
+
+        if self.diagnosis_mode == "target_conditioned":
+            cognitive_probs = full_cognitive
+            guess_probs = full_guess
+            slip_probs = full_slip
+        else:
+            cognitive_probs = control_cognitive
+            guess_probs = control_guess
+            slip_probs = control_slip
         probs = (
             (1.0 - slip_probs) * cognitive_probs
             + guess_probs * (1.0 - cognitive_probs)

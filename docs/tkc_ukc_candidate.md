@@ -1,29 +1,40 @@
-# TKC/UKC 两模块结果反推候选
+# 两模块结果反推候选：状态补全与目标条件诊断
 
-前两轮候选已经按验证结果拒绝：
+## 已拒绝的上游机制
 
-- Neural-Process Evidence Posterior + Attentive Concept Query：Full 在 MOOCRadar/XES3G5M 均形成普通胜局，但模块 target 增益分别仅为 MOO +0.002264/+0.000337、XES +0.000652/+0.000178。
-- Relational TKC Evidence + Personalized UKC Attention：MOO 的两个模块 target 增益为 +0.001931/+0.004205；XES 为 +0.001041/−0.000546，且 Full 的 holdout overall 不达外部普通胜局线。
-- Partial-flow 草案 Full 的 holdout AUC 仅为 MOO 0.920065、XES 0.773759，未进入消融；与历史 Partial-VAE 的逐行误差相关性审计也表明专家融合上限不足，故活动代码已删除。
+前面三类 Evidence 机制均按原始 validation 结果拒绝：
 
-当前候选不再从新机制名称出发，而是把历史已取得三胜的 marginal 路径重新拆成两个唯一数据流方框。机制来自本项目 README_spec 的 TKC/UKC 职责和历史验证结果，不复制外部模型代码。
+- Neural-Process Evidence Posterior：相对控制的 target 增益为 MOO +0.002264、XES +0.000652。
+- Relational TKC Evidence：相对控制的 target 增益为 MOO +0.001931、XES +0.001041。
+- 当前 Calibrated Evidence Representation：相对 raw summary control 的 target 增益为 MOO +0.000144、XES +0.001026。
 
-## Module 1: Calibrated Evidence Representation
+这说明题目身份、难度校准和复杂 evidence encoder 在当前协议下没有产生足够的独立收益。Evidence Representation 保留为普通输入编码，不作为论文贡献，也不再围绕它调整消融。
 
-输入 train-only 学生作答历史、题目/Q 表示和 train-only 题目难度统计，输出唯一 student evidence：
+## 已通过首屏的 Module 1: Personalized TKC/UKC State Completion
 
-- Full 使用已作答题目表示的集合均值、整体正确率、相对已作答题目难度的残差、历史置信度和覆盖率。
-- Control 只使用原始整体正确率、置信度和覆盖率，不读取题目身份或难度校准。
-- 两条路径具有完全相同的编码器容量。
+输入普通 student evidence、concept nodes、train-only population concept prior 和 observed concept evidence，输出下游唯一消费的完整 framework state：
 
-## Module 2: Personalized TKC/UKC State Completion
-
-输入 Module 1 的 student evidence、concept nodes、train-only population concept prior 和 observed concept evidence，输出完整 framework state：
-
-- Full 使用 student–concept 乘性交互，一次生成全部 TKC/UKC 状态。
+- Full 通过 student–concept 乘性交互一次生成全部 TKC/UKC 状态。
 - Control 对 observed concept 直接投影原始统计，对 UKC 使用学生无关的静态 concept prior。
-- 两条 decoder 容量完全相同，且 Diagnosis 不存在其他学生特异旁路。
+- 两条 decoder 容量完全相同，Diagnosis 不存在其他学生特异旁路。
 
-固定的 Q-conditioned pooled NCF Diagnosis 只消费 framework state，不作为论文贡献。四种 Full/单模块消融组合共享同一个 state dict、初始化哈希和 architecture fingerprint；训练统一采用 20% context-target hiding，目标 response 不得进入自身历史。
+Holdout validation 首屏：
 
-晋级门槛保持 Goal 约束：Full 至少三胜；每个模块相对其较强合理对照在至少两个胜出数据集 target 提升不低于 0.005，其中一个不低于 0.01，并至少一个 student-clustered paired-bootstrap CI 下界大于 0。
+| 数据集 | Full H | Full T | Control H | Control T | ΔT |
+|---|---:|---:|---:|---:|---:|
+| MOOCRadar | 0.925962 | 0.935233 | 0.854393 | 0.760626 | +0.174607 |
+| XES3G5M | 0.786172 | 0.783953 | 0.720483 | 0.708437 | +0.075516 |
+
+Full 在两者均保持 validation strict win。该模块已经远超幅度门槛，待补 paired student bootstrap、第三个胜出数据集及 standard 轴后正式确认。
+
+## 待验证的 Module 2: Target-Conditioned Diagnosis
+
+输入完整 framework state、Q 和题目表示，输出作答概率：
+
+- Full 使用目标状态与题目需求的乘积/差异交互，以及由目标状态条件化的有界 guess/slip。
+- Control 是标准单调诊断：将 Q 加权 mastery 作为唯一学生变量，以正 discrimination、题目偏置/难度和仅题目条件化的 bounded guess/slip 生成概率。
+- Full/control 的 cognitive、guess、slip 网络容量相差不超过 10%；两者共享完整状态和其他所有训练条件。
+
+新变体加入后，所有模式仍共享同一 state dict、初始化哈希和 architecture fingerprint。因为新增对照模块会推进全局 RNG，Full 与 diagnosis control 必须一起重新训练，不能把旧 Full checkpoint 与新 control 拼接比较。
+
+最终门槛不变：同一架构至少三胜；两个模块各自在至少两个 Full 胜出数据集 target 提升不低于 0.005，其中一个不低于 0.01，并至少一个 student-clustered paired-bootstrap CI 下界大于 0。

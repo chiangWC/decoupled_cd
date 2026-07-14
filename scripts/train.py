@@ -72,7 +72,13 @@ def parse_args() -> argparse.Namespace:
         "--state-completion-mode",
         choices=["personalized_interaction", "direct_prior_control"],
         default="personalized_interaction",
-        help="Module 2 path; direct_prior_control is its clean capacity control.",
+        help="State-completion module path and clean capacity control.",
+    )
+    parser.add_argument(
+        "--diagnosis-mode",
+        choices=["target_conditioned", "monotonic_control"],
+        default="target_conditioned",
+        help="Diagnosis module path; monotonic_control is the standard decoder ablation.",
     )
     parser.add_argument("--completion-evidence-cap", type=float, default=20.0)
     parser.add_argument(
@@ -732,6 +738,7 @@ def validate_model_args(args: argparse.Namespace) -> None:
     completion_nondefaults = (
         args.evidence_representation_mode != "calibrated_history"
         or args.state_completion_mode != "personalized_interaction"
+        or args.diagnosis_mode != "target_conditioned"
         or args.completion_evidence_cap != 20.0
         or args.context_target_frac != 0.0
     )
@@ -963,6 +970,7 @@ def main() -> None:
             concept_dim=args.concept_dim,
             evidence_mode=args.evidence_representation_mode,
             completion_mode=args.state_completion_mode,
+            diagnosis_mode=args.diagnosis_mode,
             evidence_cap=args.completion_evidence_cap,
             readout_dropout=args.v2_readout_dropout,
             max_guess=args.v2_gs_max_guess,
@@ -1135,6 +1143,7 @@ def main() -> None:
         "kancd_latent_dim": args.kancd_latent_dim,
         "evidence_representation_mode": args.evidence_representation_mode,
         "state_completion_mode": args.state_completion_mode,
+        "diagnosis_mode": args.diagnosis_mode,
         "completion_evidence_cap": args.completion_evidence_cap,
         "context_target_frac": args.context_target_frac,
         "architecture_fingerprint": architecture_fingerprint,

@@ -93,6 +93,9 @@ def load_model(
             completion_mode=str(
                 summary.get("state_completion_mode", "personalized_interaction")
             ),
+            diagnosis_mode=str(
+                summary.get("diagnosis_mode", "target_conditioned")
+            ),
             evidence_cap=float(summary.get("completion_evidence_cap", 20.0)),
             readout_dropout=float(summary.get("v2_readout_dropout", 0.0)),
             max_guess=float(summary.get("v2_gs_max_guess", 0.3)),

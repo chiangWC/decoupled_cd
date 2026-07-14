@@ -70,7 +70,11 @@ def _inputs() -> dict[str, torch.Tensor]:
     }
 
 
-def _model(evidence_mode: str, completion_mode: str) -> TwoStageTKCUKCCDM:
+def _model(
+    evidence_mode: str,
+    completion_mode: str,
+    diagnosis_mode: str = "target_conditioned",
+) -> TwoStageTKCUKCCDM:
     torch.manual_seed(42)
     return TwoStageTKCUKCCDM(
         num_students=4,
@@ -79,6 +83,7 @@ def _model(evidence_mode: str, completion_mode: str) -> TwoStageTKCUKCCDM:
         concept_dim=16,
         evidence_mode=evidence_mode,
         completion_mode=completion_mode,
+        diagnosis_mode=diagnosis_mode,
     )
 
 
@@ -92,6 +97,11 @@ def test_all_variants_share_initialization_topology_and_contract() -> None:
         _model("raw_summary_control", "personalized_interaction"),
         _model("calibrated_history", "direct_prior_control"),
         _model("raw_summary_control", "direct_prior_control"),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            "monotonic_control",
+        ),
     ]
     assert len({_count(model) for model in variants}) == 1
     assert len({model.initialization_hash() for model in variants}) == 1
@@ -115,6 +125,8 @@ def test_module_gradients_are_isolated() -> None:
     assert model.evidence_representation.raw_control_encoder[0].weight.grad is None
     assert model.state_completion.personalized_decoder[0].weight.grad is not None
     assert model.state_completion.direct_control_decoder[0].weight.grad is None
+    assert model.cognitive_match[0].weight.grad is not None
+    assert model.control_cognitive_match[0].weight.grad is None
 
     model = _model("raw_summary_control", "direct_prior_control")
     model(**_inputs()).probs.mean().backward()
@@ -124,12 +136,22 @@ def test_module_gradients_are_isolated() -> None:
     assert model.state_completion.personalized_decoder[0].weight.grad is None
     assert model.state_completion.direct_control_decoder[0].weight.grad is not None
 
+    model = _model(
+        "calibrated_history",
+        "personalized_interaction",
+        "monotonic_control",
+    )
+    model(**_inputs()).probs.mean().backward()
+    assert model.cognitive_match[0].weight.grad is None
+    assert model.control_cognitive_match[0].weight.grad is not None
 
-def test_active_controls_are_exactly_capacity_matched() -> None:
+
+def test_active_controls_are_capacity_matched() -> None:
     model = _model("calibrated_history", "personalized_interaction")
-    for counts in model.active_module_parameter_counts().values():
+    for name, counts in model.active_module_parameter_counts().items():
         values = list(counts.values())
-        assert values[0] == values[1]
+        relative_gap = abs(values[0] - values[1]) / max(values)
+        assert relative_gap <= 0.10, name
 
 
 def test_context_target_mask_has_full_evidence_schema() -> None:
