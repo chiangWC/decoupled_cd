@@ -41,9 +41,11 @@ Full 使用 Q 特异双向邻域，对照为 raw identity 与 Q 无关的 global
 
 train-only peer 审计在四个胜出数据集与 Full 融合的最佳 target 增益均低于 0.003；现有 instance-dependent guess/slip 相对 cognitive probability 的 target 增益也均低于 0.004。二者不进入代码级模块探索。
 
-## 当前候选：Observed-Anchor Attentive State Field
+## 已拒绝：Observed-Anchor Attentive State Field
 
-该候选借鉴 Attentive Neural Processes 的 query-specific context reading，将学生已观察概念及其作答统计作为 anchors、每个待诊断概念作为 query，一次输出完整 framework state。Capacity control 使用完全相同的 context encoder、Q/K/V、decoder 和参数量，但每个学生只生成一个 global query。Direct control 是已有 additive MLP。候选只在 validation 通过既定幅度门后扩展。
+该候选借鉴 Attentive Neural Processes 的 query-specific context reading，将学生已观察概念及其作答统计作为 anchors、每个待诊断概念作为 query，一次输出完整 framework state。Capacity control 使用完全相同的 context encoder、Q/K/V、decoder 和参数量，但每个学生只生成一个 global query。Direct control 是已有 additive MLP。
+
+ASSIST17 Full target 为 0.765315，capacity control 为 0.765686，direct control 为 0.795655；Full 相对较强对照下降 0.030340，且 Evidence 增益在该 State 下缩至 +0.000029。Junyi Full 相对 capacity control 也下降 0.000069。该完整 State 替换明确拒绝。
 
 ## 已拒绝：Target-Conditioned Diagnosis
 
@@ -53,6 +55,10 @@ train-only peer 审计在四个胜出数据集与 Full 融合的最佳 target �
 - Control 是标准单调诊断：将 Q 加权 mastery 作为唯一学生变量，以正 discrimination、题目偏置/难度和仅题目条件化的 bounded guess/slip 生成概率。
 - Full/control 的 cognitive、guess、slip 网络容量相差不超过 10%；两者共享完整状态和其他所有训练条件。
 
-MOO target 只提升 +0.000783；XES target 反而下降 0.001070。该机制明确拒绝，不作为论文模块。
+MOO target 只提升 +0.000783；XES target 反而下降 0.001070。动态扩池后，ASSIST17 提升 +0.014351，但 Junyi、ASSIST09、NIPS34、EdNet 分别为 -0.000158、-0.003344、-0.000642、-0.003570；其中 ASSIST09、NIPS34、EdNet Full 也不是普通胜局。六个数据集只有一个幅度过门点，该机制最终拒绝。
+
+## 当前候选：Item-Conditioned Low-Rank Hypernetwork Diagnosis
+
+借鉴条件 hypernetwork 对笛卡尔积输入的处理，由目标题表示生成低秩诊断权重，再作用于学生状态；模块独立输出 cognitive、guess、slip 和最终作答概率。Capacity control 是当前 target-conditioned MLP，Direct control 是 monotonic NCD。三路共用完整 Evidence/State、初始化、数据顺序和训练配方，活跃参数量差异不得超过 10%。
 
 最终门槛不变：同一架构至少三胜；两个模块各自在至少两个 Full 胜出数据集 target 提升不低于 0.005，其中一个不低于 0.01，并至少一个 student-clustered paired-bootstrap CI 下界大于 0。

@@ -111,7 +111,12 @@ def load_model(
         model.evaluation_student_batch_size = int(
             summary.get("student_batch_size") or 32
         )
-        return _finalize_loaded_model(model, checkpoint_path=checkpoint_path, device=device)
+        return _finalize_loaded_model(
+            model,
+            checkpoint_path=checkpoint_path,
+            device=device,
+            allowed_missing_prefixes=("observed_anchor_state_field.",),
+        )
     if model_variant == "v2":
         model = DecoupledCDMV2(
             num_students=train_bundle.num_students,
@@ -242,9 +247,26 @@ def load_model(
     return _finalize_loaded_model(model, checkpoint_path=checkpoint_path, device=device)
 
 
-def _finalize_loaded_model(model, *, checkpoint_path: str, device: str):
+def _finalize_loaded_model(
+    model,
+    *,
+    checkpoint_path: str,
+    device: str,
+    allowed_missing_prefixes: tuple[str, ...] = (),
+):
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    model.load_state_dict(state)
+    incompatible = model.load_state_dict(state, strict=False)
+    invalid_missing = [
+        key
+        for key in incompatible.missing_keys
+        if not any(key.startswith(prefix) for prefix in allowed_missing_prefixes)
+    ]
+    if invalid_missing or incompatible.unexpected_keys:
+        raise RuntimeError(
+            "Checkpoint state mismatch: "
+            f"missing={invalid_missing}, "
+            f"unexpected={incompatible.unexpected_keys}"
+        )
     model.to(torch.device(device))
     model.eval()
     return model
@@ -254,34 +276,96 @@ def predict_bundle(*, bundle: Any, model: DecoupledCDM | DecoupledCDMEnsemble, d
     _validate_history_visibility(bundle)
     torch_device = torch.device(device)
     tensors = _bundle_tensors(bundle, torch_device)
+    prediction_attributes = {
+        "prob": "probs",
+        "cognitive_prob": "cognitive_probs",
+        "guess_prob": "guess_probs",
+        "slip_prob": "slip_probs",
+        "difficulty": "difficulty",
+    }
+    prediction_tensors: dict[str, torch.Tensor] = {}
     with torch.no_grad():
-        output = model(
-            q_matrix=tensors["q_matrix"],
-            concept_graph=tensors["concept_graph"],
-            prerequisite_graph=tensors["prerequisite_graph"],
-            similarity_graph=tensors["similarity_graph"],
-            student_exercise_mask=tensors["student_exercise_mask"],
-            response_matrix=tensors["response_matrix"],
-            student_tkc_mask=tensors["student_tkc_mask"],
-            student_ukc_mask=tensors["student_ukc_mask"],
-            student_concept_evidence=tensors["student_concept_evidence"],
-            exercise_evidence=tensors["exercise_evidence"],
-            target_student_ids=tensors["interaction_student_ids"],
-            target_exercise_ids=tensors["interaction_exercise_ids"],
-            use_student_subset=True,
+        student_batch_size = getattr(
+            model,
+            "evaluation_student_batch_size",
+            None,
         )
+        if student_batch_size is None:
+            output = model(
+                q_matrix=tensors["q_matrix"],
+                concept_graph=tensors["concept_graph"],
+                prerequisite_graph=tensors["prerequisite_graph"],
+                similarity_graph=tensors["similarity_graph"],
+                student_exercise_mask=tensors["student_exercise_mask"],
+                response_matrix=tensors["response_matrix"],
+                student_tkc_mask=tensors["student_tkc_mask"],
+                student_ukc_mask=tensors["student_ukc_mask"],
+                student_concept_evidence=tensors["student_concept_evidence"],
+                exercise_evidence=tensors["exercise_evidence"],
+                target_student_ids=tensors["interaction_student_ids"],
+                target_exercise_ids=tensors["interaction_exercise_ids"],
+                use_student_subset=True,
+            )
+            for column, attribute in prediction_attributes.items():
+                if hasattr(output, attribute):
+                    prediction_tensors[column] = getattr(output, attribute)
+        else:
+            labels = tensors["interaction_labels"]
+            unique_students = torch.unique(
+                tensors["interaction_student_ids"],
+                sorted=True,
+            )
+            for start in range(
+                0,
+                unique_students.numel(),
+                int(student_batch_size),
+            ):
+                student_ids = unique_students[
+                    start : start + int(student_batch_size)
+                ]
+                selected = torch.zeros(
+                    tensors["student_exercise_mask"].size(0),
+                    dtype=torch.bool,
+                    device=torch_device,
+                )
+                selected[student_ids] = True
+                row_indices = torch.nonzero(
+                    selected[tensors["interaction_student_ids"]],
+                    as_tuple=False,
+                ).squeeze(-1)
+                output = model(
+                    q_matrix=tensors["q_matrix"],
+                    concept_graph=tensors["concept_graph"],
+                    prerequisite_graph=tensors["prerequisite_graph"],
+                    similarity_graph=tensors["similarity_graph"],
+                    student_exercise_mask=tensors["student_exercise_mask"],
+                    response_matrix=tensors["response_matrix"],
+                    student_tkc_mask=tensors["student_tkc_mask"],
+                    student_ukc_mask=tensors["student_ukc_mask"],
+                    student_concept_evidence=tensors["student_concept_evidence"],
+                    exercise_evidence=tensors["exercise_evidence"],
+                    target_student_ids=tensors[
+                        "interaction_student_ids"
+                    ][row_indices],
+                    target_exercise_ids=tensors[
+                        "interaction_exercise_ids"
+                    ][row_indices],
+                    use_student_subset=True,
+                )
+                for column, attribute in prediction_attributes.items():
+                    if not hasattr(output, attribute):
+                        continue
+                    if column not in prediction_tensors:
+                        prediction_tensors[column] = torch.empty_like(labels)
+                    prediction_tensors[column][row_indices] = getattr(
+                        output,
+                        attribute,
+                    )
 
     frame = bundle.interactions.reset_index(drop=True).copy()
     frame["label"] = tensors["interaction_labels"].detach().cpu().numpy()
-    frame["prob"] = output.probs.detach().cpu().numpy()
-    if hasattr(output, "cognitive_probs"):
-        frame["cognitive_prob"] = (
-            output.cognitive_probs.detach().cpu().numpy()
-        )
-    if hasattr(output, "guess_probs"):
-        frame["guess_prob"] = output.guess_probs.detach().cpu().numpy()
-    if hasattr(output, "slip_probs"):
-        frame["slip_prob"] = output.slip_probs.detach().cpu().numpy()
+    for column, values in prediction_tensors.items():
+        frame[column] = values.detach().cpu().numpy()
     frame["pred"] = (frame["prob"] >= 0.5).astype(int)
     frame["abs_error"] = (frame["label"] - frame["prob"]).abs()
     frame["squared_error"] = (frame["label"] - frame["prob"]) ** 2
