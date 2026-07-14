@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "status": "frozen_validation_driven_confirmation",
+  "model_commit": "95318527",
+  "architecture_fingerprint": "099906acdba8c3b4",
+  "seed": 42,
+  "split_seed": 2024,
+  "active_modes": {
+    "semantic_node_mode": "bidirectional_q",
+    "evidence_representation_mode": "calibrated_history",
+    "evidence_refinement_mode": "identity_passthrough",
+    "target_requirement_mode": "exercise_specific",
+    "concept_prior_mode": "population_q",
+    "state_completion_mode": "personalized_interaction",
+    "diagnosis_mode": "target_conditioned"
+  },
+  "claimed_modules": [
+    "calibrated_evidence_representation",
+    "exercise_specific_requirement_query"
+  ],
+  "validation": {
+    "ordinary_wins": 4,
+    "strict_wins": 3
+  },
+  "test_confirmation": {
+    "ordinary_wins": 4,
+    "strict_wins": 3,
+    "blind_test_claim": false
+  },
+  "result_root": "results/goal_two_module",
+  "report": "docs/two_module_final_v9.md"
+}

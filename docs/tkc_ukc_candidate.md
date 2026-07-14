@@ -20,14 +20,14 @@ Full 在两者均保持 validation strict win，但上表只相对弱 direct-pri
 
 ## 已通过：Calibrated Evidence Representation
 
-在修正逐行预测导出后，Full 相对 raw-summary control 的 holdout-validation target 结果为：
+最终 v9 拓扑下，Full 相对移除整个语义/校准 Evidence 方框、但保留同容量学生边际统计编码器的 raw-summary control 结果为：
 
 | 数据集 | Full T | Control T | ΔT | student-clustered 95% CI |
 |---|---:|---:|---:|---:|
-| ASSIST17 | 0.795974 | 0.776803 | +0.019171 | [+0.016157, +0.022370] |
-| Junyi | 0.829230 | 0.817245 | +0.011985 | [+0.010426, +0.013657] |
+| ASSIST17 | 0.796573 | 0.777750 | +0.018823 | [+0.015791, +0.022016] |
+| Junyi | 0.828647 | 0.817022 | +0.011626 | [+0.010140, +0.013342] |
 
-两者 Full 均胜 validation 外部线，因此 Evidence 是当前第一个正式通过的框架模块。
+两者 Full 均胜 validation 外部线，因此 Evidence 是第一个正式通过的框架模块。内部部分消融继续如实报告：只移除题目语义、保留 calibrated summary 时，ASSIST17 target 下降 0.018163，Junyi 只下降 0.001783；后者说明两种内部证据高度冗余，不能把语义分支另算一个贡献模块。
 
 ## 已拒绝：Population-Calibrated Concept Prior
 
@@ -69,10 +69,17 @@ Capacity control 是当前 target-conditioned MLP，Direct control 是 monotonic
 
 Capacity control 保留相同输入、全局作答统计、四倍语义输入宽度和完全相同参数量，但把两个集合都替换为不区分结果的 attempted-item set；Direct control 只消费原 Evidence 输出与全局统计。ASSIST17/MOOCRadar 相对逐数据集较强对照的 target 增益只有 +0.000391/+0.000741，拒绝。
 
-## 当前候选：Exercise-Specific Requirement Query
+## 已通过：Exercise-Specific Requirement Query
 
 该候选从已训练模型反向归因得到：Q view 表示题目要求哪些概念，exercise-specific view 表示同一 Q 组合在具体题目中的实现方式；二者共同生成下游 Diagnosis 唯一消费的 target requirement query。这个“协同身份 + 内容侧信息”映射借鉴 hybrid recommendation 的问题分解，例如 [Collaborative Deep Learning for Recommender Systems](https://dl.acm.org/doi/10.1145/2783258.2783273)，但 CD 模块与代码独立实现，不移植原模型。
 
-`w/o Module` 将 exercise-specific view 替换为 Q-only view；更强 Capacity control 使用 train-population 内按 Q 聚合的 concept-conditioned exercise prototype，保留完全相同的投影参数和输入宽度，但不能读取目标题 ID。初步 checkpoint 扰动中，Full 相对 Q-only 的 target 增益在 ASSIST17/XES3G5M 为 +0.081179/+0.057273；这只是激活证据。正式资格取 Full 相对重训后两个对照中较强者的结果，并固定原数据集配方。
+`w/o Module` 将 exercise-specific view 替换为 Q-only view；Capacity control 使用 train-population 内按 Q 聚合的 concept-conditioned exercise prototype，保留完全相同的投影参数和输入宽度，但不能读取目标题 ID。正式重训后，逐数据集取两个对照中 target 更强者：
+
+| 数据集 | Full T | Stronger control T | ΔT | student-clustered 95% CI |
+|---|---:|---:|---:|---:|
+| ASSIST17 | 0.796573 | 0.784683 | +0.011890 | [+0.009019, +0.014802] |
+| XES3G5M | 0.785070 | 0.769736 | +0.015335 | [+0.010817, +0.019966] |
+
+两点 CI 下界均大于 0，且 Full 保持 validation external win，因此该模块正式通过。
 
 最终门槛不变：同一架构至少三胜；两个模块各自在至少两个 Full 胜出数据集 target 提升不低于 0.005，其中一个不低于 0.01，并至少一个 student-clustered paired-bootstrap CI 下界大于 0。
