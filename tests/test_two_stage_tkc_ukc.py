@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from models import TwoStageTKCUKCCDM
+from models.two_stage_tkc_ukc import QSemanticNodeAlignment
 from trainers.engine import _build_context_target_batch
 
 
@@ -75,6 +76,7 @@ def _model(
     completion_mode: str,
     diagnosis_mode: str = "target_conditioned",
     concept_prior_mode: str = "population_q",
+    semantic_node_mode: str = "bidirectional_q",
 ) -> TwoStageTKCUKCCDM:
     torch.manual_seed(42)
     return TwoStageTKCUKCCDM(
@@ -82,6 +84,7 @@ def _model(
         num_exercises=5,
         num_concepts=3,
         concept_dim=16,
+        semantic_node_mode=semantic_node_mode,
         evidence_mode=evidence_mode,
         concept_prior_mode=concept_prior_mode,
         completion_mode=completion_mode,
@@ -96,6 +99,16 @@ def _count(module: torch.nn.Module) -> int:
 def test_all_variants_share_initialization_topology_and_contract() -> None:
     variants = [
         _model("calibrated_history", "personalized_interaction"),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            semantic_node_mode="raw_identity_control",
+        ),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            semantic_node_mode="global_context_control",
+        ),
         _model(
             "calibrated_history",
             "personalized_interaction",
@@ -148,7 +161,6 @@ def test_module_gradients_are_isolated() -> None:
     assert model.state_completion.direct_control_decoder[0].weight.grad is None
     assert model.cognitive_match[0].weight.grad is not None
     assert model.control_cognitive_match[0].weight.grad is None
-
     model = _model(
         "calibrated_history",
         "personalized_interaction",
@@ -181,6 +193,43 @@ def test_module_gradients_are_isolated() -> None:
     model(**_inputs()).probs.mean().backward()
     assert model.cognitive_match[0].weight.grad is None
     assert model.control_cognitive_match[0].weight.grad is not None
+
+
+def test_semantic_alignment_controls_remove_q_specific_routing() -> None:
+    module = QSemanticNodeAlignment()
+    inputs = _inputs()
+    concept_embeddings = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+    exercise_embeddings = torch.arange(20, dtype=torch.float32).reshape(5, 4)
+    q_matrix = inputs["q_matrix"]
+    permuted_q = q_matrix.roll(shifts=1, dims=1)
+    full = module(
+        concept_embeddings=concept_embeddings,
+        exercise_embeddings=exercise_embeddings,
+        q_matrix=q_matrix,
+        mode="bidirectional_q",
+    )
+    full_permuted = module(
+        concept_embeddings=concept_embeddings,
+        exercise_embeddings=exercise_embeddings,
+        q_matrix=permuted_q,
+        mode="bidirectional_q",
+    )
+    assert not torch.equal(full.concept_nodes, full_permuted.concept_nodes)
+    for mode in ["raw_identity_control", "global_context_control"]:
+        output = module(
+            concept_embeddings=concept_embeddings,
+            exercise_embeddings=exercise_embeddings,
+            q_matrix=q_matrix,
+            mode=mode,
+        )
+        output_permuted = module(
+            concept_embeddings=concept_embeddings,
+            exercise_embeddings=exercise_embeddings,
+            q_matrix=permuted_q,
+            mode=mode,
+        )
+        assert torch.equal(output.concept_nodes, output_permuted.concept_nodes)
+        assert torch.equal(output.exercise_nodes, output_permuted.exercise_nodes)
 
 
 def test_active_controls_are_capacity_matched() -> None:

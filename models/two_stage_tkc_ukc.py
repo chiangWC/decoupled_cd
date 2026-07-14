@@ -14,6 +14,13 @@ VALID_DIAGNOSIS_MODES = {"target_conditioned", "monotonic_control"}
 
 
 @dataclass
+class SemanticNodeOutput:
+    concept_nodes: torch.Tensor
+    exercise_nodes: torch.Tensor
+    diagnostics: dict[str, torch.Tensor]
+
+
+@dataclass
 class EvidenceRepresentationOutput:
     student_evidence: torch.Tensor
     diagnostics: dict[str, torch.Tensor]
@@ -48,6 +55,71 @@ class TwoStageForwardOutput:
     module_diagnostics: dict[str, torch.Tensor]
     architecture_fingerprint: str
     mastery_aux_logits: torch.Tensor | None = None
+
+
+class QSemanticNodeAlignment(nn.Module):
+    """Align concept and exercise semantics through the Q incidence map.
+
+    The component has no private trainable parameters: all variants receive
+    the same learned identity embeddings and differ only in whether context is
+    routed through the exercise-concept structure.  The ablation therefore
+    tests Q-specific semantic alignment instead of capacity.
+    """
+
+    VALID_MODES = {
+        "bidirectional_q",
+        "raw_identity_control",
+        "global_context_control",
+    }
+
+    def forward(
+        self,
+        *,
+        concept_embeddings: torch.Tensor,
+        exercise_embeddings: torch.Tensor,
+        q_matrix: torch.Tensor,
+        mode: str,
+    ) -> SemanticNodeOutput:
+        if mode not in self.VALID_MODES:
+            raise ValueError(f"Unsupported semantic node mode: {mode}")
+        q_binary = (q_matrix > 0.0).to(
+            dtype=concept_embeddings.dtype,
+            device=concept_embeddings.device,
+        )
+        if mode == "bidirectional_q":
+            concept_degree = q_binary.sum(dim=0).clamp_min(1.0)
+            exercise_degree = q_binary.sum(dim=1, keepdim=True).clamp_min(1.0)
+            concept_context = (
+                q_binary.transpose(0, 1) @ exercise_embeddings
+            ) / concept_degree.unsqueeze(-1)
+            exercise_context = (
+                q_binary @ concept_embeddings
+            ) / exercise_degree
+        elif mode == "global_context_control":
+            concept_context = exercise_embeddings.mean(
+                dim=0, keepdim=True
+            ).expand_as(concept_embeddings)
+            exercise_context = concept_embeddings.mean(
+                dim=0, keepdim=True
+            ).expand_as(exercise_embeddings)
+        else:
+            concept_context = torch.zeros_like(concept_embeddings)
+            exercise_context = torch.zeros_like(exercise_embeddings)
+        concept_nodes = concept_embeddings + concept_context
+        exercise_nodes = exercise_embeddings + exercise_context
+        return SemanticNodeOutput(
+            concept_nodes=concept_nodes,
+            exercise_nodes=exercise_nodes,
+            diagnostics={
+                "semantic_q_edge_count": q_binary.sum(),
+                "semantic_concept_context_norm": concept_context.norm(
+                    dim=-1
+                ).mean(),
+                "semantic_exercise_context_norm": exercise_context.norm(
+                    dim=-1
+                ).mean(),
+            },
+        )
 
 
 class CalibratedEvidenceRepresentation(nn.Module):
@@ -504,6 +576,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         num_exercises: int,
         num_concepts: int,
         concept_dim: int = 64,
+        semantic_node_mode: str = "bidirectional_q",
         evidence_mode: str = "calibrated_history",
         concept_prior_mode: str = "population_q",
         completion_mode: str = "personalized_interaction",
@@ -516,6 +589,10 @@ class TwoStageTKCUKCCDM(nn.Module):
     ) -> None:
         super().__init__()
         del num_students
+        if semantic_node_mode not in QSemanticNodeAlignment.VALID_MODES:
+            raise ValueError(
+                f"Unsupported semantic node mode: {semantic_node_mode}"
+            )
         if evidence_mode not in CalibratedEvidenceRepresentation.VALID_MODES:
             raise ValueError(f"Unsupported evidence mode: {evidence_mode}")
         if concept_prior_mode not in PopulationCalibratedConceptPrior.VALID_MODES:
@@ -527,6 +604,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         if diagnosis_mode not in VALID_DIAGNOSIS_MODES:
             raise ValueError(f"Unsupported diagnosis mode: {diagnosis_mode}")
         self.concept_dim = int(concept_dim)
+        self.semantic_node_mode = semantic_node_mode
         self.evidence_mode = evidence_mode
         self.concept_prior_mode = concept_prior_mode
         self.completion_mode = completion_mode
@@ -537,6 +615,7 @@ class TwoStageTKCUKCCDM(nn.Module):
 
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
+        self.semantic_node_alignment = QSemanticNodeAlignment()
         self.evidence_representation = CalibratedEvidenceRepresentation(
             dim=concept_dim,
             evidence_cap=evidence_cap,
@@ -602,7 +681,7 @@ class TwoStageTKCUKCCDM(nn.Module):
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v4",
+            "family": "two_stage_tkc_ukc_v5",
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
@@ -638,7 +717,16 @@ class TwoStageTKCUKCCDM(nn.Module):
             ]
             for parameter in module.parameters()
         ) + self.control_discrimination_raw.numel()
+        shared_semantic_capacity = (
+            self.concept_embedding.weight.numel()
+            + self.exercise_embedding.weight.numel()
+        )
         return {
+            "semantic_node_alignment": {
+                "bidirectional_q": shared_semantic_capacity,
+                "raw_identity_control": shared_semantic_capacity,
+                "global_context_control": shared_semantic_capacity,
+            },
             "evidence_representation": (
                 self.evidence_representation.active_parameter_counts()
             ),
@@ -649,22 +737,6 @@ class TwoStageTKCUKCCDM(nn.Module):
                 "monotonic_control": control_diagnosis,
             },
         }
-
-    def _concept_nodes(self, q_matrix: torch.Tensor) -> torch.Tensor:
-        q_binary = (q_matrix > 0.0).to(
-            dtype=self.exercise_embedding.weight.dtype
-        )
-        count = q_binary.sum(dim=0).clamp_min(1.0)
-        exercise_side = q_binary.transpose(0, 1) @ self.exercise_embedding.weight
-        return self.concept_embedding.weight + exercise_side / count.unsqueeze(-1)
-
-    def _exercise_nodes(self, q_matrix: torch.Tensor) -> torch.Tensor:
-        q_binary = (q_matrix > 0.0).to(
-            dtype=self.concept_embedding.weight.dtype
-        )
-        count = q_binary.sum(dim=1, keepdim=True).clamp_min(1.0)
-        concept_side = q_binary @ self.concept_embedding.weight / count
-        return self.exercise_embedding.weight + concept_side
 
     def forward(
         self,
@@ -706,8 +778,14 @@ class TwoStageTKCUKCCDM(nn.Module):
             responses = response_matrix
             concept_evidence = student_concept_evidence
 
-        concept_nodes = self._concept_nodes(q_matrix)
-        exercise_nodes = self._exercise_nodes(q_matrix)
+        semantic_output = self.semantic_node_alignment(
+            concept_embeddings=self.concept_embedding.weight,
+            exercise_embeddings=self.exercise_embedding.weight,
+            q_matrix=q_matrix,
+            mode=self.semantic_node_mode,
+        )
+        concept_nodes = semantic_output.concept_nodes
+        exercise_nodes = semantic_output.exercise_nodes
         evidence_output = self.evidence_representation(
             exercise_nodes=exercise_nodes,
             exercise_evidence=exercise_evidence,
@@ -741,8 +819,8 @@ class TwoStageTKCUKCCDM(nn.Module):
         q_state = (
             target_states * q_vectors.unsqueeze(-1)
         ).sum(dim=1) / q_count
-        q_concept = q_vectors @ self.concept_embedding.weight / q_count
-        target_exercise = self.exercise_embedding(target_exercise_ids)
+        q_concept = q_vectors @ concept_nodes / q_count
+        target_exercise = exercise_nodes.index_select(0, target_exercise_ids)
         q_repr = self.q_projection(
             torch.cat([q_concept, target_exercise], dim=-1)
         )
@@ -814,12 +892,13 @@ class TwoStageTKCUKCCDM(nn.Module):
             mastery=mastery,
             state_reliability=completion_output.reliability,
             student_state=evidence_output.student_evidence,
-            concept_embeddings=self.concept_embedding.weight,
+            concept_embeddings=concept_nodes,
             exercise_embeddings=exercise_nodes,
             guess_probs=guess_probs,
             slip_probs=slip_probs,
             difficulty=difficulty,
             module_diagnostics={
+                **semantic_output.diagnostics,
                 **evidence_output.diagnostics,
                 **prior_output.diagnostics,
                 **completion_output.diagnostics,

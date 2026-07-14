@@ -88,6 +88,9 @@ def load_model(
             num_exercises=train_bundle.num_exercises,
             num_concepts=train_bundle.num_concepts,
             concept_dim=concept_dim,
+            semantic_node_mode=str(
+                summary.get("semantic_node_mode", "bidirectional_q")
+            ),
             evidence_mode=str(
                 summary.get("evidence_representation_mode", "calibrated_history")
             ),

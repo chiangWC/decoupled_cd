@@ -63,6 +63,16 @@ def parse_args() -> argparse.Namespace:
         help="Latent dimension for the KaNCD baseline's low-rank factorization.",
     )
     parser.add_argument(
+        "--semantic-node-mode",
+        choices=[
+            "bidirectional_q",
+            "raw_identity_control",
+            "global_context_control",
+        ],
+        default="bidirectional_q",
+        help="Q-specific semantic alignment and its two capacity-equal controls.",
+    )
+    parser.add_argument(
         "--evidence-representation-mode",
         choices=[
             "calibrated_history",
@@ -755,7 +765,8 @@ def validate_model_args(args: argparse.Namespace) -> None:
                 f"v2 module flags require --model v2: " + ", ".join(enabled_v2_flags)
             )
     completion_nondefaults = (
-        args.evidence_representation_mode != "calibrated_history"
+        args.semantic_node_mode != "bidirectional_q"
+        or args.evidence_representation_mode != "calibrated_history"
         or args.concept_prior_mode != "population_q"
         or args.state_completion_mode != "personalized_interaction"
         or args.diagnosis_mode != "target_conditioned"
@@ -988,6 +999,7 @@ def main() -> None:
             num_exercises=train_bundle.num_exercises,
             num_concepts=train_bundle.num_concepts,
             concept_dim=args.concept_dim,
+            semantic_node_mode=args.semantic_node_mode,
             evidence_mode=args.evidence_representation_mode,
             concept_prior_mode=args.concept_prior_mode,
             completion_mode=args.state_completion_mode,
@@ -1162,6 +1174,7 @@ def main() -> None:
         "b0_prior_weight": args.b0_prior_weight,
         "b0_component_cap": args.b0_component_cap,
         "kancd_latent_dim": args.kancd_latent_dim,
+        "semantic_node_mode": args.semantic_node_mode,
         "evidence_representation_mode": args.evidence_representation_mode,
         "concept_prior_mode": args.concept_prior_mode,
         "state_completion_mode": args.state_completion_mode,
