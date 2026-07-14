@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-count", type=int, default=100)
     parser.add_argument("--output", default="results/prediction_slice_report.json")
     parser.add_argument("--csv-output", default=None)
+    parser.add_argument("--prediction-output", default=None)
     args = parser.parse_args()
     return apply_dataset_defaults(args, parser)
 
@@ -89,6 +90,9 @@ def load_model(
             concept_dim=concept_dim,
             evidence_mode=str(
                 summary.get("evidence_representation_mode", "calibrated_history")
+            ),
+            concept_prior_mode=str(
+                summary.get("concept_prior_mode", "population_q")
             ),
             completion_mode=str(
                 summary.get("state_completion_mode", "personalized_interaction")
@@ -468,6 +472,11 @@ def main() -> None:
 
     csv_output = Path(args.csv_output) if args.csv_output else output_path.with_suffix(".csv")
     pd.DataFrame(slices).to_csv(csv_output, index=False)
+    if args.prediction_output:
+        prediction_output = Path(args.prediction_output)
+        prediction_output.parent.mkdir(parents=True, exist_ok=True)
+        enriched.to_csv(prediction_output, index=False)
+
 
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 

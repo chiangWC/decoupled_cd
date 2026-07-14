@@ -30,20 +30,42 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def _target_scope_values(frame: pd.DataFrame) -> np.ndarray:
+    if "coverage_bucket" in frame:
+        return frame["coverage_bucket"].astype(str).to_numpy()
+    if "student_item_concept_overlap" in frame:
+        overlap = frame["student_item_concept_overlap"].astype(str)
+        return overlap.map(
+            {
+                "none_seen": "zero",
+                "partial_seen": "low_coverage",
+                "all_seen": "observed",
+                "no_concepts": "no_concepts",
+            }
+        ).fillna(overlap).to_numpy()
+    raise ValueError("Prediction file has no supported target-scope column.")
+
+
 def _scope_mask(frame: pd.DataFrame, scope: str) -> np.ndarray:
     if scope == "overall":
         return np.ones(len(frame), dtype=bool)
+    target_scope = _target_scope_values(frame)
     if scope == "bucket:zero":
-        return frame["coverage_bucket"].astype(str).to_numpy() == "zero"
+        return target_scope == "zero"
     if scope == "low_coverage":
-        return frame["coverage_group"].astype(str).to_numpy() == "low_coverage"
+        if "coverage_group" in frame:
+            return (
+                frame["coverage_group"].astype(str).to_numpy()
+                == "low_coverage"
+            )
+        return target_scope == "low_coverage"
     raise ValueError(f"Unsupported scope: {scope}")
 
 
 def _validate_alignment(full: pd.DataFrame, control: pd.DataFrame) -> None:
     if len(full) != len(control):
         raise ValueError("Prediction files have different row counts.")
-    required = ["stu_id", "exer_id", "label", "prob", "coverage_bucket", "coverage_group"]
+    required = ["stu_id", "exer_id", "label", "prob"]
     for column in required:
         if column not in full or column not in control:
             raise ValueError(f"Missing required prediction column: {column}")
@@ -54,10 +76,10 @@ def _validate_alignment(full: pd.DataFrame, control: pd.DataFrame) -> None:
             mismatch = int(np.flatnonzero(left != right)[0])
             raise ValueError(f"Prediction rows are misaligned at row {mismatch} ({column}).")
     if not np.array_equal(
-        full["coverage_bucket"].astype(str).to_numpy(),
-        control["coverage_bucket"].astype(str).to_numpy(),
+        _target_scope_values(full),
+        _target_scope_values(control),
     ):
-        raise ValueError("Prediction files disagree on train-history coverage buckets.")
+        raise ValueError("Prediction files disagree on target-scope membership.")
 
 
 def paired_student_cluster_bootstrap(

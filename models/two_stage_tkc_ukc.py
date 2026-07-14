@@ -16,6 +16,11 @@ VALID_DIAGNOSIS_MODES = {"target_conditioned", "monotonic_control"}
 @dataclass
 class EvidenceRepresentationOutput:
     student_evidence: torch.Tensor
+    diagnostics: dict[str, torch.Tensor]
+
+
+@dataclass
+class ConceptPriorOutput:
     concept_prior: torch.Tensor
     diagnostics: dict[str, torch.Tensor]
 
@@ -79,11 +84,6 @@ class CalibratedEvidenceRepresentation(nn.Module):
             nn.Linear(dim * 2, dim),
             nn.LayerNorm(dim),
         )
-        self.population_token_encoder = nn.Sequential(
-            nn.Linear(dim + 2, dim * 2),
-            nn.ReLU(),
-            nn.Linear(dim * 2, dim),
-        )
         full_rng_state = torch.random.get_rng_state()
         self.identity_raw_encoder = nn.Sequential(
             nn.Linear(dim + 4, dim * 2),
@@ -124,7 +124,6 @@ class CalibratedEvidenceRepresentation(nn.Module):
         *,
         exercise_nodes: torch.Tensor,
         exercise_evidence: torch.Tensor,
-        q_matrix: torch.Tensor,
         student_exercise_mask: torch.Tensor,
         response_matrix: torch.Tensor,
         mode: str,
@@ -134,12 +133,7 @@ class CalibratedEvidenceRepresentation(nn.Module):
         dtype = exercise_nodes.dtype
         mask = student_exercise_mask.to(dtype=dtype)
         responses = response_matrix.to(dtype=dtype)
-        item_attempts = exercise_evidence[:, 0].to(dtype=dtype)
         item_accuracy = exercise_evidence[:, 3].to(dtype=dtype)
-        item_confidence = (
-            exercise_evidence[:, 4].to(dtype=dtype)
-            / math.log1p(self.evidence_cap * 100.0)
-        ).clamp(0.0, 1.0)
 
         observed_count = mask.sum(dim=1, keepdim=True)
         safe_count = observed_count.clamp_min(1.0)
@@ -198,27 +192,121 @@ class CalibratedEvidenceRepresentation(nn.Module):
             torch.cat([semantic_input, statistic_input], dim=-1)
         )
 
-        population_features = torch.stack(
-            [item_accuracy.mul(2.0).sub(1.0), item_confidence],
-            dim=-1,
-        )
-        population_tokens = self.population_token_encoder(
-            torch.cat([exercise_nodes, population_features], dim=-1)
-        )
-        q_binary = (q_matrix > 0.0).to(dtype=dtype)
-        concept_item_count = q_binary.sum(dim=0).clamp_min(1.0)
-        concept_prior = q_binary.transpose(0, 1) @ population_tokens
-        concept_prior = concept_prior / concept_item_count.unsqueeze(-1)
         return EvidenceRepresentationOutput(
             student_evidence=student_evidence,
-            concept_prior=concept_prior,
             diagnostics={
                 "history_count": observed_count.squeeze(-1),
                 "history_success": success.squeeze(-1),
                 "history_difficulty_residual": (
                     success - observed_difficulty
                 ).squeeze(-1),
+            },
+        )
+
+
+class PopulationCalibratedConceptPrior(nn.Module):
+    """Train-population item evidence to one concept-side prior state.
+
+    Full uses item correctness and confidence with Q-specific aggregation.
+    Semantic control keeps the Q path but removes population statistics.
+    Global control keeps population statistics but removes concept-specific
+    Q aggregation. All paths share the same tensor contract and capacity.
+    """
+
+    VALID_MODES = {
+        "population_q",
+        "semantic_q_control",
+        "global_population_control",
+    }
+
+    def __init__(self, *, dim: int, evidence_cap: float) -> None:
+        super().__init__()
+        self.evidence_cap = float(evidence_cap)
+        self.population_q_encoder = nn.Sequential(
+            nn.Linear(dim + 2, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+        )
+        full_rng_state = torch.random.get_rng_state()
+        self.semantic_q_encoder = nn.Sequential(
+            nn.Linear(dim + 2, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+        )
+        self.global_population_encoder = nn.Sequential(
+            nn.Linear(dim + 2, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+        )
+        torch.random.set_rng_state(full_rng_state)
+
+    def active_parameter_counts(self) -> dict[str, int]:
+        return {
+            "population_q": sum(
+                parameter.numel()
+                for parameter in self.population_q_encoder.parameters()
+            ),
+            "semantic_q_control": sum(
+                parameter.numel()
+                for parameter in self.semantic_q_encoder.parameters()
+            ),
+            "global_population_control": sum(
+                parameter.numel()
+                for parameter in self.global_population_encoder.parameters()
+            ),
+        }
+
+    def forward(
+        self,
+        *,
+        exercise_nodes: torch.Tensor,
+        exercise_evidence: torch.Tensor,
+        q_matrix: torch.Tensor,
+        mode: str,
+    ) -> ConceptPriorOutput:
+        if mode not in self.VALID_MODES:
+            raise ValueError(f"Unsupported concept prior mode: {mode}")
+        dtype = exercise_nodes.dtype
+        item_attempts = exercise_evidence[:, 0].to(dtype=dtype)
+        item_accuracy = exercise_evidence[:, 3].to(dtype=dtype)
+        item_confidence = (
+            exercise_evidence[:, 4].to(dtype=dtype)
+            / math.log1p(self.evidence_cap * 100.0)
+        ).clamp(0.0, 1.0)
+        population_features = torch.stack(
+            [item_accuracy.mul(2.0).sub(1.0), item_confidence],
+            dim=-1,
+        )
+        q_binary = (q_matrix > 0.0).to(dtype=dtype)
+        concept_item_count = q_binary.sum(dim=0).clamp_min(1.0)
+
+        if mode == "population_q":
+            item_tokens = self.population_q_encoder(
+                torch.cat([exercise_nodes, population_features], dim=-1)
+            )
+            concept_prior = q_binary.transpose(0, 1) @ item_tokens
+            concept_prior = concept_prior / concept_item_count.unsqueeze(-1)
+        elif mode == "semantic_q_control":
+            item_tokens = self.semantic_q_encoder(
+                torch.cat(
+                    [exercise_nodes, torch.zeros_like(population_features)],
+                    dim=-1,
+                )
+            )
+            concept_prior = q_binary.transpose(0, 1) @ item_tokens
+            concept_prior = concept_prior / concept_item_count.unsqueeze(-1)
+        else:
+            item_tokens = self.global_population_encoder(
+                torch.cat([exercise_nodes, population_features], dim=-1)
+            )
+            global_prior = item_tokens.mean(dim=0, keepdim=True)
+            concept_prior = global_prior.expand(q_matrix.size(1), -1)
+
+        return ConceptPriorOutput(
+            concept_prior=concept_prior,
+            diagnostics={
                 "population_attempts": item_attempts,
+                "concept_prior_norm": concept_prior.norm(dim=-1),
             },
         )
 
@@ -417,6 +505,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         num_concepts: int,
         concept_dim: int = 64,
         evidence_mode: str = "calibrated_history",
+        concept_prior_mode: str = "population_q",
         completion_mode: str = "personalized_interaction",
         diagnosis_mode: str = "target_conditioned",
         evidence_cap: float = 20.0,
@@ -429,12 +518,17 @@ class TwoStageTKCUKCCDM(nn.Module):
         del num_students
         if evidence_mode not in CalibratedEvidenceRepresentation.VALID_MODES:
             raise ValueError(f"Unsupported evidence mode: {evidence_mode}")
+        if concept_prior_mode not in PopulationCalibratedConceptPrior.VALID_MODES:
+            raise ValueError(
+                f"Unsupported concept prior mode: {concept_prior_mode}"
+            )
         if completion_mode not in PersonalizedStateCompletion.VALID_MODES:
             raise ValueError(f"Unsupported completion mode: {completion_mode}")
         if diagnosis_mode not in VALID_DIAGNOSIS_MODES:
             raise ValueError(f"Unsupported diagnosis mode: {diagnosis_mode}")
         self.concept_dim = int(concept_dim)
         self.evidence_mode = evidence_mode
+        self.concept_prior_mode = concept_prior_mode
         self.completion_mode = completion_mode
         self.diagnosis_mode = diagnosis_mode
         self.evidence_cap = float(evidence_cap)
@@ -444,6 +538,10 @@ class TwoStageTKCUKCCDM(nn.Module):
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
         self.evidence_representation = CalibratedEvidenceRepresentation(
+            dim=concept_dim,
+            evidence_cap=evidence_cap,
+        )
+        self.concept_prior = PopulationCalibratedConceptPrior(
             dim=concept_dim,
             evidence_cap=evidence_cap,
         )
@@ -504,7 +602,7 @@ class TwoStageTKCUKCCDM(nn.Module):
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v3",
+            "family": "two_stage_tkc_ukc_v4",
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
@@ -544,6 +642,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             "evidence_representation": (
                 self.evidence_representation.active_parameter_counts()
             ),
+            "concept_prior": self.concept_prior.active_parameter_counts(),
             "state_completion": self.state_completion.active_parameter_counts(),
             "diagnosis": {
                 "target_conditioned": full_diagnosis,
@@ -612,15 +711,20 @@ class TwoStageTKCUKCCDM(nn.Module):
         evidence_output = self.evidence_representation(
             exercise_nodes=exercise_nodes,
             exercise_evidence=exercise_evidence,
-            q_matrix=q_matrix,
             student_exercise_mask=mask,
             response_matrix=responses,
             mode=self.evidence_mode,
         )
+        prior_output = self.concept_prior(
+            exercise_nodes=exercise_nodes,
+            exercise_evidence=exercise_evidence,
+            q_matrix=q_matrix,
+            mode=self.concept_prior_mode,
+        )
         completion_output = self.state_completion(
             student_evidence=evidence_output.student_evidence,
             concept_nodes=concept_nodes,
-            concept_prior=evidence_output.concept_prior,
+            concept_prior=prior_output.concept_prior,
             student_concept_evidence=concept_evidence,
             mode=self.completion_mode,
         )
@@ -717,6 +821,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             difficulty=difficulty,
             module_diagnostics={
                 **evidence_output.diagnostics,
+                **prior_output.diagnostics,
                 **completion_output.diagnostics,
             },
             architecture_fingerprint=self.architecture_fingerprint,

@@ -74,6 +74,16 @@ def parse_args() -> argparse.Namespace:
         help="Module 1 path; raw_summary_control is its clean capacity control.",
     )
     parser.add_argument(
+        "--concept-prior-mode",
+        choices=[
+            "population_q",
+            "semantic_q_control",
+            "global_population_control",
+        ],
+        default="population_q",
+        help="Concept-side population prior and its two clean controls.",
+    )
+    parser.add_argument(
         "--state-completion-mode",
         choices=[
             "personalized_interaction",
@@ -746,6 +756,7 @@ def validate_model_args(args: argparse.Namespace) -> None:
             )
     completion_nondefaults = (
         args.evidence_representation_mode != "calibrated_history"
+        or args.concept_prior_mode != "population_q"
         or args.state_completion_mode != "personalized_interaction"
         or args.diagnosis_mode != "target_conditioned"
         or args.completion_evidence_cap != 20.0
@@ -978,6 +989,7 @@ def main() -> None:
             num_concepts=train_bundle.num_concepts,
             concept_dim=args.concept_dim,
             evidence_mode=args.evidence_representation_mode,
+            concept_prior_mode=args.concept_prior_mode,
             completion_mode=args.state_completion_mode,
             diagnosis_mode=args.diagnosis_mode,
             evidence_cap=args.completion_evidence_cap,
@@ -1151,6 +1163,7 @@ def main() -> None:
         "b0_component_cap": args.b0_component_cap,
         "kancd_latent_dim": args.kancd_latent_dim,
         "evidence_representation_mode": args.evidence_representation_mode,
+        "concept_prior_mode": args.concept_prior_mode,
         "state_completion_mode": args.state_completion_mode,
         "diagnosis_mode": args.diagnosis_mode,
         "completion_evidence_cap": args.completion_evidence_cap,

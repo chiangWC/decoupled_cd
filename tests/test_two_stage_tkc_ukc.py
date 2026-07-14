@@ -74,6 +74,7 @@ def _model(
     evidence_mode: str,
     completion_mode: str,
     diagnosis_mode: str = "target_conditioned",
+    concept_prior_mode: str = "population_q",
 ) -> TwoStageTKCUKCCDM:
     torch.manual_seed(42)
     return TwoStageTKCUKCCDM(
@@ -82,6 +83,7 @@ def _model(
         num_concepts=3,
         concept_dim=16,
         evidence_mode=evidence_mode,
+        concept_prior_mode=concept_prior_mode,
         completion_mode=completion_mode,
         diagnosis_mode=diagnosis_mode,
     )
@@ -94,6 +96,16 @@ def _count(module: torch.nn.Module) -> int:
 def test_all_variants_share_initialization_topology_and_contract() -> None:
     variants = [
         _model("calibrated_history", "personalized_interaction"),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            concept_prior_mode="semantic_q_control",
+        ),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            concept_prior_mode="global_population_control",
+        ),
         _model("identity_raw_control", "personalized_interaction"),
         _model("calibrated_summary_control", "personalized_interaction"),
         _model("calibrated_history", "additive_personalized_control"),
@@ -128,12 +140,24 @@ def test_module_gradients_are_isolated() -> None:
     assert model.evidence_representation.raw_control_encoder[0].weight.grad is None
     assert model.evidence_representation.identity_raw_encoder[0].weight.grad is None
     assert model.evidence_representation.calibrated_summary_encoder[0].weight.grad is None
+    assert model.concept_prior.population_q_encoder[0].weight.grad is not None
+    assert model.concept_prior.semantic_q_encoder[0].weight.grad is None
+    assert model.concept_prior.global_population_encoder[0].weight.grad is None
     assert model.state_completion.personalized_decoder[0].weight.grad is not None
     assert model.state_completion.additive_control_decoder[0].weight.grad is None
     assert model.state_completion.direct_control_decoder[0].weight.grad is None
     assert model.cognitive_match[0].weight.grad is not None
     assert model.control_cognitive_match[0].weight.grad is None
 
+    model = _model(
+        "calibrated_history",
+        "personalized_interaction",
+        concept_prior_mode="semantic_q_control",
+    )
+    model(**_inputs()).probs.mean().backward()
+    assert model.concept_prior.population_q_encoder[0].weight.grad is None
+    assert model.concept_prior.semantic_q_encoder[0].weight.grad is not None
+    assert model.concept_prior.global_population_encoder[0].weight.grad is None
     model = _model("raw_summary_control", "direct_prior_control")
     model(**_inputs()).probs.mean().backward()
     assert model.evidence_representation.calibrated_encoder[0].weight.grad is None
