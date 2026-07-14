@@ -176,28 +176,27 @@ class CalibratedEvidenceRepresentation(nn.Module):
             dim=-1,
         )
         pooled_exercise = mask @ exercise_nodes / safe_count
-        calibrated = self.calibrated_encoder(
-            torch.cat([pooled_exercise, calibrated_features], dim=-1)
-        )
-        raw_control = self.raw_control_encoder(
-            torch.cat([torch.zeros_like(pooled_exercise), raw_features], dim=-1)
-        )
-        identity_raw = self.identity_raw_encoder(
-            torch.cat([pooled_exercise, raw_features], dim=-1)
-        )
-        calibrated_summary = self.calibrated_summary_encoder(
-            torch.cat(
-                [torch.zeros_like(pooled_exercise), calibrated_features],
-                dim=-1,
-            )
-        )
-        evidence_by_mode = {
-            "calibrated_history": calibrated,
-            "identity_raw_control": identity_raw,
-            "calibrated_summary_control": calibrated_summary,
-            "raw_summary_control": raw_control,
+        inputs_by_mode = {
+            "calibrated_history": (pooled_exercise, calibrated_features),
+            "identity_raw_control": (pooled_exercise, raw_features),
+            "calibrated_summary_control": (
+                torch.zeros_like(pooled_exercise),
+                calibrated_features,
+            ),
+            "raw_summary_control": (
+                torch.zeros_like(pooled_exercise), raw_features
+            ),
         }
-        student_evidence = evidence_by_mode[mode]
+        encoders_by_mode = {
+            "calibrated_history": self.calibrated_encoder,
+            "identity_raw_control": self.identity_raw_encoder,
+            "calibrated_summary_control": self.calibrated_summary_encoder,
+            "raw_summary_control": self.raw_control_encoder,
+        }
+        semantic_input, statistic_input = inputs_by_mode[mode]
+        student_evidence = encoders_by_mode[mode](
+            torch.cat([semantic_input, statistic_input], dim=-1)
+        )
 
         population_features = torch.stack(
             [item_accuracy.mul(2.0).sub(1.0), item_confidence],
@@ -332,53 +331,51 @@ class PersonalizedStateCompletion(nn.Module):
         )
         concept_grid = concept_nodes.unsqueeze(0).expand(batch_size, -1, -1)
         prior_grid = concept_prior.unsqueeze(0).expand(batch_size, -1, -1)
-        personalized = self.personalized_decoder(
-            torch.cat(
-                [
-                    student_grid,
-                    concept_grid,
-                    student_grid * concept_grid,
-                    prior_grid,
-                ],
-                dim=-1,
+        if mode == "personalized_interaction":
+            framework_state = self.personalized_decoder(
+                torch.cat(
+                    [
+                        student_grid,
+                        concept_grid,
+                        student_grid * concept_grid,
+                        prior_grid,
+                    ],
+                    dim=-1,
+                )
             )
-        )
-
-        observed_raw = concept_grid + self.raw_evidence_projection(raw_features)
-        static_prior = concept_grid + prior_grid
-        direct_base = torch.where(
-            seen.unsqueeze(-1) > 0.0,
-            observed_raw,
-            static_prior,
-        )
-        direct = self.direct_control_decoder(
-            torch.cat(
-                [
-                    direct_base,
-                    concept_grid,
-                    torch.zeros_like(concept_grid),
-                    prior_grid,
-                ],
-                dim=-1,
+        elif mode == "additive_personalized_control":
+            framework_state = self.additive_control_decoder(
+                torch.cat(
+                    [
+                        student_grid,
+                        concept_grid,
+                        torch.zeros_like(concept_grid),
+                        prior_grid,
+                    ],
+                    dim=-1,
+                )
             )
-        )
-        additive_control = self.additive_control_decoder(
-            torch.cat(
-                [
-                    student_grid,
-                    concept_grid,
-                    torch.zeros_like(concept_grid),
-                    prior_grid,
-                ],
-                dim=-1,
+        else:
+            observed_raw = concept_grid + self.raw_evidence_projection(
+                raw_features
             )
-        )
-        states_by_mode = {
-            "personalized_interaction": personalized,
-            "additive_personalized_control": additive_control,
-            "direct_prior_control": direct,
-        }
-        framework_state = states_by_mode[mode]
+            static_prior = concept_grid + prior_grid
+            direct_base = torch.where(
+                seen.unsqueeze(-1) > 0.0,
+                observed_raw,
+                static_prior,
+            )
+            framework_state = self.direct_control_decoder(
+                torch.cat(
+                    [
+                        direct_base,
+                        concept_grid,
+                        torch.zeros_like(concept_grid),
+                        prior_grid,
+                    ],
+                    dim=-1,
+                )
+            )
         history_count = student_concept_evidence[..., 0].sum(dim=1)
         student_success = (
             student_concept_evidence[..., 1].sum(dim=1)
@@ -657,55 +654,51 @@ class TwoStageTKCUKCCDM(nn.Module):
         difficulty = self.exercise_difficulty(
             target_exercise_ids
         ).squeeze(-1)
-        full_cognitive = torch.sigmoid(
-            self.cognitive_match(match_features).squeeze(-1) - difficulty
-        )
-        state_condition = torch.cat([q_state, q_repr], dim=-1)
-        full_guess = self.max_guess * torch.sigmoid(
-            self.guess_head(state_condition).squeeze(-1)
-        )
-        full_slip = self.max_slip * torch.sigmoid(
-            self.slip_head(state_condition).squeeze(-1)
-        )
-
-        target_mastery = (
-            mastery.index_select(0, target_state_rows) * q_vectors
-        ).sum(dim=1) / q_count.squeeze(-1)
-        target_mastery = target_mastery.clamp(1.0e-5, 1.0 - 1.0e-5)
-        item_only_features = torch.cat(
-            [
-                q_repr,
-                q_repr,
-                q_repr * q_repr,
-                torch.zeros_like(q_repr),
-            ],
-            dim=-1,
-        )
-        item_condition = torch.cat([q_repr, q_repr], dim=-1)
-        item_bias = self.control_cognitive_match(
-            item_only_features
-        ).squeeze(-1)
-        discrimination = F.softplus(self.control_discrimination_raw)
-        control_cognitive = torch.sigmoid(
-            discrimination * torch.logit(target_mastery)
-            + item_bias
-            - difficulty
-        )
-        control_guess = self.max_guess * torch.sigmoid(
-            self.control_guess_head(item_condition).squeeze(-1)
-        )
-        control_slip = self.max_slip * torch.sigmoid(
-            self.control_slip_head(item_condition).squeeze(-1)
-        )
-
         if self.diagnosis_mode == "target_conditioned":
-            cognitive_probs = full_cognitive
-            guess_probs = full_guess
-            slip_probs = full_slip
+            cognitive_probs = torch.sigmoid(
+                self.cognitive_match(match_features).squeeze(-1) - difficulty
+            )
+            state_condition = torch.cat([q_state, q_repr], dim=-1)
+            guess_probs = self.max_guess * torch.sigmoid(
+                self.guess_head(state_condition).squeeze(-1)
+            )
+            slip_probs = self.max_slip * torch.sigmoid(
+                self.slip_head(state_condition).squeeze(-1)
+            )
         else:
-            cognitive_probs = control_cognitive
-            guess_probs = control_guess
-            slip_probs = control_slip
+            target_mastery = (
+                mastery.index_select(0, target_state_rows) * q_vectors
+            ).sum(dim=1) / q_count.squeeze(-1)
+            target_mastery = target_mastery.clamp(
+                1.0e-5, 1.0 - 1.0e-5
+            )
+            item_only_features = torch.cat(
+                [
+                    q_repr,
+                    q_repr,
+                    q_repr * q_repr,
+                    torch.zeros_like(q_repr),
+                ],
+                dim=-1,
+            )
+            item_condition = torch.cat([q_repr, q_repr], dim=-1)
+            item_bias = self.control_cognitive_match(
+                item_only_features
+            ).squeeze(-1)
+            discrimination = F.softplus(
+                self.control_discrimination_raw
+            )
+            cognitive_probs = torch.sigmoid(
+                discrimination * torch.logit(target_mastery)
+                + item_bias
+                - difficulty
+            )
+            guess_probs = self.max_guess * torch.sigmoid(
+                self.control_guess_head(item_condition).squeeze(-1)
+            )
+            slip_probs = self.max_slip * torch.sigmoid(
+                self.control_slip_head(item_condition).squeeze(-1)
+            )
         probs = (
             (1.0 - slip_probs) * cognitive_probs
             + guess_probs * (1.0 - cognitive_probs)
