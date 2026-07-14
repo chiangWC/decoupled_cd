@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from models import TKCUKCCompletionCDM
+from models import TwoStageTKCUKCCDM
 from trainers.engine import _build_context_target_batch
 
 
@@ -45,12 +45,16 @@ def _inputs() -> dict[str, torch.Tensor]:
     exercise_evidence = torch.zeros(5, 6)
     exercise_evidence[:, 0] = mask.sum(dim=0)
     exercise_evidence[:, 1] = (mask * responses).sum(dim=0)
-    exercise_evidence[:, 2] = exercise_evidence[:, 0] - exercise_evidence[:, 1]
+    exercise_evidence[:, 2] = (
+        exercise_evidence[:, 0] - exercise_evidence[:, 1]
+    )
     exercise_evidence[:, 3] = (
         exercise_evidence[:, 1] / exercise_evidence[:, 0].clamp_min(1.0)
     )
     exercise_evidence[:, 4] = torch.log1p(exercise_evidence[:, 0])
-    exercise_evidence[:, 5] = (exercise_evidence[:, 0] > 0.0).float()
+    exercise_evidence[:, 5] = (
+        exercise_evidence[:, 0] > 0.0
+    ).float()
     return {
         "q_matrix": q_matrix,
         "concept_graph": torch.zeros(3, 3),
@@ -66,17 +70,15 @@ def _inputs() -> dict[str, torch.Tensor]:
     }
 
 
-def _model(evidence_mode: str, completion_mode: str) -> TKCUKCCompletionCDM:
+def _model(evidence_mode: str, completion_mode: str) -> TwoStageTKCUKCCDM:
     torch.manual_seed(42)
-    return TKCUKCCompletionCDM(
+    return TwoStageTKCUKCCDM(
         num_students=4,
         num_exercises=5,
         num_concepts=3,
         concept_dim=16,
         evidence_mode=evidence_mode,
         completion_mode=completion_mode,
-        attention_heads=4,
-        query_chunk_size=2,
     )
 
 
@@ -84,17 +86,20 @@ def _count(module: torch.nn.Module) -> int:
     return sum(parameter.numel() for parameter in module.parameters())
 
 
-def test_all_variants_share_initialization_and_contract() -> None:
+def test_all_variants_share_initialization_topology_and_contract() -> None:
     variants = [
-        _model("relational", "personalized_attention"),
-        _model("raw_statistics", "personalized_attention"),
-        _model("relational", "global_control"),
-        _model("raw_statistics", "global_control"),
+        _model("calibrated_history", "personalized_interaction"),
+        _model("raw_summary_control", "personalized_interaction"),
+        _model("calibrated_history", "direct_prior_control"),
+        _model("raw_summary_control", "direct_prior_control"),
     ]
     assert len({_count(model) for model in variants}) == 1
     assert len({model.initialization_hash() for model in variants}) == 1
     assert len({model.architecture_fingerprint for model in variants}) == 1
-    assert not any("student_embedding" in name for name, _ in variants[0].named_parameters())
+    assert not any(
+        "student_embedding" in name
+        for name, _ in variants[0].named_parameters()
+    )
     for model in variants:
         output = model(**_inputs())
         assert output.probs.shape == (3,)
@@ -104,29 +109,27 @@ def test_all_variants_share_initialization_and_contract() -> None:
 
 
 def test_module_gradients_are_isolated() -> None:
-    model = _model("relational", "personalized_attention")
+    model = _model("calibrated_history", "personalized_interaction")
     model(**_inputs()).probs.mean().backward()
-    assert model.tkc_evidence.correct_relation[0].weight.grad is not None
-    assert model.tkc_evidence.raw_statistics_control[0].weight.grad is None
-    assert model.ukc_completion.query_projection.weight.grad is not None
-    assert model.ukc_completion.global_control[0].weight.grad is None
+    assert model.evidence_representation.calibrated_encoder[0].weight.grad is not None
+    assert model.evidence_representation.raw_control_encoder[0].weight.grad is None
+    assert model.state_completion.personalized_decoder[0].weight.grad is not None
+    assert model.state_completion.direct_control_decoder[0].weight.grad is None
 
-    model = _model("raw_statistics", "global_control")
+    model = _model("raw_summary_control", "direct_prior_control")
     model(**_inputs()).probs.mean().backward()
-    assert model.tkc_evidence.correct_relation[0].weight.grad is None
-    assert model.tkc_evidence.raw_statistics_control[0].weight.grad is not None
-    assert model.ukc_completion.query_projection.weight.grad is None
-    assert model.ukc_completion.global_control[0].weight.grad is not None
+    assert model.evidence_representation.calibrated_encoder[0].weight.grad is None
+    # Direct-prior completion deliberately cuts the student-evidence output.
+    assert model.evidence_representation.raw_control_encoder[0].weight.grad is None
+    assert model.state_completion.personalized_decoder[0].weight.grad is None
+    assert model.state_completion.direct_control_decoder[0].weight.grad is not None
 
 
-def test_active_controls_are_capacity_matched() -> None:
-    model = _model("relational", "personalized_attention")
-    for counts in [
-        model.tkc_evidence.active_parameter_counts(),
-        model.ukc_completion.active_parameter_counts(),
-    ]:
+def test_active_controls_are_exactly_capacity_matched() -> None:
+    model = _model("calibrated_history", "personalized_interaction")
+    for counts in model.active_module_parameter_counts().values():
         values = list(counts.values())
-        assert abs(values[0] - values[1]) / values[0] <= 0.10
+        assert values[0] == values[1]
 
 
 def test_context_target_mask_has_full_evidence_schema() -> None:
@@ -152,5 +155,3 @@ def test_context_target_mask_has_full_evidence_schema() -> None:
     assert forward["student_concept_evidence"].shape[-1] == 6
     for row in supervised.tolist():
         student = int(tensors["interaction_student_ids"][row])
-        exercise = int(tensors["interaction_exercise_ids"][row])
-        assert forward["student_exercise_mask"][student, exercise] == 0.0

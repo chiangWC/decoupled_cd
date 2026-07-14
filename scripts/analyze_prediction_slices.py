@@ -23,7 +23,7 @@ from models import (
     DecoupledCDMEnsemble,
     DecoupledCDMV2,
     KaNCDBaseline,
-    TKCUKCCompletionCDM,
+    TwoStageTKCUKCCDM,
 )
 from trainers.engine import _bundle_tensors, _validate_history_visibility
 from utils import compute_metrics, resolve_device, write_json
@@ -81,19 +81,22 @@ def load_model(
 ) -> DecoupledCDM | DecoupledCDMEnsemble | DecoupledCDMV2 | CountPriorBaseline:
     train_bundle = bundles["train"]
     model_variant = str(summary.get("model", "v1"))
-    if model_variant == "tkc_ukc_completion":
-        model = TKCUKCCompletionCDM(
+    if model_variant == "two_stage_tkc_ukc":
+        model = TwoStageTKCUKCCDM(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
             num_concepts=train_bundle.num_concepts,
             concept_dim=concept_dim,
-            evidence_mode=str(summary.get("tkc_evidence_mode", "relational")),
-            completion_mode=str(
-                summary.get("ukc_completion_mode", "personalized_attention")
+            evidence_mode=str(
+                summary.get("evidence_representation_mode", "calibrated_history")
             ),
-            attention_heads=int(summary.get("completion_attention_heads", 4)),
-            query_chunk_size=int(summary.get("completion_query_chunk_size", 64)),
+            completion_mode=str(
+                summary.get("state_completion_mode", "personalized_interaction")
+            ),
             evidence_cap=float(summary.get("completion_evidence_cap", 20.0)),
+            readout_dropout=float(summary.get("v2_readout_dropout", 0.0)),
+            max_guess=float(summary.get("v2_gs_max_guess", 0.3)),
+            max_slip=float(summary.get("v2_gs_max_slip", 0.3)),
         )
         model.evaluation_student_batch_size = int(
             summary.get("student_batch_size") or 32

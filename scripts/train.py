@@ -21,7 +21,7 @@ from models import (
     DecoupledCDMEnsemble,
     DecoupledCDMV2,
     KaNCDBaseline,
-    TKCUKCCompletionCDM,
+    TwoStageTKCUKCCDM,
 )
 from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
@@ -46,14 +46,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=None, help="Optional dataset key for default paths and hyperparameters.")
     parser.add_argument(
         "--model",
-        choices=["v1", "v2", "b0", "kancd", "tkc_ukc_completion"],
+        choices=["v1", "v2", "b0", "kancd", "two_stage_tkc_ukc"],
         default="v1",
         help=(
             "Model variant. v1 is the frozen mainline (adapters allowed). v2 is the clean core with "
             "independent module flags for single-module attribution runs. b0 is the count-prior "
             "logistic baseline over train-history statistics. kancd is a faithful in-harness "
             "KaNCD reimplementation (low-rank mastery extrapolation baseline). "
-            "tkc_ukc_completion is the relational-evidence/personalized-completion candidate."
+            "two_stage_tkc_ukc is the clean two-module evidence/completion candidate."
         ),
     )
     parser.add_argument(
@@ -63,19 +63,17 @@ def parse_args() -> argparse.Namespace:
         help="Latent dimension for the KaNCD baseline's low-rank factorization.",
     )
     parser.add_argument(
-        "--tkc-evidence-mode",
-        choices=["relational", "raw_statistics"],
-        default="relational",
-        help="Module 1 data path; raw_statistics is its clean ablation.",
+        "--evidence-representation-mode",
+        choices=["calibrated_history", "raw_summary_control"],
+        default="calibrated_history",
+        help="Module 1 path; raw_summary_control is its clean capacity control.",
     )
     parser.add_argument(
-        "--ukc-completion-mode",
-        choices=["personalized_attention", "global_control"],
-        default="personalized_attention",
-        help="Module 2 data path; global_control is its clean ablation.",
+        "--state-completion-mode",
+        choices=["personalized_interaction", "direct_prior_control"],
+        default="personalized_interaction",
+        help="Module 2 path; direct_prior_control is its clean capacity control.",
     )
-    parser.add_argument("--completion-attention-heads", type=int, default=4)
-    parser.add_argument("--completion-query-chunk-size", type=int, default=64)
     parser.add_argument("--completion-evidence-cap", type=float, default=20.0)
     parser.add_argument(
         "--context-target-frac",
@@ -732,28 +730,18 @@ def validate_model_args(args: argparse.Namespace) -> None:
                 f"v2 module flags require --model v2: " + ", ".join(enabled_v2_flags)
             )
     completion_nondefaults = (
-        args.tkc_evidence_mode != "relational"
-        or args.ukc_completion_mode != "personalized_attention"
-        or args.completion_attention_heads != 4
-        or args.completion_query_chunk_size != 64
+        args.evidence_representation_mode != "calibrated_history"
+        or args.state_completion_mode != "personalized_interaction"
         or args.completion_evidence_cap != 20.0
         or args.context_target_frac != 0.0
     )
-    if args.model != "tkc_ukc_completion" and completion_nondefaults:
+    if args.model != "two_stage_tkc_ukc" and completion_nondefaults:
         raise ValueError(
-            "TKC/UKC completion flags require --model tkc_ukc_completion."
+            "Two-stage module flags require --model two_stage_tkc_ukc."
         )
-    if args.model == "tkc_ukc_completion":
+    if args.model == "two_stage_tkc_ukc":
         if args.seed != 42:
             raise ValueError("The active research protocol fixes this model to --seed 42.")
-        if args.completion_attention_heads < 1:
-            raise ValueError("--completion-attention-heads must be positive.")
-        if args.concept_dim % args.completion_attention_heads != 0:
-            raise ValueError(
-                "--concept-dim must be divisible by --completion-attention-heads."
-            )
-        if args.completion_query_chunk_size < 1:
-            raise ValueError("--completion-query-chunk-size must be positive.")
         if args.completion_evidence_cap <= 0.0:
             raise ValueError("--completion-evidence-cap must be positive.")
         if not 0.0 <= args.context_target_frac < 1.0:
@@ -967,17 +955,18 @@ def main() -> None:
         history_evidence_logit_prior_prior_weight=args.history_evidence_logit_prior_prior_weight,
         history_evidence_logit_prior_mastery_confidence_cap=args.history_evidence_logit_prior_mastery_confidence_cap,
     )
-    if args.model == "tkc_ukc_completion":
-        model = TKCUKCCompletionCDM(
+    if args.model == "two_stage_tkc_ukc":
+        model = TwoStageTKCUKCCDM(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
             num_concepts=train_bundle.num_concepts,
             concept_dim=args.concept_dim,
-            evidence_mode=args.tkc_evidence_mode,
-            completion_mode=args.ukc_completion_mode,
-            attention_heads=args.completion_attention_heads,
-            query_chunk_size=args.completion_query_chunk_size,
+            evidence_mode=args.evidence_representation_mode,
+            completion_mode=args.state_completion_mode,
             evidence_cap=args.completion_evidence_cap,
+            readout_dropout=args.v2_readout_dropout,
+            max_guess=args.v2_gs_max_guess,
+            max_slip=args.v2_gs_max_slip,
         )
     elif args.model == "v2":
         model = DecoupledCDMV2(
@@ -1144,10 +1133,8 @@ def main() -> None:
         "b0_prior_weight": args.b0_prior_weight,
         "b0_component_cap": args.b0_component_cap,
         "kancd_latent_dim": args.kancd_latent_dim,
-        "tkc_evidence_mode": args.tkc_evidence_mode,
-        "ukc_completion_mode": args.ukc_completion_mode,
-        "completion_attention_heads": args.completion_attention_heads,
-        "completion_query_chunk_size": args.completion_query_chunk_size,
+        "evidence_representation_mode": args.evidence_representation_mode,
+        "state_completion_mode": args.state_completion_mode,
         "completion_evidence_cap": args.completion_evidence_cap,
         "context_target_frac": args.context_target_frac,
         "architecture_fingerprint": architecture_fingerprint,
