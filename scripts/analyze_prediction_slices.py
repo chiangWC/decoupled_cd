@@ -94,6 +94,12 @@ def load_model(
             evidence_mode=str(
                 summary.get("evidence_representation_mode", "calibrated_history")
             ),
+            evidence_refinement_mode=str(
+                summary.get(
+                    "evidence_refinement_mode",
+                    "identity_passthrough",
+                )
+            ),
             concept_prior_mode=str(
                 summary.get("concept_prior_mode", "population_q")
             ),
@@ -118,6 +124,7 @@ def load_model(
             allowed_missing_prefixes=(
                 "observed_anchor_state_field.",
                 "item_conditioned_hyper_diagnosis.",
+                "outcome_evidence_refinement.",
             ),
         )
     if model_variant == "v2":

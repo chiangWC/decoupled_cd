@@ -77,6 +77,7 @@ def _model(
     diagnosis_mode: str = "target_conditioned",
     concept_prior_mode: str = "population_q",
     semantic_node_mode: str = "bidirectional_q",
+    evidence_refinement_mode: str = "identity_passthrough",
 ) -> TwoStageTKCUKCCDM:
     torch.manual_seed(42)
     return TwoStageTKCUKCCDM(
@@ -86,6 +87,7 @@ def _model(
         concept_dim=16,
         semantic_node_mode=semantic_node_mode,
         evidence_mode=evidence_mode,
+        evidence_refinement_mode=evidence_refinement_mode,
         concept_prior_mode=concept_prior_mode,
         completion_mode=completion_mode,
         diagnosis_mode=diagnosis_mode,
@@ -137,6 +139,21 @@ def test_all_variants_share_initialization_topology_and_contract() -> None:
             "personalized_interaction",
             "item_hypernetwork",
         ),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            evidence_refinement_mode="outcome_multiset",
+        ),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            evidence_refinement_mode="unconditioned_set_control",
+        ),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            evidence_refinement_mode="base_capacity_control",
+        ),
     ]
     assert len({_count(model) for model in variants}) == 1
     assert len({model.initialization_hash() for model in variants}) == 1
@@ -170,6 +187,10 @@ def test_module_gradients_are_isolated() -> None:
     assert model.control_cognitive_match[0].weight.grad is None
     assert (
         model.item_conditioned_hyper_diagnosis.item_to_weights.weight.grad
+        is None
+    )
+    assert (
+        model.outcome_evidence_refinement.outcome_encoder[0].weight.grad
         is None
     )
     model = _model(
@@ -231,6 +252,66 @@ def test_module_gradients_are_isolated() -> None:
     )
     assert (
         model.item_conditioned_hyper_diagnosis.slip_head[0].weight.grad
+        is not None
+    )
+
+    model = _model(
+        "calibrated_history",
+        "personalized_interaction",
+        evidence_refinement_mode="outcome_multiset",
+    )
+    model(**_inputs()).probs.mean().backward()
+    assert (
+        model.outcome_evidence_refinement.outcome_encoder[0].weight.grad
+        is not None
+    )
+    assert (
+        model.outcome_evidence_refinement
+        .unconditioned_control_encoder[0].weight.grad
+        is None
+    )
+    assert (
+        model.outcome_evidence_refinement.base_control_encoder[0].weight.grad
+        is None
+    )
+
+    model = _model(
+        "calibrated_history",
+        "personalized_interaction",
+        evidence_refinement_mode="unconditioned_set_control",
+    )
+    model(**_inputs()).probs.mean().backward()
+    assert (
+        model.outcome_evidence_refinement.outcome_encoder[0].weight.grad
+        is None
+    )
+    assert (
+        model.outcome_evidence_refinement
+        .unconditioned_control_encoder[0].weight.grad
+        is not None
+    )
+    assert (
+        model.outcome_evidence_refinement.base_control_encoder[0].weight.grad
+        is None
+    )
+
+    model = _model(
+        "calibrated_history",
+        "personalized_interaction",
+        evidence_refinement_mode="base_capacity_control",
+    )
+    model(**_inputs()).probs.mean().backward()
+    assert (
+        model.outcome_evidence_refinement.outcome_encoder[0].weight.grad
+        is None
+    )
+    assert (
+        model.outcome_evidence_refinement
+        .unconditioned_control_encoder[0].weight.grad
+        is None
+    )
+    assert (
+        model.outcome_evidence_refinement.base_control_encoder[0].weight.grad
         is not None
     )
 

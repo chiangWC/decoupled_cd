@@ -780,6 +780,147 @@ class ObservedAnchorStateField(nn.Module):
         )
 
 
+class OutcomePartitionedEvidenceRefinement(nn.Module):
+    """Refine student evidence from correct and incorrect history sets.
+
+    The Full path treats correct and incorrect interactions as two related
+    sets and preserves their distinct semantic centroids.  Capacity and direct
+    controls use the same inputs, output contract, and number of parameters,
+    but remove outcome-specific set partitioning.
+    """
+
+    VALID_MODES = {
+        "identity_passthrough",
+        "outcome_multiset",
+        "unconditioned_set_control",
+        "base_capacity_control",
+    }
+
+    def __init__(self, *, dim: int) -> None:
+        super().__init__()
+        initial_rng_state = torch.random.get_rng_state()
+        self.outcome_encoder = self._make_encoder(dim)
+        post_full_rng_state = torch.random.get_rng_state()
+        torch.random.set_rng_state(initial_rng_state)
+        self.unconditioned_control_encoder = self._make_encoder(dim)
+        torch.random.set_rng_state(initial_rng_state)
+        self.base_control_encoder = self._make_encoder(dim)
+        torch.random.set_rng_state(post_full_rng_state)
+
+    @staticmethod
+    def _make_encoder(dim: int) -> nn.Sequential:
+        return nn.Sequential(
+            nn.Linear(dim * 4 + 4, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+            nn.LayerNorm(dim),
+        )
+
+    def active_parameter_counts(self) -> dict[str, int]:
+        return {
+            "outcome_multiset": sum(
+                parameter.numel()
+                for parameter in self.outcome_encoder.parameters()
+            ),
+            "unconditioned_set_control": sum(
+                parameter.numel()
+                for parameter in (
+                    self.unconditioned_control_encoder.parameters()
+                )
+            ),
+            "base_capacity_control": sum(
+                parameter.numel()
+                for parameter in self.base_control_encoder.parameters()
+            ),
+        }
+
+    def forward(
+        self,
+        *,
+        student_evidence: torch.Tensor,
+        exercise_nodes: torch.Tensor,
+        student_exercise_mask: torch.Tensor,
+        response_matrix: torch.Tensor,
+        mode: str,
+    ) -> EvidenceRepresentationOutput:
+        if mode not in self.VALID_MODES:
+            raise ValueError(f"Unsupported evidence refinement mode: {mode}")
+        if mode == "identity_passthrough":
+            return EvidenceRepresentationOutput(
+                student_evidence=student_evidence,
+                diagnostics={
+                    "outcome_refinement_active": student_evidence.new_zeros(
+                        student_evidence.size(0)
+                    )
+                },
+            )
+
+        dtype = exercise_nodes.dtype
+        mask = student_exercise_mask.to(dtype=dtype)
+        responses = response_matrix.to(dtype=dtype)
+        correct_mask = mask * responses
+        incorrect_mask = mask * (1.0 - responses)
+        observed_count = mask.sum(dim=1, keepdim=True)
+        correct_count = correct_mask.sum(dim=1, keepdim=True)
+        incorrect_count = incorrect_mask.sum(dim=1, keepdim=True)
+        exposure_pool = mask @ exercise_nodes / observed_count.clamp_min(1.0)
+        correct_pool = (
+            correct_mask @ exercise_nodes / correct_count.clamp_min(1.0)
+        )
+        incorrect_pool = (
+            incorrect_mask @ exercise_nodes / incorrect_count.clamp_min(1.0)
+        )
+        response_contrast = correct_pool - incorrect_pool
+        normalizer = math.log1p(float(max(mask.size(1), 1)))
+        statistics = torch.cat(
+            [
+                correct_count / observed_count.clamp_min(1.0),
+                torch.log1p(correct_count).div(normalizer).clamp(0.0, 1.0),
+                torch.log1p(incorrect_count).div(normalizer).clamp(0.0, 1.0),
+                observed_count / float(max(mask.size(1), 1)),
+            ],
+            dim=-1,
+        )
+        if mode == "outcome_multiset":
+            semantic_inputs = [
+                correct_pool,
+                incorrect_pool,
+                response_contrast,
+            ]
+            encoder = self.outcome_encoder
+        elif mode == "unconditioned_set_control":
+            semantic_inputs = [
+                exposure_pool,
+                exposure_pool,
+                torch.zeros_like(exposure_pool),
+            ]
+            encoder = self.unconditioned_control_encoder
+        else:
+            semantic_inputs = [
+                torch.zeros_like(student_evidence),
+                torch.zeros_like(student_evidence),
+                torch.zeros_like(student_evidence),
+            ]
+            encoder = self.base_control_encoder
+        refined_evidence = encoder(
+            torch.cat(
+                [student_evidence, *semantic_inputs, statistics],
+                dim=-1,
+            )
+        )
+        return EvidenceRepresentationOutput(
+            student_evidence=refined_evidence,
+            diagnostics={
+                "outcome_refinement_active": refined_evidence.new_ones(
+                    refined_evidence.size(0)
+                ),
+                "outcome_correct_count": correct_count.squeeze(-1),
+                "outcome_incorrect_count": incorrect_count.squeeze(-1),
+                "outcome_contrast_norm": response_contrast.norm(dim=-1),
+            },
+        )
+
+
 class ItemConditionedHyperDiagnosis(nn.Module):
     """Generate a low-rank diagnosis function from the target item.
 
@@ -879,6 +1020,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         concept_dim: int = 64,
         semantic_node_mode: str = "bidirectional_q",
         evidence_mode: str = "calibrated_history",
+        evidence_refinement_mode: str = "identity_passthrough",
         concept_prior_mode: str = "population_q",
         completion_mode: str = "personalized_interaction",
         diagnosis_mode: str = "target_conditioned",
@@ -896,6 +1038,14 @@ class TwoStageTKCUKCCDM(nn.Module):
             )
         if evidence_mode not in CalibratedEvidenceRepresentation.VALID_MODES:
             raise ValueError(f"Unsupported evidence mode: {evidence_mode}")
+        if (
+            evidence_refinement_mode
+            not in OutcomePartitionedEvidenceRefinement.VALID_MODES
+        ):
+            raise ValueError(
+                "Unsupported evidence refinement mode: "
+                f"{evidence_refinement_mode}"
+            )
         if concept_prior_mode not in PopulationCalibratedConceptPrior.VALID_MODES:
             raise ValueError(
                 f"Unsupported concept prior mode: {concept_prior_mode}"
@@ -911,6 +1061,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         self.concept_dim = int(concept_dim)
         self.semantic_node_mode = semantic_node_mode
         self.evidence_mode = evidence_mode
+        self.evidence_refinement_mode = evidence_refinement_mode
         self.concept_prior_mode = concept_prior_mode
         self.completion_mode = completion_mode
         self.diagnosis_mode = diagnosis_mode
@@ -995,14 +1146,20 @@ class TwoStageTKCUKCCDM(nn.Module):
                 max_slip=max_slip,
             )
         )
+        self.outcome_evidence_refinement = (
+            OutcomePartitionedEvidenceRefinement(dim=concept_dim)
+        )
 
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v7",
+            "family": "two_stage_tkc_ukc_v8",
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
+            "evidence_refinement": (
+                "outcome_multiset_or_capacity_controls_or_passthrough"
+            ),
             "diagnosis": (
                 "item_hypernetwork_or_target_conditioned_or_"
                 "monotonic_control"
@@ -1056,6 +1213,9 @@ class TwoStageTKCUKCCDM(nn.Module):
             },
             "evidence_representation": (
                 self.evidence_representation.active_parameter_counts()
+            ),
+            "outcome_evidence_refinement": (
+                self.outcome_evidence_refinement.active_parameter_counts()
             ),
             "concept_prior": self.concept_prior.active_parameter_counts(),
             "state_completion": self.state_completion.active_parameter_counts(),
@@ -1124,6 +1284,13 @@ class TwoStageTKCUKCCDM(nn.Module):
             response_matrix=responses,
             mode=self.evidence_mode,
         )
+        refinement_output = self.outcome_evidence_refinement(
+            student_evidence=evidence_output.student_evidence,
+            exercise_nodes=exercise_nodes,
+            student_exercise_mask=mask,
+            response_matrix=responses,
+            mode=self.evidence_refinement_mode,
+        )
         prior_output = self.concept_prior(
             exercise_nodes=exercise_nodes,
             exercise_evidence=exercise_evidence,
@@ -1132,7 +1299,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         )
         if self.completion_mode in ObservedAnchorStateField.VALID_MODES:
             completion_output = self.observed_anchor_state_field(
-                student_evidence=evidence_output.student_evidence,
+                student_evidence=refinement_output.student_evidence,
                 concept_nodes=concept_nodes,
                 concept_prior=prior_output.concept_prior,
                 student_concept_evidence=concept_evidence,
@@ -1140,7 +1307,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             )
         else:
             completion_output = self.state_completion(
-                student_evidence=evidence_output.student_evidence,
+                student_evidence=refinement_output.student_evidence,
                 concept_nodes=concept_nodes,
                 concept_prior=prior_output.concept_prior,
                 student_concept_evidence=concept_evidence,
@@ -1244,7 +1411,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             framework_state=framework_state,
             mastery=mastery,
             state_reliability=completion_output.reliability,
-            student_state=evidence_output.student_evidence,
+            student_state=refinement_output.student_evidence,
             concept_embeddings=concept_nodes,
             exercise_embeddings=exercise_nodes,
             guess_probs=guess_probs,
@@ -1253,6 +1420,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             module_diagnostics={
                 **semantic_output.diagnostics,
                 **evidence_output.diagnostics,
+                **refinement_output.diagnostics,
                 **prior_output.diagnostics,
                 **completion_output.diagnostics,
             },

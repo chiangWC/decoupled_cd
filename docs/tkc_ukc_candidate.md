@@ -57,10 +57,16 @@ ASSIST17 Full target 为 0.765315，capacity control 为 0.765686，direct contr
 
 MOO target 只提升 +0.000783；XES target 反而下降 0.001070。动态扩池后，ASSIST17 提升 +0.014351，但 Junyi、ASSIST09、NIPS34、EdNet 分别为 -0.000158、-0.003344、-0.000642、-0.003570；其中 ASSIST09、NIPS34、EdNet Full 也不是普通胜局。六个数据集只有一个幅度过门点，该机制最终拒绝。
 
-## 当前候选：Item-Conditioned Low-Rank Hypernetwork Diagnosis
+## 已拒绝：Item-Conditioned Low-Rank Hypernetwork Diagnosis
 
 借鉴 Sarafian、Keynan、Kraus 在 ICML 2021 提出的条件 hypernetwork 对笛卡尔积输入的处理，由目标题表示生成低秩诊断权重，再作用于学生状态；模块独立输出 cognitive、guess、slip 和最终作答概率。论文机制映射为 `target item -> conditional weights`、`student state -> conditional network input`，实现只依据论文描述和公式独立编写，不移植作者代码。来源：[Recomposing the Reinforcement Learning Building Blocks with Hypernetworks](https://proceedings.mlr.press/v139/sarafian21a.html)。
 
-Capacity control 是当前 target-conditioned MLP，Direct control 是 monotonic NCD。三路共用完整 Evidence/State、初始化、数据顺序和训练配方，活跃参数量差异不得超过 10%。第一屏固定 ASSIST17 与 MOOCRadar，不做候选专属调参；未达到模块幅度门即原样拒绝。
+Capacity control 是当前 target-conditioned MLP，Direct control 是 monotonic NCD。三路共用完整 Evidence/State、初始化、数据顺序和训练配方，活跃参数量差异不得超过 10%。ASSIST17 Full 相对较强 capacity control 的 H/T 分别下降 0.014242/0.015678；MOO 的 H 下降 0.000098、T 只提升 0.000358。候选不调参，原样拒绝。
+
+## 当前候选：Outcome-Partitioned Multi-Set Evidence Refinement
+
+该候选借鉴 Selby 等人对“多个置换不变集合上的函数”的建模问题，将 train-only 正确作答与错误作答视为两个有关联但不可混同的 evidence sets；分别汇总题目语义，并显式提供 correct–incorrect contrast，再整块输出下游唯一消费的 student evidence。来源：[Learning Functions on Multiple Sets using Multi-Set Transformers](https://arxiv.org/abs/2206.15444)。这里只采用 multi-set 问题定义并独立实现紧凑关系池化，不复制其 Transformer 或作者代码。
+
+Capacity control 保留相同输入、全局作答统计、四倍语义输入宽度和完全相同参数量，但把两个集合都替换为不区分结果的 attempted-item set；Direct control 只消费原 Evidence 输出与全局统计。候选首先固定 ASSIST17/MOOCRadar 原配方运行，不做候选专属调参；若候选过门，还必须重新验证已通过 Evidence 模块在新数据流下仍满足幅度门。
 
 最终门槛不变：同一架构至少三胜；两个模块各自在至少两个 Full 胜出数据集 target 提升不低于 0.005，其中一个不低于 0.01，并至少一个 student-clustered paired-bootstrap CI 下界大于 0。

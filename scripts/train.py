@@ -84,6 +84,20 @@ def parse_args() -> argparse.Namespace:
         help="Module 1 path; raw_summary_control is its clean capacity control.",
     )
     parser.add_argument(
+        "--evidence-refinement-mode",
+        choices=[
+            "identity_passthrough",
+            "outcome_multiset",
+            "unconditioned_set_control",
+            "base_capacity_control",
+        ],
+        default="identity_passthrough",
+        help=(
+            "Outcome-partitioned multi-set evidence candidate and its "
+            "capacity-matched controls."
+        ),
+    )
+    parser.add_argument(
         "--concept-prior-mode",
         choices=[
             "population_q",
@@ -776,6 +790,7 @@ def validate_model_args(args: argparse.Namespace) -> None:
     completion_nondefaults = (
         args.semantic_node_mode != "bidirectional_q"
         or args.evidence_representation_mode != "calibrated_history"
+        or args.evidence_refinement_mode != "identity_passthrough"
         or args.concept_prior_mode != "population_q"
         or args.state_completion_mode != "personalized_interaction"
         or args.diagnosis_mode != "target_conditioned"
@@ -1010,6 +1025,7 @@ def main() -> None:
             concept_dim=args.concept_dim,
             semantic_node_mode=args.semantic_node_mode,
             evidence_mode=args.evidence_representation_mode,
+            evidence_refinement_mode=args.evidence_refinement_mode,
             concept_prior_mode=args.concept_prior_mode,
             completion_mode=args.state_completion_mode,
             diagnosis_mode=args.diagnosis_mode,
@@ -1185,6 +1201,7 @@ def main() -> None:
         "kancd_latent_dim": args.kancd_latent_dim,
         "semantic_node_mode": args.semantic_node_mode,
         "evidence_representation_mode": args.evidence_representation_mode,
+        "evidence_refinement_mode": args.evidence_refinement_mode,
         "concept_prior_mode": args.concept_prior_mode,
         "state_completion_mode": args.state_completion_mode,
         "diagnosis_mode": args.diagnosis_mode,
