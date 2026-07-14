@@ -94,6 +94,7 @@ def _count(module: torch.nn.Module) -> int:
 def test_all_variants_share_initialization_topology_and_contract() -> None:
     variants = [
         _model("calibrated_history", "personalized_interaction"),
+        _model("calibrated_history", "additive_personalized_control"),
         _model("raw_summary_control", "personalized_interaction"),
         _model("calibrated_history", "direct_prior_control"),
         _model("raw_summary_control", "direct_prior_control"),
@@ -124,6 +125,7 @@ def test_module_gradients_are_isolated() -> None:
     assert model.evidence_representation.calibrated_encoder[0].weight.grad is not None
     assert model.evidence_representation.raw_control_encoder[0].weight.grad is None
     assert model.state_completion.personalized_decoder[0].weight.grad is not None
+    assert model.state_completion.additive_control_decoder[0].weight.grad is None
     assert model.state_completion.direct_control_decoder[0].weight.grad is None
     assert model.cognitive_match[0].weight.grad is not None
     assert model.control_cognitive_match[0].weight.grad is None
@@ -135,6 +137,13 @@ def test_module_gradients_are_isolated() -> None:
     assert model.evidence_representation.raw_control_encoder[0].weight.grad is None
     assert model.state_completion.personalized_decoder[0].weight.grad is None
     assert model.state_completion.direct_control_decoder[0].weight.grad is not None
+
+    model = _model("calibrated_history", "additive_personalized_control")
+    model(**_inputs()).probs.mean().backward()
+    assert model.evidence_representation.calibrated_encoder[0].weight.grad is not None
+    assert model.state_completion.personalized_decoder[0].weight.grad is None
+    assert model.state_completion.additive_control_decoder[0].weight.grad is not None
+    assert model.state_completion.direct_control_decoder[0].weight.grad is None
 
     model = _model(
         "calibrated_history",
@@ -150,7 +159,7 @@ def test_active_controls_are_capacity_matched() -> None:
     model = _model("calibrated_history", "personalized_interaction")
     for name, counts in model.active_module_parameter_counts().items():
         values = list(counts.values())
-        relative_gap = abs(values[0] - values[1]) / max(values)
+        relative_gap = (max(values) - min(values)) / max(values)
         assert relative_gap <= 0.10, name
 
 

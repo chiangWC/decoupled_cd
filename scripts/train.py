@@ -70,7 +70,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--state-completion-mode",
-        choices=["personalized_interaction", "direct_prior_control"],
+        choices=[
+            "personalized_interaction",
+            "additive_personalized_control",
+            "direct_prior_control",
+        ],
         default="personalized_interaction",
         help="State-completion module path and clean capacity control.",
     )

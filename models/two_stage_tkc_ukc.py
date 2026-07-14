@@ -193,7 +193,11 @@ class PersonalizedStateCompletion(nn.Module):
     Identical decoder shapes make the comparison capacity matched.
     """
 
-    VALID_MODES = {"personalized_interaction", "direct_prior_control"}
+    VALID_MODES = {
+        "personalized_interaction",
+        "additive_personalized_control",
+        "direct_prior_control",
+    }
 
     def __init__(self, *, dim: int, evidence_cap: float) -> None:
         super().__init__()
@@ -216,12 +220,28 @@ class PersonalizedStateCompletion(nn.Module):
             nn.ReLU(),
             nn.Linear(max(8, dim // 2), 1),
         )
+        # Instantiated after the already validated Full path so adding this
+        # stronger control does not perturb any existing Full initialization.
+        # It consumes the same student and concept inputs as Full but removes
+        # the declared multiplicative student-concept interaction.
+        full_rng_state = torch.random.get_rng_state()
+        self.additive_control_decoder = nn.Sequential(
+            nn.Linear(dim * 4, dim * 2),
+            nn.ReLU(),
+            nn.Linear(dim * 2, dim),
+            nn.LayerNorm(dim),
+        )
+        torch.random.set_rng_state(full_rng_state)
 
     def active_parameter_counts(self) -> dict[str, int]:
         return {
             "personalized_interaction": sum(
                 parameter.numel()
                 for parameter in self.personalized_decoder.parameters()
+            ),
+            "additive_personalized_control": sum(
+                parameter.numel()
+                for parameter in self.additive_control_decoder.parameters()
             ),
             "direct_prior_control": sum(
                 parameter.numel()
@@ -302,9 +322,23 @@ class PersonalizedStateCompletion(nn.Module):
                 dim=-1,
             )
         )
-        framework_state = (
-            personalized if mode == "personalized_interaction" else direct
+        additive_control = self.additive_control_decoder(
+            torch.cat(
+                [
+                    student_grid,
+                    concept_grid,
+                    torch.zeros_like(concept_grid),
+                    prior_grid,
+                ],
+                dim=-1,
+            )
         )
+        states_by_mode = {
+            "personalized_interaction": personalized,
+            "additive_personalized_control": additive_control,
+            "direct_prior_control": direct,
+        }
+        framework_state = states_by_mode[mode]
         history_count = student_concept_evidence[..., 0].sum(dim=1)
         student_success = (
             student_concept_evidence[..., 1].sum(dim=1)
@@ -433,7 +467,7 @@ class TwoStageTKCUKCCDM(nn.Module):
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v1",
+            "family": "two_stage_tkc_ukc_v2",
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
