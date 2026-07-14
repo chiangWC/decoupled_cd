@@ -10,7 +10,11 @@ from torch import nn
 import torch.nn.functional as F
 
 
-VALID_DIAGNOSIS_MODES = {"target_conditioned", "monotonic_control"}
+VALID_DIAGNOSIS_MODES = {
+    "item_hypernetwork",
+    "target_conditioned",
+    "monotonic_control",
+}
 
 
 @dataclass
@@ -37,6 +41,14 @@ class StateCompletionOutput:
     framework_state: torch.Tensor
     reliability: torch.Tensor
     diagnostics: dict[str, torch.Tensor]
+
+
+@dataclass
+class DiagnosisOutput:
+    probs: torch.Tensor
+    cognitive_probs: torch.Tensor
+    guess_probs: torch.Tensor
+    slip_probs: torch.Tensor
 
 
 @dataclass
@@ -768,6 +780,93 @@ class ObservedAnchorStateField(nn.Module):
         )
 
 
+class ItemConditionedHyperDiagnosis(nn.Module):
+    """Generate a low-rank diagnosis function from the target item.
+
+    This module treats student state and target-item representation as a
+    Cartesian-product input.  Instead of concatenating the two vectors into a
+    fixed predictor, the item generates a low-rank linear map that acts on the
+    student state.  It owns the complete cognitive/guess/slip response path.
+    """
+
+    def __init__(
+        self,
+        *,
+        dim: int,
+        rank: int = 3,
+        dropout: float = 0.0,
+        max_guess: float = 0.3,
+        max_slip: float = 0.3,
+    ) -> None:
+        super().__init__()
+        if rank < 1:
+            raise ValueError("Hypernetwork rank must be positive.")
+        self.rank = int(rank)
+        self.max_guess = float(max_guess)
+        self.max_slip = float(max_slip)
+        self.state_to_rank = nn.Linear(dim, rank)
+        self.item_to_weights = nn.Linear(dim, dim * rank)
+        self.dynamic_norm = nn.LayerNorm(dim)
+        hidden_dim = max(8, dim // 2)
+        self.cognitive_head = nn.Sequential(
+            nn.Linear(dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1),
+        )
+        self.guess_head = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.ReLU(),
+            nn.Linear(dim, 1),
+        )
+        self.slip_head = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.ReLU(),
+            nn.Linear(dim, 1),
+        )
+
+    def forward(
+        self,
+        *,
+        q_state: torch.Tensor,
+        q_repr: torch.Tensor,
+        difficulty: torch.Tensor,
+    ) -> DiagnosisOutput:
+        batch_size, dim = q_state.shape
+        rank_state = self.state_to_rank(q_state)
+        item_weights = self.item_to_weights(q_repr).view(
+            batch_size,
+            dim,
+            self.rank,
+        )
+        dynamic_state = torch.einsum(
+            "ndr,nr->nd",
+            item_weights,
+            rank_state,
+        ) / math.sqrt(float(self.rank))
+        dynamic_state = self.dynamic_norm(dynamic_state)
+        diagnosis_features = torch.cat([dynamic_state, q_repr], dim=-1)
+        cognitive_probs = torch.sigmoid(
+            self.cognitive_head(diagnosis_features).squeeze(-1) - difficulty
+        )
+        guess_probs = self.max_guess * torch.sigmoid(
+            self.guess_head(diagnosis_features).squeeze(-1)
+        )
+        slip_probs = self.max_slip * torch.sigmoid(
+            self.slip_head(diagnosis_features).squeeze(-1)
+        )
+        probs = (
+            (1.0 - slip_probs) * cognitive_probs
+            + guess_probs * (1.0 - cognitive_probs)
+        )
+        return DiagnosisOutput(
+            probs=probs,
+            cognitive_probs=cognitive_probs,
+            guess_probs=guess_probs,
+            slip_probs=slip_probs,
+        )
+
+
 class TwoStageTKCUKCCDM(nn.Module):
     """Two claimed modules followed by a fixed Q-conditioned diagnosis."""
 
@@ -887,15 +986,27 @@ class TwoStageTKCUKCCDM(nn.Module):
             dim=concept_dim,
             evidence_cap=evidence_cap,
         )
+        self.item_conditioned_hyper_diagnosis = (
+            ItemConditionedHyperDiagnosis(
+                dim=concept_dim,
+                rank=3,
+                dropout=readout_dropout,
+                max_guess=max_guess,
+                max_slip=max_slip,
+            )
+        )
 
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v6",
+            "family": "two_stage_tkc_ukc_v7",
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
-            "diagnosis": "target_conditioned_or_monotonic_control",
+            "diagnosis": (
+                "item_hypernetwork_or_target_conditioned_or_"
+                "monotonic_control"
+            ),
         }
         return hashlib.sha256(
             json.dumps(payload, sort_keys=True).encode("utf-8")
@@ -927,6 +1038,12 @@ class TwoStageTKCUKCCDM(nn.Module):
             ]
             for parameter in module.parameters()
         ) + self.control_discrimination_raw.numel()
+        hyper_diagnosis = sum(
+            parameter.numel()
+            for parameter in (
+                self.item_conditioned_hyper_diagnosis.parameters()
+            )
+        )
         shared_semantic_capacity = (
             self.concept_embedding.weight.numel()
             + self.exercise_embedding.weight.numel()
@@ -946,6 +1063,7 @@ class TwoStageTKCUKCCDM(nn.Module):
                 self.observed_anchor_state_field.active_parameter_counts()
             ),
             "diagnosis": {
+                "item_hypernetwork": hyper_diagnosis,
                 "target_conditioned": full_diagnosis,
                 "monotonic_control": control_diagnosis,
             },
@@ -1058,7 +1176,17 @@ class TwoStageTKCUKCCDM(nn.Module):
         difficulty = self.exercise_difficulty(
             target_exercise_ids
         ).squeeze(-1)
-        if self.diagnosis_mode == "target_conditioned":
+        diagnosis_output: DiagnosisOutput | None = None
+        if self.diagnosis_mode == "item_hypernetwork":
+            diagnosis_output = self.item_conditioned_hyper_diagnosis(
+                q_state=q_state,
+                q_repr=q_repr,
+                difficulty=difficulty,
+            )
+            cognitive_probs = diagnosis_output.cognitive_probs
+            guess_probs = diagnosis_output.guess_probs
+            slip_probs = diagnosis_output.slip_probs
+        elif self.diagnosis_mode == "target_conditioned":
             cognitive_probs = torch.sigmoid(
                 self.cognitive_match(match_features).squeeze(-1) - difficulty
             )
@@ -1103,10 +1231,13 @@ class TwoStageTKCUKCCDM(nn.Module):
             slip_probs = self.max_slip * torch.sigmoid(
                 self.control_slip_head(item_condition).squeeze(-1)
             )
-        probs = (
-            (1.0 - slip_probs) * cognitive_probs
-            + guess_probs * (1.0 - cognitive_probs)
-        )
+        if diagnosis_output is None:
+            probs = (
+                (1.0 - slip_probs) * cognitive_probs
+                + guess_probs * (1.0 - cognitive_probs)
+            )
+        else:
+            probs = diagnosis_output.probs
         return TwoStageForwardOutput(
             probs=probs,
             cognitive_probs=cognitive_probs,

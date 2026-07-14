@@ -107,9 +107,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--diagnosis-mode",
-        choices=["target_conditioned", "monotonic_control"],
+        choices=[
+            "item_hypernetwork",
+            "target_conditioned",
+            "monotonic_control",
+        ],
         default="target_conditioned",
-        help="Diagnosis module path; monotonic_control is the standard decoder ablation.",
+        help=(
+            "Diagnosis module path; target_conditioned is the capacity "
+            "control and monotonic_control is the direct decoder control."
+        ),
     )
     parser.add_argument("--completion-evidence-cap", type=float, default=20.0)
     parser.add_argument(

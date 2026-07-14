@@ -115,7 +115,10 @@ def load_model(
             model,
             checkpoint_path=checkpoint_path,
             device=device,
-            allowed_missing_prefixes=("observed_anchor_state_field.",),
+            allowed_missing_prefixes=(
+                "observed_anchor_state_field.",
+                "item_conditioned_hyper_diagnosis.",
+            ),
         )
     if model_variant == "v2":
         model = DecoupledCDMV2(

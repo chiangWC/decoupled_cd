@@ -132,6 +132,11 @@ def test_all_variants_share_initialization_topology_and_contract() -> None:
             "personalized_interaction",
             "monotonic_control",
         ),
+        _model(
+            "calibrated_history",
+            "personalized_interaction",
+            "item_hypernetwork",
+        ),
     ]
     assert len({_count(model) for model in variants}) == 1
     assert len({model.initialization_hash() for model in variants}) == 1
@@ -163,6 +168,10 @@ def test_module_gradients_are_isolated() -> None:
     assert model.state_completion.direct_control_decoder[0].weight.grad is None
     assert model.cognitive_match[0].weight.grad is not None
     assert model.control_cognitive_match[0].weight.grad is None
+    assert (
+        model.item_conditioned_hyper_diagnosis.item_to_weights.weight.grad
+        is None
+    )
     model = _model(
         "calibrated_history",
         "personalized_interaction",
@@ -195,6 +204,35 @@ def test_module_gradients_are_isolated() -> None:
     model(**_inputs()).probs.mean().backward()
     assert model.cognitive_match[0].weight.grad is None
     assert model.control_cognitive_match[0].weight.grad is not None
+    assert (
+        model.item_conditioned_hyper_diagnosis.item_to_weights.weight.grad
+        is None
+    )
+
+    model = _model(
+        "calibrated_history",
+        "personalized_interaction",
+        "item_hypernetwork",
+    )
+    model(**_inputs()).probs.mean().backward()
+    assert model.cognitive_match[0].weight.grad is None
+    assert model.control_cognitive_match[0].weight.grad is None
+    assert (
+        model.item_conditioned_hyper_diagnosis.item_to_weights.weight.grad
+        is not None
+    )
+    assert (
+        model.item_conditioned_hyper_diagnosis.cognitive_head[0].weight.grad
+        is not None
+    )
+    assert (
+        model.item_conditioned_hyper_diagnosis.guess_head[0].weight.grad
+        is not None
+    )
+    assert (
+        model.item_conditioned_hyper_diagnosis.slip_head[0].weight.grad
+        is not None
+    )
 
     model = _model("calibrated_history", "query_attentive_field")
     model(**_inputs()).probs.mean().backward()

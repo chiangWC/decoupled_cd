@@ -59,6 +59,8 @@ MOO target 只提升 +0.000783；XES target 反而下降 0.001070。动态扩池
 
 ## 当前候选：Item-Conditioned Low-Rank Hypernetwork Diagnosis
 
-借鉴条件 hypernetwork 对笛卡尔积输入的处理，由目标题表示生成低秩诊断权重，再作用于学生状态；模块独立输出 cognitive、guess、slip 和最终作答概率。Capacity control 是当前 target-conditioned MLP，Direct control 是 monotonic NCD。三路共用完整 Evidence/State、初始化、数据顺序和训练配方，活跃参数量差异不得超过 10%。
+借鉴 Sarafian、Keynan、Kraus 在 ICML 2021 提出的条件 hypernetwork 对笛卡尔积输入的处理，由目标题表示生成低秩诊断权重，再作用于学生状态；模块独立输出 cognitive、guess、slip 和最终作答概率。论文机制映射为 `target item -> conditional weights`、`student state -> conditional network input`，实现只依据论文描述和公式独立编写，不移植作者代码。来源：[Recomposing the Reinforcement Learning Building Blocks with Hypernetworks](https://proceedings.mlr.press/v139/sarafian21a.html)。
+
+Capacity control 是当前 target-conditioned MLP，Direct control 是 monotonic NCD。三路共用完整 Evidence/State、初始化、数据顺序和训练配方，活跃参数量差异不得超过 10%。第一屏固定 ASSIST17 与 MOOCRadar，不做候选专属调参；未达到模块幅度门即原样拒绝。
 
 最终门槛不变：同一架构至少三胜；两个模块各自在至少两个 Full 胜出数据集 target 提升不低于 0.005，其中一个不低于 0.01，并至少一个 student-clustered paired-bootstrap CI 下界大于 0。
