@@ -14,6 +14,9 @@ Usage:
     [--stage requirement_gate|full_factorial] \
     [--devices cuda:0,cuda:2,cuda:3] [--max-parallel 3] \
     [--expected-commit <sha>] [--gate-approved] [--execute]
+  bash scripts/run_factorized_requirement_factorial.sh \
+    --devices self_gpu0,self_gpu1 --max-parallel 9 \
+    --scheduler-self-test
 
 The default requirement_gate stage contains only eight w/o-Requirement jobs.
 The 14-job full_factorial stage requires an explicit --gate-approved after the
@@ -32,6 +35,7 @@ MAX_PARALLEL=1
 EXPECTED_COMMIT=""
 STAGE="requirement_gate"
 GATE_APPROVED=0
+SCHEDULER_SELF_TEST=0
 EXECUTE=0
 
 while [[ $# -gt 0 ]]; do
@@ -68,6 +72,10 @@ while [[ $# -gt 0 ]]; do
             GATE_APPROVED=1
             shift
             ;;
+        --scheduler-self-test)
+            SCHEDULER_SELF_TEST=1
+            shift
+            ;;
         --execute)
             EXECUTE=1
             shift
@@ -84,20 +92,37 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$DATA_ROOT" ]]; then
+if [[ "$SCHEDULER_SELF_TEST" -eq 0 && -z "$DATA_ROOT" ]]; then
     echo "--data-root or KNOFIELD_DATA_ROOT is required." >&2
     exit 2
 fi
-if [[ "$MAX_PARALLEL" -lt 1 ]]; then
+if [[ ! "$MAX_PARALLEL" =~ ^[0-9]+$ || "$MAX_PARALLEL" -lt 1 ]]; then
     echo "--max-parallel must be positive." >&2
     exit 2
 fi
 
-IFS=',' read -r -a DEVICE_LIST <<< "$DEVICES"
+IFS=',' read -r -a RAW_DEVICE_LIST <<< "$DEVICES"
+declare -A SEEN_DEVICES=()
+DEVICE_LIST=()
+for device in "${RAW_DEVICE_LIST[@]}"; do
+    if [[ -z "$device" ]]; then
+        echo "--devices cannot contain an empty device." >&2
+        exit 2
+    fi
+    if [[ -z "${SEEN_DEVICES[$device]+x}" ]]; then
+        SEEN_DEVICES["$device"]=1
+        DEVICE_LIST+=("$device")
+    fi
+done
 if [[ "${#DEVICE_LIST[@]}" -lt 1 ]]; then
     echo "--devices must contain at least one device." >&2
     exit 2
 fi
+REQUESTED_MAX_PARALLEL="$MAX_PARALLEL"
+if [[ "$MAX_PARALLEL" -gt "${#DEVICE_LIST[@]}" ]]; then
+    MAX_PARALLEL="${#DEVICE_LIST[@]}"
+fi
+DEVICE_SLOTS=("${DEVICE_LIST[@]:0:MAX_PARALLEL}")
 
 # Stage 1 asks the life-or-death Requirement question before paying for the
 # entire 2x2. Legacy target-ID-removing controls are intentionally not reused.
@@ -313,16 +338,153 @@ run_task() {
     } > "${stem}.runner.log" 2>&1
 }
 
+declare -A ACTIVE_DEVICE_BY_PID=()
+declare -A ACTIVE_LABEL_BY_PID=()
+AVAILABLE_DEVICES=()
+ACTIVE_COUNT=0
+SCHEDULER_FAILURES=0
+TASK_RUNNER_FUNCTION="run_task"
+SCHEDULER_TRACE=""
+
+wait_for_completed_slot() {
+    local completed_pid=""
+    local status=0
+    local device
+    local label
+    if wait -n -p completed_pid "${!ACTIVE_DEVICE_BY_PID[@]}"; then
+        status=0
+    else
+        status=$?
+    fi
+    if [[ -z "$completed_pid" ]]; then
+        echo "Scheduler could not identify the completed job." >&2
+        return 6
+    fi
+    if [[ -z "${ACTIVE_DEVICE_BY_PID[$completed_pid]+x}" ]]; then
+        echo "Scheduler could not identify the completed job." >&2
+        return 6
+    fi
+    device="${ACTIVE_DEVICE_BY_PID[$completed_pid]}"
+    label="${ACTIVE_LABEL_BY_PID[$completed_pid]}"
+    unset 'ACTIVE_DEVICE_BY_PID[$completed_pid]'
+    unset 'ACTIVE_LABEL_BY_PID[$completed_pid]'
+    ACTIVE_COUNT=$((ACTIVE_COUNT - 1))
+    AVAILABLE_DEVICES+=("$device")
+    if [[ "$status" -ne 0 ]]; then
+        echo "FAILED: $label on $device (status=$status)" >&2
+        SCHEDULER_FAILURES=$((SCHEDULER_FAILURES + 1))
+    fi
+}
+
+run_scheduled_tasks() {
+    local task
+    local device
+    local pid
+    ACTIVE_DEVICE_BY_PID=()
+    ACTIVE_LABEL_BY_PID=()
+    AVAILABLE_DEVICES=("${DEVICE_SLOTS[@]}")
+    ACTIVE_COUNT=0
+    SCHEDULER_FAILURES=0
+
+    for task in "${TASKS[@]}"; do
+        if [[ "$ACTIVE_COUNT" -ge "$MAX_PARALLEL" ]]; then
+            wait_for_completed_slot
+        fi
+        if [[ "${#AVAILABLE_DEVICES[@]}" -lt 1 ]]; then
+            echo "Scheduler has no free device slot." >&2
+            return 6
+        fi
+        device="${AVAILABLE_DEVICES[0]}"
+        AVAILABLE_DEVICES=("${AVAILABLE_DEVICES[@]:1}")
+        if [[ -n "$SCHEDULER_TRACE" ]]; then
+            printf '%s|%s\n' "$task" "$device" >> "$SCHEDULER_TRACE"
+        fi
+        "$TASK_RUNNER_FUNCTION" "$task" "$device" &
+        pid=$!
+        ACTIVE_DEVICE_BY_PID["$pid"]="$device"
+        ACTIVE_LABEL_BY_PID["$pid"]="$task"
+        ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
+    done
+
+    while [[ "$ACTIVE_COUNT" -gt 0 ]]; do
+        wait_for_completed_slot
+    done
+    if [[ "$SCHEDULER_FAILURES" -ne 0 ]]; then
+        echo "$SCHEDULER_FAILURES scheduled task(s) failed." >&2
+        return 5
+    fi
+}
+
+self_test_task() {
+    local task="$1"
+    local device="$2"
+    local lock_dir="$SELF_TEST_ROOT/locks/$device"
+    if ! mkdir "$lock_dir"; then
+        printf '%s|%s\n' "$task" "$device" >> "$SELF_TEST_ROOT/collisions"
+        return 9
+    fi
+    case "$task" in
+        first_short)
+            sleep 0.05
+            ;;
+        first_long)
+            sleep 0.30
+            ;;
+        *)
+            sleep 0.02
+            ;;
+    esac
+    rmdir "$lock_dir"
+}
+
+run_scheduler_self_test() {
+    local third_assignment
+    SELF_TEST_ROOT="$(mktemp -d)"
+    mkdir "$SELF_TEST_ROOT/locks"
+    SCHEDULER_TRACE="$SELF_TEST_ROOT/assignments"
+    TASK_RUNNER_FUNCTION="self_test_task"
+    TASKS=(
+        "first_short"
+        "first_long"
+        "follow_short"
+        "follow_final"
+    )
+    DEVICE_SLOTS=("self_gpu0" "self_gpu1")
+    MAX_PARALLEL=2
+    if ! run_scheduled_tasks; then
+        echo "scheduler_self_test=FAIL" >&2
+        return 1
+    fi
+    if [[ -e "$SELF_TEST_ROOT/collisions" ]]; then
+        echo "scheduler_self_test=FAIL collision_detected" >&2
+        return 1
+    fi
+    third_assignment="$(sed -n '3p' "$SCHEDULER_TRACE")"
+    if [[ "$third_assignment" != "follow_short|self_gpu0" ]]; then
+        echo "scheduler_self_test=FAIL actual=$third_assignment" >&2
+        return 1
+    fi
+    rm "$SCHEDULER_TRACE"
+    rmdir "$SELF_TEST_ROOT/locks"
+    rmdir "$SELF_TEST_ROOT"
+    echo "scheduler_self_test=PASS effective_parallel=2 reused=self_gpu0"
+}
+
+if [[ "$SCHEDULER_SELF_TEST" -eq 1 ]]; then
+    run_scheduler_self_test
+    exit 0
+fi
+
 CURRENT_BRANCH="$(git branch --show-current)"
 CURRENT_HEAD="$(git rev-parse HEAD)"
-printf 'stage=%s tasks=%d execute=%d max_parallel=%d branch=%s head=%s\n' \
-    "$STAGE" "${#TASKS[@]}" "$EXECUTE" "$MAX_PARALLEL" \
-    "$CURRENT_BRANCH" "$CURRENT_HEAD"
+printf 'stage=%s tasks=%d execute=%d requested_parallel=%d effective_parallel=%d branch=%s head=%s\n' \
+    "$STAGE" "${#TASKS[@]}" "$EXECUTE" "$REQUESTED_MAX_PARALLEL" \
+    "$MAX_PARALLEL" "$CURRENT_BRANCH" "$CURRENT_HEAD"
 
 if [[ "$EXECUTE" -eq 0 ]]; then
     for index in "${!TASKS[@]}"; do
         task="${TASKS[$index]}"
-        device="${DEVICE_LIST[$((index % ${#DEVICE_LIST[@]}))]}"
+        device="${DEVICE_SLOTS[$((index % ${#DEVICE_SLOTS[@]}))]}"
         IFS='|' read -r dataset split variant <<< "$task"
         build_train_command "$dataset" "$split" "$variant" "$device"
         printf '%02d\t%s\t%s\t%s\n' \
@@ -369,27 +531,7 @@ python scripts/audit_factorized_requirement_artifacts.py \
     --output "$OUTPUT_ROOT/locked_artifact_audit_${STAGE}.json" \
     > "$OUTPUT_ROOT/locked_artifact_audit_${STAGE}.stdout.log"
 
-pids=()
-labels=()
-failures=0
-for index in "${!TASKS[@]}"; do
-    while [[ "$(jobs -pr | wc -l)" -ge "$MAX_PARALLEL" ]]; do
-        sleep 1
-    done
-    task="${TASKS[$index]}"
-    device="${DEVICE_LIST[$((index % ${#DEVICE_LIST[@]}))]}"
-    run_task "$task" "$device" &
-    pids+=("$!")
-    labels+=("$task")
-done
-
-for index in "${!pids[@]}"; do
-    if ! wait "${pids[$index]}"; then
-        echo "FAILED: ${labels[$index]}" >&2
-        failures=$((failures + 1))
-    fi
-done
-if [[ "$failures" -ne 0 ]]; then
-    echo "$failures factorial task(s) failed." >&2
+TASK_RUNNER_FUNCTION="run_task"
+if ! run_scheduled_tasks; then
     exit 5
 fi
