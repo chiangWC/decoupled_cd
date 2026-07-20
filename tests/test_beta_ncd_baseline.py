@@ -88,6 +88,22 @@ def _canonical_frame(rows: list[dict[str, object]]) -> pd.DataFrame:
 
 
 class BetaNCDBaselineTest(unittest.TestCase):
+    def test_architecture_fingerprint_locks_paper_reductions(self) -> None:
+        payload = _tiny_model().config.architecture_payload()
+        self.assertEqual(payload["model"], "beta_ncd_paper_aligned_v2")
+        self.assertEqual(
+            payload["inner_response_reduction"],
+            "mc_mean_support_sum",
+        )
+        self.assertEqual(
+            payload["inner_kl_application"],
+            "once_per_full_support_step",
+        )
+        self.assertEqual(
+            payload["outer_response_reduction"],
+            "joint_query_logmean_no_length_normalization",
+        )
+
     def test_gaussian_kl_is_zero_only_for_equal_distributions(self) -> None:
         zeros = torch.zeros(3)
         self.assertAlmostEqual(
@@ -166,7 +182,11 @@ class BetaNCDBaselineTest(unittest.TestCase):
             model,
             "predictive_samples",
             wraps=model.predictive_samples,
-        ) as predictive:
+        ) as predictive, patch.object(
+            model,
+            "gaussian_kl",
+            wraps=model.gaussian_kl,
+        ) as gaussian_kl:
             model.adapt(
                 support_item_ids=item_ids,
                 support_labels=labels,
@@ -174,8 +194,152 @@ class BetaNCDBaselineTest(unittest.TestCase):
                 fixed_noise=True,
             )
         self.assertEqual(predictive.call_count, 3)
+        self.assertEqual(gaussian_kl.call_count, 3)
         for call in predictive.call_args_list:
             torch.testing.assert_close(call.kwargs["item_ids"], item_ids)
+
+    def test_local_loss_is_mc_mean_support_sum_plus_one_kl(self) -> None:
+        model = _tiny_model()
+        posterior = AdaptedPosterior(
+            mean=model.prior_mean + torch.tensor([0.2, -0.1, 0.3]),
+            log_std=model.prior_log_std + torch.tensor([0.1, 0.0, -0.2]),
+        )
+        samples = torch.tensor(
+            [
+                [0.8, 0.25, 0.6],
+                [0.6, 0.5, 0.4],
+                [0.4, 0.75, 0.7],
+                [0.2, 0.1, 0.3],
+            ]
+        )
+        labels = torch.tensor([1.0, 0.0, 1.0])
+        expanded_labels = labels.unsqueeze(0).expand_as(samples)
+        response_nll = torch.nn.functional.binary_cross_entropy(
+            samples,
+            expanded_labels,
+            reduction="none",
+        ).sum(dim=1).mean()
+        expected = response_nll + model.config.kl_weight * model.gaussian_kl(
+            posterior.mean,
+            posterior.log_std,
+            model.prior_mean,
+            model.prior_log_std,
+        )
+        with patch.object(model, "predictive_samples", return_value=samples):
+            actual = model.local_variational_loss(
+                posterior=posterior,
+                support_item_ids=torch.tensor([0, 1, 2]),
+                support_labels=labels,
+                noise=model.fixed_inner_noise[0],
+            )
+        torch.testing.assert_close(actual, expected)
+
+        support_mean = torch.nn.functional.binary_cross_entropy(
+            samples,
+            expanded_labels,
+            reduction="mean",
+        )
+        self.assertNotAlmostEqual(
+            float(response_nll),
+            float(support_mean),
+            places=6,
+        )
+
+    def test_repeated_consistent_evidence_accumulates_linearly_at_prior(self) -> None:
+        model = _tiny_model()
+        posterior = AdaptedPosterior(
+            mean=model.prior_mean,
+            log_std=model.prior_log_std,
+        )
+        one_loss = model.local_variational_loss(
+            posterior=posterior,
+            support_item_ids=torch.tensor([0]),
+            support_labels=torch.tensor([1.0]),
+            noise=model.fixed_inner_noise[0],
+        )
+        one_grad = torch.autograd.grad(
+            one_loss,
+            model.prior_mean,
+            retain_graph=True,
+        )[0]
+        repeat_count = 5
+        repeated_loss = model.local_variational_loss(
+            posterior=posterior,
+            support_item_ids=torch.tensor([0] * repeat_count),
+            support_labels=torch.tensor([1.0] * repeat_count),
+            noise=model.fixed_inner_noise[0],
+        )
+        repeated_grad = torch.autograd.grad(
+            repeated_loss,
+            model.prior_mean,
+        )[0]
+        torch.testing.assert_close(
+            repeated_grad,
+            repeat_count * one_grad,
+            atol=1e-7,
+            rtol=1e-5,
+        )
+
+    def test_flipped_support_changes_posterior_and_prediction_materially(self) -> None:
+        model = _tiny_model()
+        with torch.no_grad():
+            model.prior_mean.zero_()
+            model.prior_log_std.zero_()
+            model.inner_lrs.fill_(0.1)
+            model.fixed_inner_noise.zero_()
+            model.fixed_query_noise.zero_()
+            model.knowledge_difficulty.weight.zero_()
+            model.knowledge_difficulty.weight[0, 0] = -2.0
+            model.item_difficulty.weight.zero_()
+            for layer in model.interaction:
+                if isinstance(layer, torch.nn.Linear):
+                    layer.weight.zero_()
+                    layer.bias.zero_()
+            model.interaction[0].weight[0, 0] = 1.0
+            model.interaction[3].weight[0, 0] = 1.0
+            model.interaction[6].weight[0, 0] = 1.0
+
+        item_ids = torch.tensor([0])
+        positive = model.adapt(
+            support_item_ids=item_ids,
+            support_labels=torch.tensor([1.0]),
+            create_graph=False,
+            fixed_noise=True,
+        )
+        negative = model.adapt(
+            support_item_ids=item_ids,
+            support_labels=torch.tensor([0.0]),
+            create_graph=False,
+            fixed_noise=True,
+        )
+        prior = AdaptedPosterior(
+            mean=model.prior_mean.detach(),
+            log_std=model.prior_log_std.detach(),
+        )
+        with torch.no_grad():
+            positive_prob = model.predict_query(
+                posterior=positive,
+                query_item_ids=item_ids,
+            )
+            negative_prob = model.predict_query(
+                posterior=negative,
+                query_item_ids=item_ids,
+            )
+            prior_prob = model.predict_query(
+                posterior=prior,
+                query_item_ids=item_ids,
+            )
+
+        self.assertGreater(
+            float(positive.mean[0] - negative.mean[0]),
+            0.01,
+        )
+        self.assertGreater(
+            float(positive_prob - negative_prob),
+            5e-4,
+        )
+        self.assertGreater(float(positive_prob - prior_prob), 1e-4)
+        self.assertGreater(float(prior_prob - negative_prob), 1e-4)
 
     def test_outer_loss_is_joint_query_log_mean_likelihood(self) -> None:
         model = _tiny_model()
@@ -189,7 +353,7 @@ class BetaNCDBaselineTest(unittest.TestCase):
         sample_joint_likelihood = torch.tensor(
             [0.8 * 0.75, 0.6 * 0.5, 0.4 * 0.25, 0.2 * 0.9]
         )
-        expected = -torch.log(sample_joint_likelihood.mean()) / 2.0
+        expected = -torch.log(sample_joint_likelihood.mean())
         with patch.object(
             model,
             "predictive_samples",
@@ -284,6 +448,22 @@ class BetaNCDBaselineTest(unittest.TestCase):
         torch.testing.assert_close(posterior.mean, permuted.mean, atol=1e-7, rtol=1e-6)
         torch.testing.assert_close(
             posterior.log_std, permuted.log_std, atol=1e-7, rtol=1e-6
+        )
+        query_items = torch.tensor([0, 3, 1, 2])
+        query_permutation = torch.tensor([2, 0, 3, 1])
+        predictions = model.predict_query(
+            posterior=posterior,
+            query_item_ids=query_items,
+        )
+        permuted_predictions = model.predict_query(
+            posterior=posterior,
+            query_item_ids=query_items[query_permutation],
+        )
+        torch.testing.assert_close(
+            predictions[query_permutation],
+            permuted_predictions,
+            atol=0.0,
+            rtol=0.0,
         )
 
     def test_heldout_id_and_other_student_do_not_affect_prediction(self) -> None:

@@ -28,9 +28,11 @@ The following mechanics are retained from the pinned author implementation:
 - NCD weights use Xavier-normal initialization.
 - The shared diagonal-Gaussian mean uses a standard-normal initialization and
   its log standard deviation uses `Uniform(-4, -3)`.
-- A local posterior begins as a clone of that shared prior. Inner objectives
-  average Monte Carlo response BCE and add diagonal-Gaussian KL; the three
-  step-specific inner learning rates are learnable and initialized to 0.1.
+- A local posterior begins as a clone of that shared prior. Following Eq. (5),
+  each inner objective averages across Monte Carlo samples after summing the
+  response negative log-likelihood across the complete support set, then adds
+  diagonal-Gaussian KL exactly once. The three step-specific inner learning
+  rates are learnable and initialized to 0.1.
 
 The following are explicit protocol or paper-alignment revisions and must be
 disclosed with results:
@@ -40,11 +42,12 @@ disclosed with results:
 2. Validation students are disjoint from optimizer-train students. Their local
    posterior is initialized from the shared prior and adapted only on their
    support responses; no student-ID parameter is learned or checkpointed.
-3. Exactly three inner updates each consume the complete support set rather
-   than multiplying the update count by the number of support responses.
+3. Exactly three inner updates each consume the complete support set. The
+   response likelihood is a product over support responses, so its negative
+   log-likelihood is a sum, not a mean over the support length.
 4. The outer objective consumes only the disjoint query set and implements the
-   stable negative log mean predictive likelihood from the paper rather than
-   averaging per-sample BCE. Higher-order gradients pass through all inner
+   stable joint negative log mean predictive likelihood from Eq. (3), with no
+   division by query length. Higher-order gradients pass through all inner
    updates.
 5. The fixed recipe uses four Monte Carlo samples for both inner adaptation and
    query prediction, KL weight `1e-4`, task batch 8, meta learning rate
@@ -54,6 +57,33 @@ disclosed with results:
    and checkpoints and row-level predictions are content-hashed.
 8. All six manifest files are hash- and row-verified, but this validation-only
    entry point never parses either test interaction file.
+
+## Reduction and update contract
+
+The paper defines the response-set likelihood as a product over responses.
+Consequently, the local loss used by this adaptation is
+
+```text
+mean_over_MC(sum_over_support(response NLL)) + eta * KL(posterior || prior)
+```
+
+with one KL term per complete-support update and three updates in total. The
+meta-loss is the negative logarithm of the Monte Carlo mean of the joint query
+likelihood; it is not normalized by the number of query responses.
+
+This follows the equations and Algorithms 1--2 rather than reproducing one
+implementation detail in the pinned PyAT trainer. The pinned configuration
+sets `inner_sgd: true`, and its ABML implementation performs a singleton
+update for every support response inside each of the three inner epochs. That
+behavior is order-sensitive, applies KL once per singleton update, and is not
+equivalent to the paper's three complete-support updates. It may be studied as
+an author-code behavior check, but must not be reported as this paper-aligned
+adaptation.
+
+The architecture fingerprint records the inner response reduction, KL
+application frequency, and outer response reduction. Checkpoints produced by
+the earlier support-mean implementation are incompatible performance
+artifacts and must not be reused as results for this version.
 
 Accordingly, results must be named **BETA-CD (NCD backbone, paper-aligned
 adaptation from the MIT author implementation at the pinned commit)**. BETA-CD

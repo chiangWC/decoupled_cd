@@ -50,9 +50,12 @@ class BetaNCDConfig:
         payload.pop("num_items")
         payload.pop("num_concepts")
         return {
-            "model": "beta_ncd_paper_aligned_v1",
+            "model": "beta_ncd_paper_aligned_v2",
             "student_parameterization": "support_adapted_diagonal_gaussian",
             "outer_objective": "query_log_mean_predictive_likelihood",
+            "inner_response_reduction": "mc_mean_support_sum",
+            "inner_kl_application": "once_per_full_support_step",
+            "outer_response_reduction": "joint_query_logmean_no_length_normalization",
             "q_semantics": "union",
             "ncd_hidden_activation": "relu",
             "ncd_item_scalar": "sigmoid_without_x10",
@@ -244,6 +247,37 @@ class BetaNCDBaseline(nn.Module):
             dim=0,
         )
 
+    def local_variational_loss(
+        self,
+        *,
+        posterior: AdaptedPosterior,
+        support_item_ids: torch.Tensor,
+        support_labels: torch.Tensor,
+        noise: torch.Tensor,
+    ) -> torch.Tensor:
+        """Paper Eq. (5): MC-mean joint support NLL plus one KL term."""
+
+        sample_probs = self.predictive_samples(
+            posterior=posterior,
+            item_ids=support_item_ids,
+            noise=noise,
+        )
+        expanded_labels = support_labels.to(sample_probs.dtype).unsqueeze(0).expand_as(
+            sample_probs
+        )
+        response_nll = F.binary_cross_entropy(
+            sample_probs,
+            expanded_labels,
+            reduction="none",
+        ).sum(dim=1).mean()
+        kl = self.gaussian_kl(
+            posterior.mean,
+            posterior.log_std,
+            self.prior_mean,
+            self.prior_log_std,
+        )
+        return response_nll + self.config.kl_weight * kl
+
     def adapt(
         self,
         *,
@@ -274,24 +308,12 @@ class BetaNCDBaseline(nn.Module):
                     dtype=self.prior_mean.dtype,
                 )
             posterior = AdaptedPosterior(mean=mean, log_std=log_std)
-            sample_probs = self.predictive_samples(
+            inner_objective = self.local_variational_loss(
                 posterior=posterior,
-                item_ids=support_item_ids,
+                support_item_ids=support_item_ids,
+                support_labels=support_labels,
                 noise=noise,
             )
-            expanded_labels = support_labels.to(sample_probs.dtype).unsqueeze(0).expand_as(
-                sample_probs
-            )
-            response_loss = F.binary_cross_entropy(
-                sample_probs, expanded_labels, reduction="mean"
-            )
-            kl = self.gaussian_kl(
-                mean,
-                log_std,
-                self.prior_mean,
-                self.prior_log_std,
-            )
-            inner_objective = response_loss + self.config.kl_weight * kl
             mean_grad, log_std_grad = torch.autograd.grad(
                 inner_objective,
                 (mean, log_std),
@@ -344,7 +366,7 @@ class BetaNCDBaseline(nn.Module):
         log_mean_likelihood = torch.logsumexp(
             sample_log_likelihood, dim=0
         ) - math.log(self.config.query_mc_samples)
-        return -log_mean_likelihood / query_item_ids.numel()
+        return -log_mean_likelihood
 
     def predict_query(
         self,
