@@ -133,15 +133,26 @@ def load_model(
         model.evaluation_student_batch_size = int(
             summary.get("student_batch_size") or 32
         )
+        target_requirement_mode = str(
+            summary.get(
+                "target_requirement_mode",
+                "exercise_specific",
+            )
+        )
+        compatible_missing_prefixes = [
+            "observed_anchor_state_field.",
+            "item_conditioned_hyper_diagnosis.",
+            "outcome_evidence_refinement.",
+        ]
+        if target_requirement_mode != "factorized_item_control":
+            compatible_missing_prefixes.append(
+                "target_requirement.factorized_"
+            )
         return _finalize_loaded_model(
             model,
             checkpoint_path=checkpoint_path,
             device=device,
-            allowed_missing_prefixes=(
-                "observed_anchor_state_field.",
-                "item_conditioned_hyper_diagnosis.",
-                "outcome_evidence_refinement.",
-            ),
+            allowed_missing_prefixes=tuple(compatible_missing_prefixes),
         )
     if model_variant == "v2":
         model = DecoupledCDMV2(

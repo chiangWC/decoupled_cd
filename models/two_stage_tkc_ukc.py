@@ -792,16 +792,43 @@ class ExerciseSpecificRequirementQuery(nn.Module):
     """Represent what a target exercise requires beyond its Q concepts.
 
     Full preserves the target exercise identity as a second view beside the
-    Q-conditioned concept requirement.  Controls replace that view with a
-    concept-conditioned population prototype or duplicate the Q-only view.
-    No target label or student response enters this module.
+    Q-conditioned concept requirement and jointly projects both views.  The
+    factorized-item control receives the exact same Q and target-item
+    information, but independently transforms the two views before a fixed
+    additive merge.  It retains target identity without retaining the claimed
+    joint nonlinear Q-item composition.
+
+    Legacy controls that remove target identity remain available only for
+    historical result loading.  No target label or student response enters
+    any path.
     """
 
     VALID_MODES = {
         "exercise_specific",
+        "factorized_item_control",
         "concept_prototype_control",
         "q_only_control",
     }
+
+    def __init__(self, *, dim: int) -> None:
+        super().__init__()
+        if dim < 1:
+            raise ValueError("dim must be positive.")
+        # This control was added after the frozen Full path. Restoring the RNG
+        # state guarantees that dormant control parameters cannot perturb Full
+        # or any previously validated common parameter initialization.
+        full_rng_state = torch.random.get_rng_state()
+        self.factorized_q_projection = nn.Linear(dim, dim, bias=True)
+        self.factorized_item_projection = nn.Linear(
+            dim,
+            dim,
+            bias=False,
+        )
+        self.factorized_norm = nn.LayerNorm(dim)
+        torch.random.set_rng_state(full_rng_state)
+
+    def factorized_parameter_count(self) -> int:
+        return sum(parameter.numel() for parameter in self.parameters())
 
     def forward(
         self,
@@ -825,6 +852,11 @@ class ExerciseSpecificRequirementQuery(nn.Module):
                 0,
                 target_exercise_ids,
             )
+        elif mode == "factorized_item_control":
+            item_view = exercise_nodes.index_select(
+                0,
+                target_exercise_ids,
+            )
         elif mode == "concept_prototype_control":
             concept_item_count = q_binary.sum(dim=0).clamp_min(1.0)
             concept_item_prototype = (
@@ -833,12 +865,29 @@ class ExerciseSpecificRequirementQuery(nn.Module):
             item_view = q_vectors @ concept_item_prototype / q_count
         else:
             item_view = q_concept
-        q_repr = projection(torch.cat([q_concept, item_view], dim=-1))
+        if mode == "factorized_item_control":
+            q_factor = F.relu(self.factorized_q_projection(q_concept))
+            item_factor = F.relu(
+                self.factorized_item_projection(item_view)
+            )
+            q_repr = self.factorized_norm(
+                (q_factor + item_factor) / math.sqrt(2.0)
+            )
+        else:
+            q_factor = q_concept
+            item_factor = item_view
+            q_repr = projection(torch.cat([q_concept, item_view], dim=-1))
         return TargetRequirementOutput(
             q_vectors=q_vectors,
             q_count=q_count,
             q_repr=q_repr,
             diagnostics={
+                "target_requirement_q_view_norm": q_concept.norm(dim=-1),
+                "target_requirement_item_view_norm": item_view.norm(dim=-1),
+                "target_requirement_q_factor_norm": q_factor.norm(dim=-1),
+                "target_requirement_item_factor_norm": (
+                    item_factor.norm(dim=-1)
+                ),
                 "target_requirement_view_distance": (
                     q_concept - item_view
                 ).norm(dim=-1),
@@ -1166,7 +1215,9 @@ class TwoStageTKCUKCCDM(nn.Module):
             nn.ReLU(),
             nn.LayerNorm(concept_dim),
         )
-        self.target_requirement = ExerciseSpecificRequirementQuery()
+        self.target_requirement = ExerciseSpecificRequirementQuery(
+            dim=concept_dim
+        )
         self.cognitive_match = nn.Sequential(
             nn.Linear(concept_dim * 4, concept_dim),
             nn.ReLU(),
@@ -1250,6 +1301,33 @@ class TwoStageTKCUKCCDM(nn.Module):
             json.dumps(payload, sort_keys=True).encode("utf-8")
         ).hexdigest()[:16]
 
+    @property
+    def ablation_variant_fingerprint(self) -> str:
+        if (
+            self.semantic_node_mode == "bidirectional_q"
+            and self.evidence_mode == "calibrated_history"
+            and self.evidence_refinement_mode == "identity_passthrough"
+            and self.target_requirement_mode == "exercise_specific"
+            and self.concept_prior_mode == "population_q"
+            and self.completion_mode == "personalized_interaction"
+            and self.diagnosis_mode == "target_conditioned"
+        ):
+            return self.architecture_fingerprint
+        payload = {
+            "base_architecture": self.architecture_fingerprint,
+            "semantic_node_mode": self.semantic_node_mode,
+            "evidence_mode": self.evidence_mode,
+            "evidence_refinement_mode": self.evidence_refinement_mode,
+            "target_requirement_mode": self.target_requirement_mode,
+            "concept_prior_mode": self.concept_prior_mode,
+            "completion_mode": self.completion_mode,
+            "diagnosis_mode": self.diagnosis_mode,
+            "factorized_control_version": 1,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+
     def initialization_hash(self) -> str:
         digest = hashlib.sha256()
         for name, value in sorted(self.state_dict().items()):
@@ -1289,6 +1367,9 @@ class TwoStageTKCUKCCDM(nn.Module):
         target_requirement_capacity = sum(
             parameter.numel() for parameter in self.q_projection.parameters()
         )
+        factorized_item_capacity = (
+            self.target_requirement.factorized_parameter_count()
+        )
         return {
             "semantic_node_alignment": {
                 "bidirectional_q": shared_semantic_capacity,
@@ -1303,6 +1384,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             ),
             "target_requirement": {
                 "exercise_specific": target_requirement_capacity,
+                "factorized_item_control": factorized_item_capacity,
                 "concept_prototype_control": target_requirement_capacity,
                 "q_only_control": target_requirement_capacity,
             },
@@ -1426,6 +1508,9 @@ class TwoStageTKCUKCCDM(nn.Module):
             [
                 q_state,
                 q_repr,
+                # Shared item-conditioned interaction/discrimination-like
+                # channel. There is no explicit scalar discrimination
+                # parameter in this architecture.
                 q_state * q_repr,
                 torch.abs(q_state - q_repr),
             ],
@@ -1515,6 +1600,9 @@ class TwoStageTKCUKCCDM(nn.Module):
                 **requirement_output.diagnostics,
                 **prior_output.diagnostics,
                 **completion_output.diagnostics,
+                "diagnosis_item_conditioned_interaction_norm": (
+                    (q_state * q_repr).norm(dim=-1)
+                ),
             },
             architecture_fingerprint=self.architecture_fingerprint,
         )

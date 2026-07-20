@@ -1,0 +1,508 @@
+{
+  "schema_version": 1,
+  "purpose": "factorized_requirement_validation_artifact_lock",
+  "base_architecture_fingerprint": "099906acdba8c3b4",
+  "test_artifacts_in_scope": false,
+  "entries": {
+    "assist17_standard_full": {
+      "dataset": "assist17",
+      "split": "standard",
+      "role": "full",
+      "summary": {
+        "path": "final_standard_v9/a17.json",
+        "sha256": "4167e9c6a03a5a154ad0bc24b5fa47a022b8458024607866044923b7b966d6ac"
+      },
+      "checkpoint": {
+        "path": "final_standard_v9/a17_best.pt",
+        "sha256": "2a679bea45a72289552e3086ec861a19899395f1e33a8f8be04aca0ae03cf546"
+      },
+      "predictions": {
+        "path": "final_standard_v9/a17_predictions.csv",
+        "sha256": "c74b8718dddbf76a18d051127834719c0a929c6ce6597d7a403bc261be225ab7"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 80,
+        "student_batch_size": 128,
+        "learning_rate": 0.002,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_history",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "c42ddeff9605896395b6e413b0583a0a71ac31f0895faecd7457cfac483ad899"
+        },
+        "valid_interactions": {
+          "sha256": "3065f9edbd33609a5e00e80503dc55e696d721497e4350805fb8897a667e8780"
+        },
+        "q_matrix": {
+          "sha256": "23a59ec57c3b454d2d3fece3760aa91ec65a297e357766265466591b5bb0f9e3"
+        }
+      }
+    },
+    "assist17_holdout_full": {
+      "dataset": "assist17",
+      "split": "holdout",
+      "role": "full",
+      "summary": {
+        "path": "target_screen_v9/a17_full.json",
+        "sha256": "0a5257b3c751e9b04b4107f1349fb5261236980f8e4168d5e22b00be823b8616"
+      },
+      "checkpoint": {
+        "path": "target_screen_v9/a17_full_best.pt",
+        "sha256": "174d0099c955ceab108bcc515a891ca50232bc966f3774cbc5b58e55cf0269b1"
+      },
+      "predictions": {
+        "path": "target_screen_v9/a17_full_predictions.csv",
+        "sha256": "f02f8401e3163e419b1d023e826fcab557f05a03fc65cf29a5dfa14159a922d5"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 80,
+        "student_batch_size": 128,
+        "learning_rate": 0.002,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_history",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "e3c281f01d2fedaafa289c6d950c6ae64c48e2d2d3b2f6a69bd28e88a3ef236b"
+        },
+        "valid_interactions": {
+          "sha256": "07b74bcfcd2c28693469d9eedddbe8b8d0fcc89d4659b079d75198886267fe70"
+        },
+        "q_matrix": {
+          "sha256": "23a59ec57c3b454d2d3fece3760aa91ec65a297e357766265466591b5bb0f9e3"
+        }
+      }
+    },
+    "moocradar_standard_full": {
+      "dataset": "moocradar",
+      "split": "standard",
+      "role": "full",
+      "summary": {
+        "path": "final_standard_v9/moo.json",
+        "sha256": "b44bb8bf2dc8841df432a1af11522ce6004482b7f1526fb999536a54bb7899bd"
+      },
+      "checkpoint": {
+        "path": "final_standard_v9/moo_best.pt",
+        "sha256": "94ceff37c5e9e9dc06260a62a88c4c6e6914d56e28c721ed04395cf8eaa0b831"
+      },
+      "predictions": {
+        "path": "final_standard_v9/moo_predictions.csv",
+        "sha256": "11acb836e86b4b439d92299b756b7c004f92c743ff338a7347cdac3e7136e83a"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 40,
+        "student_batch_size": 64,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_history",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "43826e307ea3307bb9f39c88dcec84dcf07e79ac87a67729f5221918d0619998"
+        },
+        "valid_interactions": {
+          "sha256": "1a180c21af134a1a88b88038d2b3e9a986f92d1e1ba51cede3f535bc02dceae9"
+        },
+        "q_matrix": {
+          "sha256": "b2526274cf733d0170028037b727c682eb81366804dc0f72703699fb90aaf8af"
+        }
+      }
+    },
+    "moocradar_holdout_full": {
+      "dataset": "moocradar",
+      "split": "holdout",
+      "role": "full",
+      "summary": {
+        "path": "final_holdout_v9/moo.json",
+        "sha256": "4334f88ae9f0fa8f7edf58a24e589889c989cc831adbbd8d25b26d8d80d96ddf"
+      },
+      "checkpoint": {
+        "path": "final_holdout_v9/moo_best.pt",
+        "sha256": "b79e6e0e61a7bfd4a616f0d599783aa2bdd7dc4a0b3a16608b9787e430aeca3a"
+      },
+      "predictions": {
+        "path": "final_holdout_v9/moo_predictions.csv",
+        "sha256": "62b0f456bc35c89449f52a52ea7e613d1b35039bc0d33a688707388ca539bd13"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 40,
+        "student_batch_size": 64,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_history",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "a60037cffe8378f63e38a0b96dc79bc0ec8396abc2af620a513a11f1d5882f89"
+        },
+        "valid_interactions": {
+          "sha256": "53739593a1b0ca3ee33da267409acd2d26d35b7663b780a58b96b65bb915e60b"
+        },
+        "q_matrix": {
+          "sha256": "b2526274cf733d0170028037b727c682eb81366804dc0f72703699fb90aaf8af"
+        }
+      }
+    },
+    "xes3g5m_standard_full": {
+      "dataset": "xes3g5m",
+      "split": "standard",
+      "role": "full",
+      "summary": {
+        "path": "final_standard_v9/xes.json",
+        "sha256": "32cdb37ca30260a568fa8ff4f259938ac04cc120ad217bcdd1ee979f9a268140"
+      },
+      "checkpoint": {
+        "path": "final_standard_v9/xes_best.pt",
+        "sha256": "b74a34d28806665957d7373aa605668aa310d1b93699dcc8dc585e60bd4c0eec"
+      },
+      "predictions": {
+        "path": "final_standard_v9/xes_predictions.csv",
+        "sha256": "ca6d8e123d6023c32e5043ef86ff2b0b355597bbe80547c0cd3740f6ec49c68e"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 40,
+        "student_batch_size": 64,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_history",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "27d0f8715176f83040048498f345ca1ca3af9a1dbaef9ea3083d1821f6621740"
+        },
+        "valid_interactions": {
+          "sha256": "59b1a462dd1853a20941164ca48661920d918972ff1a5eabde54d6e1701ceb2f"
+        },
+        "q_matrix": {
+          "sha256": "13965c21cc2728281df235877805fcbf137bf851a4f9e232de6ec14620546df7"
+        }
+      }
+    },
+    "xes3g5m_holdout_full": {
+      "dataset": "xes3g5m",
+      "split": "holdout",
+      "role": "full",
+      "summary": {
+        "path": "target_screen_v9/xes_full.json",
+        "sha256": "a66497fc2be09229576bdfce050ac9ecc74a9618ab232df23500e9848ff1628c"
+      },
+      "checkpoint": {
+        "path": "target_screen_v9/xes_full_best.pt",
+        "sha256": "63dcb84f28f71d96ec6d7cf9e6adbdfffb07abd0aefe10740c61af0640ef709c"
+      },
+      "predictions": {
+        "path": "target_screen_v9/xes_full_predictions.csv",
+        "sha256": "22104f5cc43171b3ef9553edecaaeb9e04abac008f405a80491182b381c958ed"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 40,
+        "student_batch_size": 64,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_history",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "6016884a69ba395650313668a6d3d511f5778160bfa94335e7ca2e6c3d7f0c1f"
+        },
+        "valid_interactions": {
+          "sha256": "104b637649d3a8c1d82d4ddd5171b2cbbd7e61754e8c480c0405fb2f3514357f"
+        },
+        "q_matrix": {
+          "sha256": "13965c21cc2728281df235877805fcbf137bf851a4f9e232de6ec14620546df7"
+        }
+      }
+    },
+    "junyi_standard_full": {
+      "dataset": "junyi",
+      "split": "standard",
+      "role": "full",
+      "summary": {
+        "path": "final_standard_v9/junyi.json",
+        "sha256": "a7e4e5a3134cdd8ff56efb422a2beaf2639908c56d0614f17228e8669635eeda"
+      },
+      "checkpoint": {
+        "path": "final_standard_v9/junyi_best.pt",
+        "sha256": "08a005ce81c58feb3b070ecb047168fe3ff451d09a35b52d0f3c9155c6855569"
+      },
+      "predictions": {
+        "path": "final_standard_v9/junyi_predictions.csv",
+        "sha256": "66ab51da77ecbc2ef6e0d94bf458a2dfd18bd87052bcabd5c3c5c43acd4dccfa"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 40,
+        "student_batch_size": 128,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_history",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "57db7779a19f2daf719279115b57c6a59d8df9c4a1b8f85cc7fc0de42b25504c"
+        },
+        "valid_interactions": {
+          "sha256": "b46aec516bb6575338abff80f709241a7dbd5e88f635ae07d164ec243ea45ca2"
+        },
+        "q_matrix": {
+          "sha256": "64b1039bf9a022069b1df5248f5335081427056aebac7902d8ce5b4f5bcfc13e"
+        }
+      }
+    },
+    "junyi_holdout_full": {
+      "dataset": "junyi",
+      "split": "holdout",
+      "role": "full",
+      "summary": {
+        "path": "evidence_final_v9/junyi_full.json",
+        "sha256": "a4a72243269c61ef9ae54f16723ba1930db081805afba0df3e2439eba049d74f"
+      },
+      "checkpoint": {
+        "path": "evidence_final_v9/junyi_full_best.pt",
+        "sha256": "0b18b771bc8f2fc51a28caf08630ac9fcc0929f87e86b590cbf9522713462dbf"
+      },
+      "predictions": {
+        "path": "evidence_final_v9/junyi_full_predictions.csv",
+        "sha256": "62b53e7ad0980e6cb694baf2c273f3cd8cf6d5a39c125798790933f7368f519b"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 40,
+        "student_batch_size": 128,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_history",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "85eeac0b393d01debf43afb922940cdd3efca167b30a0cb8fda8c1eb37d82500"
+        },
+        "valid_interactions": {
+          "sha256": "b7893f25c7f506dbb39bbed282e494ff5dd4f4327f7e5a52c11efef65e3cb4f5"
+        },
+        "q_matrix": {
+          "sha256": "64b1039bf9a022069b1df5248f5335081427056aebac7902d8ce5b4f5bcfc13e"
+        }
+      }
+    },
+    "assist17_holdout_wo_history": {
+      "dataset": "assist17",
+      "split": "holdout",
+      "role": "wo_history",
+      "summary": {
+        "path": "evidence_final_v9/a17_partial.json",
+        "sha256": "afd6d082625c238c5a571420fd68c72a9a6caa954222494304052c6e4bed2dcb"
+      },
+      "checkpoint": {
+        "path": "evidence_final_v9/a17_partial_best.pt",
+        "sha256": "74ab92fa1c31c043957e134bc7c845c43bc43d9e1effba68a5df941836f1487f"
+      },
+      "predictions": {
+        "path": "evidence_final_v9/a17_partial_predictions.csv",
+        "sha256": "44138fe0d02deec25b62dfda99e0066ca9d2cf0453bc910248d70fe39b0fe308"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 80,
+        "student_batch_size": 128,
+        "learning_rate": 0.002,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_summary_control",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "e3c281f01d2fedaafa289c6d950c6ae64c48e2d2d3b2f6a69bd28e88a3ef236b"
+        },
+        "valid_interactions": {
+          "sha256": "07b74bcfcd2c28693469d9eedddbe8b8d0fcc89d4659b079d75198886267fe70"
+        },
+        "q_matrix": {
+          "sha256": "23a59ec57c3b454d2d3fece3760aa91ec65a297e357766265466591b5bb0f9e3"
+        }
+      }
+    },
+    "junyi_holdout_wo_history": {
+      "dataset": "junyi",
+      "split": "holdout",
+      "role": "wo_history",
+      "summary": {
+        "path": "evidence_final_v9/junyi_partial.json",
+        "sha256": "588bfc1448e7d748bc02263e14e6f3bcc41906d9a333fe2318ee704ac9360a12"
+      },
+      "checkpoint": {
+        "path": "evidence_final_v9/junyi_partial_best.pt",
+        "sha256": "53367dd3f7c9249fefa31fcc82108be01e0a4d877f6b24818b5bf80cfabfd948"
+      },
+      "predictions": {
+        "path": "evidence_final_v9/junyi_partial_predictions.csv",
+        "sha256": "19d96de407ddda8afc853423270703ff86631fdda96a8fa2f9161cac896593e1"
+      },
+      "recipe": {
+        "evaluation_stage": "validation",
+        "seed": 42,
+        "concept_dim": 64,
+        "epochs": 40,
+        "student_batch_size": 128,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0,
+        "training_mode": "student_recompute_minibatch",
+        "checkpoint_selection_metric": "auc",
+        "checkpoint_selection_start_epoch": 1,
+        "checkpoint_selection_window": 1,
+        "semantic_node_mode": "bidirectional_q",
+        "evidence_representation_mode": "calibrated_summary_control",
+        "evidence_refinement_mode": "identity_passthrough",
+        "target_requirement_mode": "exercise_specific",
+        "concept_prior_mode": "population_q",
+        "state_completion_mode": "personalized_interaction",
+        "diagnosis_mode": "target_conditioned",
+        "completion_evidence_cap": 20.0,
+        "architecture_fingerprint": "099906acdba8c3b4"
+      },
+      "data": {
+        "train_interactions": {
+          "sha256": "85eeac0b393d01debf43afb922940cdd3efca167b30a0cb8fda8c1eb37d82500"
+        },
+        "valid_interactions": {
+          "sha256": "b7893f25c7f506dbb39bbed282e494ff5dd4f4327f7e5a52c11efef65e3cb4f5"
+        },
+        "q_matrix": {
+          "sha256": "64b1039bf9a022069b1df5248f5335081427056aebac7902d8ce5b4f5bcfc13e"
+        }
+      }
+    }
+  }
+}

@@ -102,13 +102,17 @@ def parse_args() -> argparse.Namespace:
         "--target-requirement-mode",
         choices=[
             "exercise_specific",
+            "factorized_item_control",
             "concept_prototype_control",
             "q_only_control",
         ],
         default="exercise_specific",
         help=(
-            "Exercise-specific target requirement query and controls that "
-            "remove target identity."
+            "Exercise-specific target requirement query. "
+            "factorized_item_control preserves exact target-item and Q "
+            "information with matched capacity, but replaces joint nonlinear "
+            "Q-item composition by independent item/Q factors. Legacy "
+            "controls remove target identity."
         ),
     )
     parser.add_argument(
@@ -1314,6 +1318,11 @@ def main() -> None:
     else:
         model = DecoupledCDM(**model_kwargs)
     architecture_fingerprint = getattr(model, "architecture_fingerprint", None)
+    ablation_variant_fingerprint = getattr(
+        model,
+        "ablation_variant_fingerprint",
+        architecture_fingerprint,
+    )
     initialization_hash = (
         model.initialization_hash() if hasattr(model, "initialization_hash") else None
     )
@@ -1434,6 +1443,7 @@ def main() -> None:
         "completion_evidence_cap": args.completion_evidence_cap,
         "context_target_frac": args.context_target_frac,
         "architecture_fingerprint": architecture_fingerprint,
+        "ablation_variant_fingerprint": ablation_variant_fingerprint,
         "initialization_hash": initialization_hash,
     }
     output = {
