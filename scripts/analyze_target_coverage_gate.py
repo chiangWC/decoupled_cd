@@ -274,12 +274,13 @@ def residualize_two_way(
     values: np.ndarray,
     student_codes: np.ndarray,
     item_codes: np.ndarray,
-    tolerance: float = 1.0e-11,
+    tolerance: float = 1.0e-10,
+    max_iterations: int = 10_000,
 ) -> tuple[np.ndarray, int]:
     residual = np.atleast_2d(values).astype(float, copy=True)
     if residual.shape[0] != len(student_codes):
         residual = residual.T
-    for iteration in range(1, 1001):
+    for iteration in range(1, max_iterations + 1):
         student_mean = group_means(residual, student_codes)
         residual -= student_mean[student_codes]
         item_mean = group_means(residual, item_codes)
@@ -287,7 +288,10 @@ def residualize_two_way(
         update = max(np.abs(student_mean).max(), np.abs(item_mean).max())
         if update < tolerance:
             return residual, iteration
-    raise RuntimeError("two-way fixed-effect residualization did not converge")
+    raise RuntimeError(
+        "two-way fixed-effect residualization did not converge: "
+        f"iterations={max_iterations}, final_update={update:.3e}"
+    )
 
 
 def two_way_fixed_effects(
