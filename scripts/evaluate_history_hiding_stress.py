@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import html
 import json
 import math
 import sys
@@ -8,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import torch
 
@@ -60,6 +63,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--per-run-csv", default=None)
     parser.add_argument("--summary-csv", default=None)
+    parser.add_argument(
+        "--curve-svg",
+        default=None,
+        help="Optional SVG path for the validation AUC stress curve.",
+    )
     args = parser.parse_args()
     args.hide_ratios = _parse_float_list(args.hide_ratios, name="--hide-ratios")
     args.mask_seeds = _parse_int_list(args.mask_seeds, name="--mask-seeds")
@@ -192,6 +200,12 @@ def mask_train_history_interactions(train_frame: pd.DataFrame, *, hide_ratio: fl
     return pd.concat(keep_chunks, ignore_index=True)
 
 
+def history_mask_hash(frame: pd.DataFrame) -> str:
+    normalized = frame.fillna("<NA>").astype(str)
+    values = pd.util.hash_pandas_object(normalized, index=False).to_numpy()
+    return hashlib.sha256(values.tobytes()).hexdigest()
+
+
 def build_hidden_bundle(
     *,
     bundle: StepDataBundle,
@@ -291,18 +305,58 @@ def evaluate_bundle(
     bundle: StepDataBundle,
     model: DecoupledCDM | DecoupledCDMEnsemble,
     device: str,
+    coverage_masks: dict[str, torch.Tensor] | None = None,
 ) -> dict[str, float]:
     labels, probs, loss = predict_bundle(bundle=bundle, model=model, device=device)
-    metrics = compute_metrics(labels=labels.numpy(), probs=probs.numpy())
+    label_values = labels.numpy()
+    probability_values = probs.numpy()
+    metrics = compute_metrics(labels=label_values, probs=probability_values)
     metrics["loss"] = loss
+    masks = coverage_masks or fixed_coverage_masks(bundle)
+    for bucket, mask in masks.items():
+        selected = mask.numpy()
+        metrics[f"{bucket}_rows"] = int(selected.sum())
+        if selected.sum() > 0 and len(set(label_values[selected].tolist())) == 2:
+            slice_metrics = compute_metrics(
+                labels=label_values[selected],
+                probs=probability_values[selected],
+            )
+            metrics[f"{bucket}_auc"] = float(slice_metrics["auc"])
+            metrics[f"{bucket}_brier"] = float(slice_metrics["brier"])
+        else:
+            metrics[f"{bucket}_auc"] = math.nan
+            metrics[f"{bucket}_brier"] = math.nan
     return {key: float(value) for key, value in metrics.items() if key != "calibration_bins"}
 
 
+def fixed_coverage_masks(bundle: StepDataBundle) -> dict[str, torch.Tensor]:
+    required = bundle.q_matrix_tensor[bundle.interaction_exercise_ids] > 0
+    observed = bundle.student_tkc_mask[bundle.interaction_student_ids] > 0
+    overlap = (required & observed).sum(dim=1)
+    required_count = required.sum(dim=1)
+    return {
+        "zero": overlap.eq(0),
+        "partial": overlap.gt(0) & overlap.lt(required_count),
+        "full": overlap.eq(required_count),
+    }
+
+
 def summarize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    frame = pd.DataFrame([row for row in rows if row["hide_ratio"] > 0.0])
+    frame = pd.DataFrame(rows)
     if frame.empty:
         return []
-    metric_cols = ["hidden_auc", "delta_auc", "hidden_acc", "hidden_brier", "hidden_ece", "hidden_history_rows"]
+    metric_cols = [
+        "hidden_auc",
+        "delta_auc",
+        "hidden_acc",
+        "hidden_brier",
+        "hidden_ece",
+        "hidden_history_rows",
+        "hidden_zero_auc",
+        "delta_zero_auc",
+        "hidden_full_auc",
+        "delta_full_auc",
+    ]
     summary_rows: list[dict[str, Any]] = []
     for (dataset, model, hide_ratio), group in frame.groupby(["dataset", "model", "hide_ratio"], sort=False):
         row: dict[str, Any] = {
@@ -318,6 +372,83 @@ def summarize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             row[f"std_{col}"] = float(values.std(ddof=0)) if len(values) > 1 else 0.0
         summary_rows.append(row)
     return summary_rows
+
+
+def plot_curve_svg(summary_rows: list[dict[str, Any]], output: Path) -> None:
+    frame = pd.DataFrame(summary_rows)
+    if frame.empty:
+        return
+    width, height = 920, 560
+    left, right, top, bottom = 90, 35, 55, 80
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+    minimum_auc = float(frame["mean_hidden_auc"].min())
+    maximum_auc = float(frame["mean_hidden_auc"].max())
+    padding = max((maximum_auc - minimum_auc) * 0.15, 0.005)
+    minimum_auc -= padding
+    maximum_auc += padding
+
+    def x_position(retained: float) -> float:
+        return left + retained * plot_width
+
+    def y_position(auc: float) -> float:
+        return top + (maximum_auc - auc) / (maximum_auc - minimum_auc) * plot_height
+
+    colors = ["#1769aa", "#d1495b", "#2a9d8f", "#7b2cbf"]
+    dataset_name = str(frame["dataset"].iloc[0])
+    elements = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        '<style>text{font-family:Arial,sans-serif;fill:#222}.axis{stroke:#777;stroke-width:1}.grid{stroke:#ddd;stroke-width:1}.tick{font-size:12px}.label{font-size:15px}.title{font-size:18px;font-weight:bold}</style>',
+        f'<text class="title" x="{width / 2}" y="28" text-anchor="middle">{html.escape(dataset_name)} History Hiding Stress Curve</text>',
+    ]
+    for retained in (0.2, 0.4, 0.6, 0.8, 1.0):
+        x = x_position(retained)
+        elements.extend([
+            f'<line class="grid" x1="{x:.2f}" y1="{top}" x2="{x:.2f}" y2="{top + plot_height}"/>',
+            f'<text class="tick" x="{x:.2f}" y="{top + plot_height + 24}" text-anchor="middle">{retained * 100:.0f}%</text>',
+        ])
+    for auc in np.linspace(minimum_auc, maximum_auc, 6):
+        y = y_position(float(auc))
+        elements.extend([
+            f'<line class="grid" x1="{left}" y1="{y:.2f}" x2="{left + plot_width}" y2="{y:.2f}"/>',
+            f'<text class="tick" x="{left - 12}" y="{y + 4:.2f}" text-anchor="end">{auc:.3f}</text>',
+        ])
+    elements.extend([
+        f'<line class="axis" x1="{left}" y1="{top + plot_height}" x2="{left + plot_width}" y2="{top + plot_height}"/>',
+        f'<line class="axis" x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_height}"/>',
+        f'<text class="label" x="{left + plot_width / 2}" y="{height - 18}" text-anchor="middle">Student history retained</text>',
+        f'<text class="label" x="22" y="{top + plot_height / 2}" text-anchor="middle" transform="rotate(-90 22 {top + plot_height / 2})">Validation AUC</text>',
+    ])
+    legend_x = left + 15
+    for model_index, (model, group) in enumerate(frame.groupby("model", sort=False)):
+        color = colors[model_index % len(colors)]
+        ordered = group.assign(retained=1.0 - group["hide_ratio"]).sort_values("retained")
+        points = [
+            (x_position(float(row.retained)), y_position(float(row.mean_hidden_auc)))
+            for row in ordered.itertuples(index=False)
+        ]
+        path = " ".join(
+            [f"M {points[0][0]:.2f} {points[0][1]:.2f}"]
+            + [f"L {x:.2f} {y:.2f}" for x, y in points[1:]]
+        )
+        elements.append(f'<path d="{path}" fill="none" stroke="{color}" stroke-width="3"/>')
+        for row, (x, y) in zip(ordered.itertuples(index=False), points):
+            standard_deviation = float(row.std_hidden_auc)
+            low_y = y_position(float(row.mean_hidden_auc) - standard_deviation)
+            high_y = y_position(float(row.mean_hidden_auc) + standard_deviation)
+            elements.extend([
+                f'<line x1="{x:.2f}" y1="{low_y:.2f}" x2="{x:.2f}" y2="{high_y:.2f}" stroke="{color}" stroke-width="1.5"/>',
+                f'<circle cx="{x:.2f}" cy="{y:.2f}" r="4.5" fill="{color}"/>',
+            ])
+        legend_y = top + 12 + model_index * 24
+        elements.extend([
+            f'<line x1="{legend_x}" y1="{legend_y}" x2="{legend_x + 28}" y2="{legend_y}" stroke="{color}" stroke-width="3"/>',
+            f'<text class="tick" x="{legend_x + 36}" y="{legend_y + 4}">{html.escape(str(model))}</text>',
+        ])
+    elements.append("</svg>")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(elements) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -338,7 +469,13 @@ def main() -> None:
             concept_dim=int(summary["concept_dim"]),
             device=device,
         )
-        original_metrics = evaluate_bundle(bundle=target_bundle, model=model, device=device)
+        coverage_masks = fixed_coverage_masks(target_bundle)
+        original_metrics = evaluate_bundle(
+            bundle=target_bundle,
+            model=model,
+            device=device,
+            coverage_masks=coverage_masks,
+        )
         original_history_rows = int(len(bundles["train"].interactions))
         rows.append(
             {
@@ -358,6 +495,13 @@ def main() -> None:
                 "original_history_rows": original_history_rows,
                 "hidden_history_rows": original_history_rows,
                 "hidden_history_ratio": 1.0,
+                "mask_hash": history_mask_hash(bundles["train"].interactions),
+                "original_zero_auc": original_metrics["zero_auc"],
+                "hidden_zero_auc": original_metrics["zero_auc"],
+                "delta_zero_auc": 0.0,
+                "original_full_auc": original_metrics["full_auc"],
+                "hidden_full_auc": original_metrics["full_auc"],
+                "delta_full_auc": 0.0,
             }
         )
         for hide_ratio in args.hide_ratios:
@@ -372,7 +516,12 @@ def main() -> None:
                     masked_history=masked_history,
                     keep_exercise_evidence=args.keep_exercise_evidence,
                 )
-                hidden_metrics = evaluate_bundle(bundle=hidden_bundle, model=model, device=device)
+                hidden_metrics = evaluate_bundle(
+                    bundle=hidden_bundle,
+                    model=model,
+                    device=device,
+                    coverage_masks=coverage_masks,
+                )
                 hidden_history_rows = int(len(masked_history))
                 rows.append(
                     {
@@ -394,6 +543,13 @@ def main() -> None:
                         "hidden_history_ratio": hidden_history_rows / original_history_rows
                         if original_history_rows
                         else math.nan,
+                        "mask_hash": history_mask_hash(masked_history),
+                        "original_zero_auc": original_metrics["zero_auc"],
+                        "hidden_zero_auc": hidden_metrics["zero_auc"],
+                        "delta_zero_auc": original_metrics["zero_auc"] - hidden_metrics["zero_auc"],
+                        "original_full_auc": original_metrics["full_auc"],
+                        "hidden_full_auc": hidden_metrics["full_auc"],
+                        "delta_full_auc": original_metrics["full_auc"] - hidden_metrics["full_auc"],
                     }
                 )
 
@@ -421,6 +577,8 @@ def main() -> None:
     )
     pd.DataFrame(rows).to_csv(per_run_csv, index=False)
     pd.DataFrame(summary_rows).to_csv(summary_csv, index=False)
+    if args.curve_svg:
+        plot_curve_svg(summary_rows, Path(args.curve_svg))
     print(pd.DataFrame(summary_rows).to_string(index=False))
 
 
