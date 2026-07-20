@@ -510,8 +510,12 @@ def main() -> None:
             "seed": args.seed,
             "unit": "student",
             "method": (
-                "pairs bootstrap of student-cluster sufficient statistics "
-                "after two-way fixed-effect residualization"
+                "student multiplicity-weighted bootstrap approximation on "
+                "full-sample two-way fixed-effect residualized sufficient statistics"
+            ),
+            "fixed_effect_projection": (
+                "computed once on the full validation sample; "
+                "not refitted per replicate"
             ),
         },
         "gate_rule": (
