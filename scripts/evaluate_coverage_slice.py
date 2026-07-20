@@ -39,6 +39,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-interactions", default=None, help="Override train split path for every summary.")
     parser.add_argument("--valid-interactions", default=None, help="Override valid split path for every summary.")
     parser.add_argument("--test-interactions", default=None, help="Override test split path for every summary.")
+    parser.add_argument(
+        "--valid-history-interactions",
+        default=None,
+        help="Override validation-student support history.",
+    )
+    parser.add_argument(
+        "--test-history-interactions",
+        default=None,
+        help="Override test-student support history.",
+    )
     parser.add_argument("--q-matrix", default=None, help="Override Q-matrix path for every summary.")
     parser.add_argument("--concept-graph", default=None, help="Override concept graph path for every summary.")
     parser.add_argument("--device", default="auto")
@@ -56,6 +66,14 @@ def resolve_split_paths(summary: dict[str, Any], args: argparse.Namespace) -> di
     train_path = args.train_interactions or summary.get("train_interactions")
     valid_path = args.valid_interactions or summary.get("valid_interactions")
     test_path = args.test_interactions or summary.get("test_interactions")
+    valid_history_path = (
+        args.valid_history_interactions
+        or summary.get("valid_history_interactions")
+    )
+    test_history_path = (
+        args.test_history_interactions
+        or summary.get("test_history_interactions")
+    )
     if not all([train_path, valid_path, test_path]):
         raise ValueError("Coverage slice evaluation requires train/valid/test interaction paths.")
 
@@ -67,12 +85,24 @@ def resolve_split_paths(summary: dict[str, Any], args: argparse.Namespace) -> di
         str(valid_path),
         str(test_path),
         None if q_matrix_path is None else str(q_matrix_path),
+        valid_history_path=(
+            None if valid_history_path is None else str(valid_history_path)
+        ),
+        test_history_path=(
+            None if test_history_path is None else str(test_history_path)
+        ),
     )
 
     return {
         "train_interactions": str(train_path),
         "valid_interactions": str(valid_path),
         "test_interactions": str(test_path),
+        "valid_history_interactions": (
+            None if valid_history_path is None else str(valid_history_path)
+        ),
+        "test_history_interactions": (
+            None if test_history_path is None else str(test_history_path)
+        ),
         "q_matrix": str(q_matrix_path),
         "concept_graph": args.concept_graph or summary.get("concept_graph"),
         "prerequisite_graph": summary.get("prerequisite_graph"),
@@ -85,6 +115,8 @@ def prepare_bundles_from_paths(paths: dict[str, str | None]) -> dict[str, Any]:
         train_interactions_path=str(paths["train_interactions"]),
         valid_interactions_path=str(paths["valid_interactions"]),
         test_interactions_path=str(paths["test_interactions"]),
+        valid_history_interactions_path=paths.get("valid_history_interactions"),
+        test_history_interactions_path=paths.get("test_history_interactions"),
         q_matrix_path=str(paths["q_matrix"]),
         concept_graph_path=paths.get("concept_graph"),
         prerequisite_graph_path=paths.get("prerequisite_graph"),
@@ -92,10 +124,19 @@ def prepare_bundles_from_paths(paths: dict[str, str | None]) -> dict[str, Any]:
     )
 
 
-def build_student_seen_concepts(train_frame: pd.DataFrame) -> dict[Any, set[str]]:
+def build_student_seen_concepts(
+    train_frame: pd.DataFrame,
+    *,
+    exercise_concepts: dict[str, set[str]] | None = None,
+) -> dict[Any, set[str]]:
     seen: dict[Any, set[str]] = {}
     for row in train_frame.itertuples(index=False):
-        seen.setdefault(row.stu_id, set()).update(normalize_concept_sequence(row.cpt_seq))
+        concepts = (
+            exercise_concepts.get(str(row.exer_id), set())
+            if exercise_concepts is not None
+            else set(normalize_concept_sequence(row.cpt_seq))
+        )
+        seen.setdefault(row.stu_id, set()).update(concepts)
     return seen
 
 
@@ -122,12 +163,22 @@ def coverage_bucket(coverage: float | None) -> str:
 def add_target_coverage(
     frame: pd.DataFrame,
     *,
-    train_frame: pd.DataFrame,
     q_matrix: pd.DataFrame,
+    train_frame: pd.DataFrame | None = None,
+    student_history_frame: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
+    if student_history_frame is None:
+        if train_frame is None:
+            raise ValueError(
+                "Provide student_history_frame (or legacy train_frame)."
+            )
+        student_history_frame = train_frame
     enriched = frame.copy()
-    student_seen = build_student_seen_concepts(train_frame)
     exercise_concepts = build_exercise_concepts(q_matrix)
+    student_seen = build_student_seen_concepts(
+        student_history_frame,
+        exercise_concepts=exercise_concepts,
+    )
     coverages: list[float | None] = []
     concept_counts: list[int] = []
     seen_counts: list[int] = []
@@ -240,7 +291,7 @@ def main() -> None:
         prediction_frame["prob"] = probs.numpy()
         enriched = add_target_coverage(
             prediction_frame,
-            train_frame=bundles["train"].interactions,
+            student_history_frame=target_bundle.history_interactions,
             q_matrix=bundles["shared"]["q_matrix"],
         )
         safe_model_name = "".join(

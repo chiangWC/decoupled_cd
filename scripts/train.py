@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles, prepare_step_data_bundle
+from data.pool_protocol import sha256_file
 from models import (
     CountPriorBaseline,
     DecoupledCDM,
@@ -150,7 +151,11 @@ def parse_args() -> argparse.Namespace:
         "--context-target-frac",
         type=float,
         default=0.0,
-        help="Hide this fraction of each student's train history and supervise only hidden responses.",
+        help=(
+            "Hide this fraction of each student's train history and supervise "
+            "only hidden responses. Zero means train-edge reconstruction; its "
+            "training fit is not inductive-query evidence."
+        ),
     )
     parser.add_argument(
         "--v2-ukc-propagation",
@@ -308,6 +313,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-interactions", default=None, help="Train split CSV.")
     parser.add_argument("--valid-interactions", default=None, help="Validation split CSV.")
     parser.add_argument("--test-interactions", default=None, help="Test split CSV.")
+    parser.add_argument(
+        "--valid-history-interactions",
+        default=None,
+        help="Optional validation-student support history, separate from query rows.",
+    )
+    parser.add_argument(
+        "--protocol-manifest",
+        default=None,
+        help=(
+            "Student-disjoint manifest; resolves and verifies train/support/query/Q "
+            "paths and hashes."
+        ),
+    )
+    parser.add_argument(
+        "--protocol-confirmation",
+        action="store_true",
+        help=(
+            "Explicitly permit test confirmation for a verified protocol manifest. "
+            "Without this flag manifest runs are validation-only."
+        ),
+    )
+    parser.add_argument(
+        "--test-history-interactions",
+        default=None,
+        help="Optional test-student support history, separate from query rows.",
+    )
     parser.add_argument(
         "--q-matrix",
         dest="q_matrix",
@@ -906,13 +937,21 @@ def derive_q_matrix_from_splits_if_needed(
     valid_path: str,
     test_path: str,
     q_matrix_path: str | None,
+    *,
+    valid_history_path: str | None = None,
+    test_history_path: str | None = None,
 ) -> str:
     if q_matrix_path is not None:
         return q_matrix_path
+    paths = [train_path, valid_path, test_path]
+    paths.extend(
+        path
+        for path in (valid_history_path, test_history_path)
+        if path is not None
+    )
     frames = [
-        pd.read_csv(train_path, usecols=["exer_id", "cpt_seq"]),
-        pd.read_csv(valid_path, usecols=["exer_id", "cpt_seq"]),
-        pd.read_csv(test_path, usecols=["exer_id", "cpt_seq"]),
+        pd.read_csv(path, usecols=["exer_id", "cpt_seq"])
+        for path in paths
     ]
     q_df = pd.concat(frames, ignore_index=True).drop_duplicates().reset_index(drop=True)
     output_path = Path("results") / "derived_q_matrix_splits.csv"
@@ -932,8 +971,98 @@ def materialize_subset_if_needed(interactions_path: str, max_rows: int | None) -
     return str(output_path)
 
 
+PROTOCOL_FILE_ARGUMENTS = {
+    "train.csv": "train_interactions",
+    "valid_support.csv": "valid_history_interactions",
+    "valid_query.csv": "valid_interactions",
+    "test_support.csv": "test_history_interactions",
+    "test_query.csv": "test_interactions",
+    "Q_matrix.csv": "q_matrix",
+}
+
+
+def resolve_verified_protocol_manifest(
+    args: argparse.Namespace,
+) -> dict[str, Any] | None:
+    if args.protocol_manifest is None:
+        if args.protocol_confirmation:
+            raise ValueError(
+                "--protocol-confirmation requires --protocol-manifest."
+            )
+        return None
+    if args.max_rows is not None:
+        raise ValueError(
+            "--max-rows is forbidden for student-disjoint protocol runs."
+        )
+
+    manifest_path = Path(args.protocol_manifest).resolve()
+    manifest_sha256 = sha256_file(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    protocol = manifest.get("protocol")
+    if protocol != "student_disjoint_support_query":
+        raise ValueError(f"Unsupported protocol manifest: {protocol!r}.")
+    split_seed = manifest.get("audit", {}).get("seed")
+    if split_seed != 2024:
+        raise ValueError(
+            f"Student-disjoint manifest must use split_seed=2024, got {split_seed}."
+        )
+    manifest_directory = Path(manifest.get("directory", "")).resolve()
+    if manifest_directory != manifest_path.parent:
+        raise ValueError(
+            "Protocol manifest directory does not match its filesystem location."
+        )
+
+    file_records = manifest.get("files", {})
+    verified_files: dict[str, dict[str, str]] = {}
+    for filename, argument_name in PROTOCOL_FILE_ARGUMENTS.items():
+        record = file_records.get(filename)
+        if not isinstance(record, dict) or "sha256" not in record:
+            raise ValueError(
+                f"Protocol manifest is missing a hash for {filename}."
+            )
+        path = manifest_directory / filename
+        actual_hash = sha256_file(path)
+        expected_hash = str(record["sha256"])
+        if actual_hash != expected_hash:
+            raise ValueError(
+                f"Protocol file hash mismatch for {filename}: "
+                f"expected={expected_hash}, actual={actual_hash}."
+            )
+        setattr(args, argument_name, str(path))
+        verified_files[argument_name] = {
+            "path": str(path),
+            "sha256": actual_hash,
+        }
+
+    args.seed = 42
+    args.protocol_manifest = str(manifest_path)
+    args.evaluation_stage = (
+        "confirmation" if args.protocol_confirmation else "validation"
+    )
+    return {
+        "protocol": protocol,
+        "protocol_split_seed": int(split_seed),
+        "protocol_manifest_path": str(manifest_path),
+        "protocol_manifest_sha256": manifest_sha256,
+        "protocol_files": verified_files,
+    }
+
+
 def main() -> None:
     args = parse_args()
+    protocol_metadata = resolve_verified_protocol_manifest(args)
+    if (
+        protocol_metadata is None
+        and any(
+            [
+                args.valid_history_interactions,
+                args.test_history_interactions,
+            ]
+        )
+    ):
+        raise ValueError(
+            "Separate-history training requires --protocol-manifest."
+        )
     validate_graph_args(args)
     validate_model_args(args)
     set_global_seed(args.seed)
@@ -943,24 +1072,105 @@ def main() -> None:
     logger.info("Resolved device: %s", resolved_device)
     logger.info("Graph mode: %s", args.graph_mode)
     logger.info("Seed: %s", args.seed)
-    using_splits = all([args.train_interactions, args.valid_interactions, args.test_interactions])
+    if protocol_metadata is not None:
+        training_history_visibility = (
+            "context_target_masked"
+            if args.context_target_frac > 0.0
+            else "train_edge_reconstruction"
+        )
+        protocol_metadata["training_history_visibility"] = (
+            training_history_visibility
+        )
+        if args.context_target_frac == 0.0:
+            logger.warning(
+                "Protocol run uses context_target_frac=0: training is train-edge "
+                "reconstruction. Do not interpret training fit as inductive-query "
+                "performance; only validation/test support-to-query metrics are "
+                "inductive."
+            )
+    using_splits = all(
+        [
+            args.train_interactions,
+            args.valid_interactions,
+            args.test_interactions,
+        ]
+    )
+    using_separate_history = any(
+        [
+            args.valid_history_interactions,
+            args.test_history_interactions,
+        ]
+    )
     if not using_splits and not args.interactions:
-        raise ValueError("Provide either --interactions or all of --train-interactions/--valid-interactions/--test-interactions.")
+        raise ValueError(
+            "Provide either --interactions or all of "
+            "--train-interactions/--valid-interactions/--test-interactions."
+        )
+    if using_separate_history and not using_splits:
+        raise ValueError(
+            "Separate validation/test history requires explicit split mode."
+        )
 
     if using_splits:
-        train_path = materialize_subset_if_needed(args.train_interactions, args.max_rows)
-        valid_path = materialize_subset_if_needed(args.valid_interactions, args.max_rows)
-        test_path = materialize_subset_if_needed(args.test_interactions, args.max_rows)
-        q_matrix_source = derive_q_matrix_from_splits_if_needed(train_path, valid_path, test_path, args.q_matrix)
-        logger.info("Using split mode with train=%s valid=%s test=%s", train_path, valid_path, test_path)
+        train_path = materialize_subset_if_needed(
+            args.train_interactions,
+            args.max_rows,
+        )
+        valid_path = materialize_subset_if_needed(
+            args.valid_interactions,
+            args.max_rows,
+        )
+        test_path = materialize_subset_if_needed(
+            args.test_interactions,
+            args.max_rows,
+        )
+        valid_history_path = (
+            materialize_subset_if_needed(
+                args.valid_history_interactions,
+                args.max_rows,
+            )
+            if args.valid_history_interactions is not None
+            else None
+        )
+        test_history_path = (
+            materialize_subset_if_needed(
+                args.test_history_interactions,
+                args.max_rows,
+            )
+            if args.test_history_interactions is not None
+            else None
+        )
+        q_matrix_source = derive_q_matrix_from_splits_if_needed(
+            train_path,
+            valid_path,
+            test_path,
+            args.q_matrix,
+            valid_history_path=valid_history_path,
+            test_history_path=test_history_path,
+        )
+        logger.info(
+            "Using split mode with train=%s valid=%s test=%s "
+            "valid_history=%s test_history=%s",
+            train_path,
+            valid_path,
+            test_path,
+            valid_history_path,
+            test_history_path,
+        )
         bundles = prepare_experiment_split_bundles(
             train_interactions_path=train_path,
             valid_interactions_path=valid_path,
             test_interactions_path=test_path,
+            valid_history_interactions_path=valid_history_path,
+            test_history_interactions_path=test_history_path,
             q_matrix_path=q_matrix_source,
             concept_graph_path=args.concept_graph,
-            prerequisite_graph_path=args.prerequisite_graph if args.graph_mode == "dual" else None,
-            similarity_graph_path=args.similarity_graph if args.graph_mode == "dual" else None,
+            prerequisite_graph_path=(
+                args.prerequisite_graph if args.graph_mode == "dual" else None
+            ),
+            similarity_graph_path=(
+                args.similarity_graph if args.graph_mode == "dual" else None
+            ),
         )
         train_bundle = bundles["train"]
         valid_bundle = bundles["valid"]
@@ -1230,9 +1440,12 @@ def main() -> None:
         "dataset": args.dataset,
         "evaluation_stage": args.evaluation_stage,
         **v2_flag_snapshot,
+        **(protocol_metadata or {}),
         "train_interactions": args.train_interactions or args.interactions,
         "valid_interactions": args.valid_interactions,
         "test_interactions": args.test_interactions or args.interactions,
+        "valid_history_interactions": args.valid_history_interactions,
+        "test_history_interactions": args.test_history_interactions,
         "q_matrix": args.q_matrix,
         "concept_graph": args.concept_graph,
         "prerequisite_graph": args.prerequisite_graph,
@@ -1335,9 +1548,12 @@ def main() -> None:
         # v1 keeps the historical experiment_results.csv column set unchanged;
         # v2/b0 rows carry the model/module columns and go to a separate CSV.
         **(v2_flag_snapshot if args.model != "v1" else {}),
+        **(protocol_metadata or {}),
         "train_interactions": args.train_interactions or args.interactions,
         "valid_interactions": args.valid_interactions,
         "test_interactions": args.test_interactions or args.interactions,
+        "valid_history_interactions": args.valid_history_interactions,
+        "test_history_interactions": args.test_history_interactions,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "student_batch_size": args.student_batch_size,

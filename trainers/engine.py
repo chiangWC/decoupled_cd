@@ -6,7 +6,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
-from data import StepDataBundle
+from data import StepDataBundle, normalize_concept_sequence
 from models import DecoupledCDM
 from utils import compute_metrics
 
@@ -62,12 +62,43 @@ def _bundle_tensors(bundle: StepDataBundle, device: torch.device) -> dict[str, t
     }
 
 
+def _canonical_interaction_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    required = ("stu_id", "exer_id", "cpt_seq", "label")
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise ValueError(
+            f"Interaction frame is missing canonical columns: {missing}"
+        )
+    normalized = frame.loc[:, required].copy()
+    normalized["stu_id"] = normalized["stu_id"].astype(str)
+    normalized["exer_id"] = normalized["exer_id"].astype(str)
+    normalized["cpt_seq"] = normalized["cpt_seq"].map(
+        lambda value: ",".join(sorted(normalize_concept_sequence(value)))
+    )
+    normalized["label"] = pd.to_numeric(
+        normalized["label"],
+        errors="raise",
+    ).astype(int)
+    return normalized
+
+
 def _hash_interaction_rows(frame: pd.DataFrame) -> set[int]:
     if frame.empty:
         return set()
-    normalized = frame.fillna("<NA>").astype(str)
+    normalized = _canonical_interaction_rows(frame)
     row_hashes = pd.util.hash_pandas_object(normalized, index=False)
     return {int(value) for value in row_hashes.tolist()}
+
+
+def _student_exercise_groups(frame: pd.DataFrame) -> set[tuple[str, str]]:
+    normalized = _canonical_interaction_rows(frame)
+    return set(
+        zip(
+            normalized["stu_id"],
+            normalized["exer_id"],
+            strict=True,
+        )
+    )
 
 
 def _validate_history_visibility(bundle: StepDataBundle) -> None:
@@ -75,11 +106,18 @@ def _validate_history_visibility(bundle: StepDataBundle) -> None:
         return
     target_hashes = _hash_interaction_rows(bundle.interactions)
     history_hashes = _hash_interaction_rows(bundle.history_interactions)
-    if target_hashes.isdisjoint(history_hashes):
+    exact_overlap = target_hashes & history_hashes
+    group_overlap = (
+        _student_exercise_groups(bundle.interactions)
+        & _student_exercise_groups(bundle.history_interactions)
+    )
+    if not exact_overlap and not group_overlap:
         return
     raise ValueError(
-        f"{bundle.split_name} bundle reuses target interactions inside propagation history. "
-        "Evaluation bundles must use history-only tensors built from past-visible interactions."
+        f"{bundle.split_name} bundle reuses target history: "
+        f"exact_rows={len(exact_overlap)}, "
+        f"student_exercise_groups={len(group_overlap)}. "
+        "Evaluation bundles must use disjoint past-visible interactions."
     )
 
 

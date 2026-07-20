@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data import prepare_experiment_split_bundles
+from data.pool_protocol import sha256_file
 from scripts.analyze_prediction_slices import load_model, predict_bundle
 from utils import resolve_device, write_json
 from utils.logging import setup_logging
@@ -23,9 +24,13 @@ DATA_KEYS = (
     "train_interactions",
     "valid_interactions",
     "test_interactions",
+    "valid_history_interactions",
+    "test_history_interactions",
     "q_matrix",
     "concept_graph",
     "graph_mode",
+    "protocol_manifest_path",
+    "protocol_manifest_sha256",
 )
 
 
@@ -66,6 +71,51 @@ def _validate_summary_compatibility(summary_paths: list[str], summaries: list[di
             raise ValueError(f"{path} does not match the split/data signature of {summary_paths[0]}.")
 
 
+def _validate_protocol_summary(summary: dict[str, Any]) -> None:
+    manifest_path = summary.get("protocol_manifest_path")
+    manifest_hash = summary.get("protocol_manifest_sha256")
+    if manifest_path is None and manifest_hash is None:
+        return
+    if not manifest_path or not manifest_hash:
+        raise ValueError(
+            "Protocol summary must include both manifest path and hash."
+        )
+    actual_manifest_hash = sha256_file(Path(str(manifest_path)))
+    if actual_manifest_hash != str(manifest_hash):
+        raise ValueError(
+            "Protocol manifest hash mismatch during checkpoint evaluation."
+        )
+
+    file_records = summary.get("protocol_files")
+    if not isinstance(file_records, dict):
+        raise ValueError("Protocol summary is missing verified file records.")
+    for argument_name in (
+        "train_interactions",
+        "valid_history_interactions",
+        "valid_interactions",
+        "test_history_interactions",
+        "test_interactions",
+        "q_matrix",
+    ):
+        record = file_records.get(argument_name)
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"Protocol summary is missing {argument_name} file metadata."
+            )
+        path = Path(str(record.get("path", "")))
+        expected_hash = record.get("sha256")
+        if not expected_hash or sha256_file(path) != str(expected_hash):
+            raise ValueError(
+                f"Protocol file hash mismatch during checkpoint evaluation: "
+                f"{argument_name}."
+            )
+        if str(path.resolve()) != str(Path(str(summary[argument_name])).resolve()):
+            raise ValueError(
+                f"Protocol file path mismatch during checkpoint evaluation: "
+                f"{argument_name}."
+            )
+
+
 def _average_predictions(predictions: list[np.ndarray], mode: str) -> np.ndarray:
     if not predictions:
         raise ValueError("At least one prediction array is required.")
@@ -87,6 +137,13 @@ def main() -> None:
     _validate_summary_compatibility(summary_paths, summaries)
 
     first_summary = summaries[0]
+    _validate_protocol_summary(first_summary)
+    valid_history_path = first_summary.get("valid_history_interactions")
+    test_history_path = first_summary.get("test_history_interactions")
+    if (valid_history_path is None) != (test_history_path is None):
+        raise ValueError(
+            "Checkpoint summary must provide valid/test history interaction paths together."
+        )
     graph_mode = str(first_summary.get("graph_mode", "single"))
     if graph_mode != "single":
         raise ValueError("evaluate_checkpoint_average currently supports only graph_mode=single.")
@@ -102,6 +159,8 @@ def main() -> None:
         valid_interactions_path=first_summary["valid_interactions"],
         test_interactions_path=first_summary["test_interactions"],
         q_matrix_path=first_summary["q_matrix"],
+        valid_history_interactions_path=valid_history_path,
+        test_history_interactions_path=test_history_path,
         concept_graph_path=first_summary["concept_graph"],
         prerequisite_graph_path=None,
         similarity_graph_path=None,

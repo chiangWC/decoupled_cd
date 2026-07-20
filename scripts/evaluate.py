@@ -22,6 +22,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-interactions", default=None)
     parser.add_argument("--valid-interactions", default=None)
     parser.add_argument("--test-interactions", default=None)
+    parser.add_argument("--valid-history-interactions", default=None)
+    parser.add_argument("--test-history-interactions", default=None)
+    parser.add_argument("--protocol-manifest", default=None)
     parser.add_argument("--q-matrix", default=None)
     parser.add_argument("--concept-graph", default=None)
     parser.add_argument("--prerequisite-graph", default=None, help="Legacy dual-graph ablation input.")
@@ -220,6 +223,20 @@ def derive_q_matrix_from_splits_if_needed(train_path: str, valid_path: str, test
 
 def main() -> None:
     args = parse_args()
+    if any(
+        value is not None
+        for value in (
+            args.protocol_manifest,
+            args.valid_history_interactions,
+            args.test_history_interactions,
+        )
+    ):
+        raise ValueError(
+            "scripts/evaluate.py is a legacy random-initialized debug evaluator "
+            "and cannot evaluate the student-disjoint support/query protocol. "
+            "Use a checkpoint summary with evaluate_checkpoint_average.py or "
+            "the formal prediction-analysis scripts instead."
+        )
     validate_graph_args(args)
     if not all([args.train_interactions, args.valid_interactions, args.test_interactions]):
         raise ValueError("Evaluation requires --train-interactions, --valid-interactions, and --test-interactions.")

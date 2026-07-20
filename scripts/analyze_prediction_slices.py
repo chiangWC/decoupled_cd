@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-interactions", default=None)
     parser.add_argument("--valid-interactions", default=None)
     parser.add_argument("--test-interactions", default=None)
+    parser.add_argument("--valid-history-interactions", default=None)
+    parser.add_argument("--test-history-interactions", default=None)
     parser.add_argument("--q-matrix", default=None)
     parser.add_argument("--concept-graph", default=None)
     parser.add_argument("--graph-mode", choices=["single", "dual"], default="single")
@@ -57,13 +59,21 @@ def derive_q_matrix_from_splits_if_needed(
     valid_path: str,
     test_path: str,
     q_matrix_path: str | None,
+    *,
+    valid_history_path: str | None = None,
+    test_history_path: str | None = None,
 ) -> str:
     if q_matrix_path is not None:
         return q_matrix_path
+    paths = [train_path, valid_path, test_path]
+    paths.extend(
+        path
+        for path in (valid_history_path, test_history_path)
+        if path is not None
+    )
     frames = [
-        pd.read_csv(train_path, usecols=["exer_id", "cpt_seq"]),
-        pd.read_csv(valid_path, usecols=["exer_id", "cpt_seq"]),
-        pd.read_csv(test_path, usecols=["exer_id", "cpt_seq"]),
+        pd.read_csv(path, usecols=["exer_id", "cpt_seq"])
+        for path in paths
     ]
     q_df = pd.concat(frames, ignore_index=True).drop_duplicates().reset_index(drop=True)
     output_path = Path("results") / "derived_q_matrix_slice_eval.csv"
@@ -435,19 +445,41 @@ def _format_overlap(row: pd.Series) -> str:
     return "partial_seen"
 
 
-def add_slice_features(frame: pd.DataFrame, train_frame: pd.DataFrame) -> pd.DataFrame:
+def add_slice_features(
+    frame: pd.DataFrame,
+    *,
+    student_history_frame: pd.DataFrame,
+    global_train_frame: pd.DataFrame,
+    q_matrix: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     enriched = frame.copy()
 
-    student_count = train_frame.groupby("stu_id").size()
-    student_acc = train_frame.groupby("stu_id")["label"].mean()
-    exercise_count = train_frame.groupby("exer_id").size()
-    exercise_acc = train_frame.groupby("exer_id")["label"].mean()
+    student_count = student_history_frame.groupby("stu_id").size()
+    student_acc = student_history_frame.groupby("stu_id")["label"].mean()
+    exercise_count = global_train_frame.groupby("exer_id").size()
+    exercise_acc = global_train_frame.groupby("exer_id")["label"].mean()
 
+    exercise_concepts: dict[str, set[str]] = {}
+    if q_matrix is not None:
+        for row in q_matrix.itertuples(index=False):
+            exercise_concepts.setdefault(str(row.exer_id), set()).update(
+                normalize_concept_sequence(row.cpt_seq)
+            )
     student_concepts: dict[Any, set[str]] = {}
-    for row in train_frame.itertuples(index=False):
-        student_concepts.setdefault(row.stu_id, set()).update(normalize_concept_sequence(row.cpt_seq))
+    for row in student_history_frame.itertuples(index=False):
+        concepts = (
+            exercise_concepts.get(str(row.exer_id), set())
+            if q_matrix is not None
+            else set(normalize_concept_sequence(row.cpt_seq))
+        )
+        student_concepts.setdefault(row.stu_id, set()).update(concepts)
 
-    enriched["concepts"] = enriched["cpt_seq"].map(normalize_concept_sequence)
+    enriched["concepts"] = [
+        sorted(exercise_concepts.get(str(row.exer_id), set()))
+        if q_matrix is not None
+        else normalize_concept_sequence(row.cpt_seq)
+        for row in enriched.itertuples(index=False)
+    ]
     enriched["concept_count"] = enriched["concepts"].map(len)
     enriched["student_history_count"] = enriched["stu_id"].map(student_count).fillna(0).astype(int)
     enriched["student_history_acc"] = enriched["stu_id"].map(student_acc)
@@ -516,6 +548,10 @@ def main() -> None:
         args.valid_interactions = summary.get("valid_interactions")
     if args.test_interactions is None:
         args.test_interactions = summary.get("test_interactions")
+    if args.valid_history_interactions is None:
+        args.valid_history_interactions = summary.get("valid_history_interactions")
+    if args.test_history_interactions is None:
+        args.test_history_interactions = summary.get("test_history_interactions")
     if args.q_matrix is None:
         args.q_matrix = summary.get("q_matrix")
     if args.concept_graph is None:
@@ -531,11 +567,15 @@ def main() -> None:
         args.valid_interactions,
         args.test_interactions,
         args.q_matrix,
+        valid_history_path=args.valid_history_interactions,
+        test_history_path=args.test_history_interactions,
     )
     bundles = prepare_experiment_split_bundles(
         train_interactions_path=args.train_interactions,
         valid_interactions_path=args.valid_interactions,
         test_interactions_path=args.test_interactions,
+        valid_history_interactions_path=args.valid_history_interactions,
+        test_history_interactions_path=args.test_history_interactions,
         q_matrix_path=q_matrix_path,
         concept_graph_path=args.concept_graph,
     )
@@ -549,7 +589,13 @@ def main() -> None:
         device=device,
     )
     prediction_frame = predict_bundle(bundle=bundles[args.split], model=model, device=device)
-    enriched = add_slice_features(prediction_frame, bundles["train"].interactions)
+    target_bundle = bundles[args.split]
+    enriched = add_slice_features(
+        prediction_frame,
+        student_history_frame=target_bundle.history_interactions,
+        global_train_frame=bundles["train"].interactions,
+        q_matrix=bundles["shared"]["q_matrix"],
+    )
 
     slice_columns = [
         "student_history_count_bin",

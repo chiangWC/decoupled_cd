@@ -42,6 +42,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-interactions", default=None, help="Override train split path for every summary.")
     parser.add_argument("--valid-interactions", default=None, help="Override valid split path for every summary.")
     parser.add_argument("--test-interactions", default=None, help="Override test split path for every summary.")
+    parser.add_argument(
+        "--valid-history-interactions",
+        default=None,
+        help="Override validation support-history path for every summary.",
+    )
+    parser.add_argument(
+        "--test-history-interactions",
+        default=None,
+        help="Override test support-history path for every summary.",
+    )
     parser.add_argument("--q-matrix", default=None, help="Override Q-matrix path for every summary.")
     parser.add_argument("--concept-graph", default=None, help="Override concept graph path for every summary.")
     parser.add_argument("--hide-ratios", default="0.2,0.4,0.6,0.8")
@@ -140,6 +150,18 @@ def resolve_split_paths(summary: dict[str, Any], args: argparse.Namespace) -> di
     test_path = args.test_interactions or summary.get("test_interactions")
     if not all([train_path, valid_path, test_path]):
         raise ValueError("History hiding stress evaluation requires train/valid/test interaction paths.")
+    valid_history_path = (
+        args.valid_history_interactions
+        or summary.get("valid_history_interactions")
+    )
+    test_history_path = (
+        args.test_history_interactions
+        or summary.get("test_history_interactions")
+    )
+    if (valid_history_path is None) != (test_history_path is None):
+        raise ValueError(
+            "Validation and test support-history paths must be provided together."
+        )
 
     q_matrix_path = args.q_matrix or summary.get("q_matrix")
     if q_matrix_path is not None and not Path(str(q_matrix_path)).exists():
@@ -149,12 +171,24 @@ def resolve_split_paths(summary: dict[str, Any], args: argparse.Namespace) -> di
         str(valid_path),
         str(test_path),
         None if q_matrix_path is None else str(q_matrix_path),
+        valid_history_path=(
+            None if valid_history_path is None else str(valid_history_path)
+        ),
+        test_history_path=(
+            None if test_history_path is None else str(test_history_path)
+        ),
     )
 
     return {
         "train_interactions": str(train_path),
         "valid_interactions": str(valid_path),
         "test_interactions": str(test_path),
+        "valid_history_interactions": (
+            None if valid_history_path is None else str(valid_history_path)
+        ),
+        "test_history_interactions": (
+            None if test_history_path is None else str(test_history_path)
+        ),
         "q_matrix": str(q_matrix_path),
         "concept_graph": args.concept_graph or summary.get("concept_graph"),
         "prerequisite_graph": summary.get("prerequisite_graph"),
@@ -170,6 +204,12 @@ def prepare_bundles(summary: dict[str, Any], args: argparse.Namespace | None = N
             valid_interactions_path=str(paths["valid_interactions"]),
             test_interactions_path=str(paths["test_interactions"]),
             q_matrix_path=str(paths["q_matrix"]),
+            valid_history_interactions_path=paths.get(
+                "valid_history_interactions"
+            ),
+            test_history_interactions_path=paths.get(
+                "test_history_interactions"
+            ),
             concept_graph_path=paths.get("concept_graph"),
             prerequisite_graph_path=paths.get("prerequisite_graph"),
             similarity_graph_path=paths.get("similarity_graph"),
@@ -180,6 +220,12 @@ def prepare_bundles(summary: dict[str, Any], args: argparse.Namespace | None = N
         valid_interactions_path=summary["valid_interactions"],
         test_interactions_path=summary["test_interactions"],
         q_matrix_path=summary["q_matrix"],
+        valid_history_interactions_path=summary.get(
+            "valid_history_interactions"
+        ),
+        test_history_interactions_path=summary.get(
+            "test_history_interactions"
+        ),
         concept_graph_path=summary.get("concept_graph"),
         prerequisite_graph_path=summary.get("prerequisite_graph"),
         similarity_graph_path=summary.get("similarity_graph"),
@@ -217,6 +263,7 @@ def build_hidden_bundle(
         student_id_map=bundle.student_id_map,
         exercise_id_map=bundle.exercise_id_map,
         concept_id_map=bundle.concept_id_map,
+        q_matrix=bundle.q_matrix,
     )
     exercise_evidence = (
         bundle.exercise_evidence_tensor if keep_exercise_evidence else history_tensors["exercise_evidence_tensor"]
@@ -460,8 +507,17 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     for summary_path, model_name in zip(summary_paths, model_names, strict=True):
         summary = normalize_summary_for_current_loader(load_summary(summary_path))
+        paths = resolve_split_paths(summary, args)
+        separate_history = paths["valid_history_interactions"] is not None
+        if separate_history and not args.keep_exercise_evidence:
+            raise ValueError(
+                "--no-keep-exercise-evidence is invalid for a student-disjoint "
+                "support/query protocol because exercise evidence must remain "
+                "optimizer-train-only."
+            )
         bundles = prepare_bundles(summary, args)
         target_bundle = bundles[args.split]
+        base_history = target_bundle.history_interactions
         model = load_model(
             summary=summary,
             checkpoint_path=summary["best_checkpoint_path"],
@@ -476,7 +532,7 @@ def main() -> None:
             device=device,
             coverage_masks=coverage_masks,
         )
-        original_history_rows = int(len(bundles["train"].interactions))
+        original_history_rows = int(len(base_history))
         rows.append(
             {
                 "dataset": args.dataset_name,
@@ -495,7 +551,7 @@ def main() -> None:
                 "original_history_rows": original_history_rows,
                 "hidden_history_rows": original_history_rows,
                 "hidden_history_ratio": 1.0,
-                "mask_hash": history_mask_hash(bundles["train"].interactions),
+                "mask_hash": history_mask_hash(base_history),
                 "original_zero_auc": original_metrics["zero_auc"],
                 "hidden_zero_auc": original_metrics["zero_auc"],
                 "delta_zero_auc": 0.0,
@@ -507,7 +563,7 @@ def main() -> None:
         for hide_ratio in args.hide_ratios:
             for mask_seed in args.mask_seeds:
                 masked_history = mask_train_history_interactions(
-                    bundles["train"].interactions,
+                    base_history,
                     hide_ratio=hide_ratio,
                     seed=mask_seed,
                 )
