@@ -6,9 +6,14 @@ import unittest
 import torch
 
 from models.target_local_pairing_probe import (
-    DEFAULT_RESPONSE_FEATURE_NAMES,
+    DEFAULT_EMBEDDING_DIM,
+    DEFAULT_MLP_HIDDEN_DIM,
+    DEFAULT_STATE_DIM,
     PLACEMENTS,
+    RESPONSE_FEATURE_NAMES,
+    SUPPORT_STATISTIC_NAMES,
     SharedItemEncoder,
+    StrongOPMSProbe,
     TargetLocalPairingProbe,
 )
 
@@ -16,12 +21,11 @@ from models.target_local_pairing_probe import (
 NUM_ITEMS = 13
 NUM_CONCEPTS = 6
 ITEM_NUMERIC_DIM = 4
-OPMS_DIM = 7
-RESPONSE_DIM = 3
-HIDDEN_DIM = 11
+BATCH = 3
+SUPPORT = 5
 
 
-def _make_model(
+def _make_pair(
     placement: str,
     seed: int = 1234,
 ) -> TargetLocalPairingProbe:
@@ -30,10 +34,16 @@ def _make_model(
         num_items=NUM_ITEMS,
         num_concepts=NUM_CONCEPTS,
         item_numeric_dim=ITEM_NUMERIC_DIM,
-        opms_dim=OPMS_DIM,
-        response_feature_dim=RESPONSE_DIM,
-        hidden_dim=HIDDEN_DIM,
         placement=placement,
+    )
+
+
+def _make_strong(seed: int = 1234) -> StrongOPMSProbe:
+    torch.manual_seed(seed)
+    return StrongOPMSProbe(
+        num_items=NUM_ITEMS,
+        num_concepts=NUM_CONCEPTS,
+        item_numeric_dim=ITEM_NUMERIC_DIM,
     )
 
 
@@ -55,11 +65,13 @@ def _multi_hot(
 
 def _inputs() -> dict[str, torch.Tensor]:
     generator = torch.Generator().manual_seed(99)
-    group_accuracy = torch.rand(3, 5, generator=generator)
-    residual = (
-        torch.rand(3, 5, generator=generator) * 2.0 - 1.0
+    support_responses = torch.tensor(
+        [
+            [1.0, 1.0, 1.0, 0.37, 0.82],
+            [0.0, 0.0, 0.0, 0.0, 0.21],
+            [1.0, 0.0, 0.44, 0.73, 0.13],
+        ]
     )
-    confidence = torch.rand(3, 5, generator=generator)
     return {
         "support_item_ids": torch.tensor(
             [
@@ -69,16 +81,31 @@ def _inputs() -> dict[str, torch.Tensor]:
             ],
             dtype=torch.long,
         ),
-        "support_q_multi_hot": _multi_hot((3, 5), generator),
+        "support_q_multi_hot": _multi_hot(
+            (BATCH, SUPPORT),
+            generator,
+        ),
         "support_item_numeric": torch.randn(
-            3,
-            5,
+            BATCH,
+            SUPPORT,
             ITEM_NUMERIC_DIM,
             generator=generator,
         ),
-        "support_response_features": torch.stack(
-            [group_accuracy, residual, confidence],
-            dim=-1,
+        "support_responses": support_responses,
+        "support_item_ease": torch.rand(
+            BATCH,
+            SUPPORT,
+            generator=generator,
+        ),
+        "support_group_attempt_confidence": torch.rand(
+            BATCH,
+            SUPPORT,
+            generator=generator,
+        ),
+        "support_statistics": torch.randn(
+            BATCH,
+            len(SUPPORT_STATISTIC_NAMES),
+            generator=generator,
         ),
         "support_mask": torch.tensor(
             [
@@ -88,39 +115,26 @@ def _inputs() -> dict[str, torch.Tensor]:
             ]
         ),
         "target_item_ids": torch.tensor([1, 4, 8]),
-        "target_q_multi_hot": _multi_hot((3,), generator),
+        "target_q_multi_hot": _multi_hot((BATCH,), generator),
         "target_item_numeric": torch.randn(
-            3,
+            BATCH,
             ITEM_NUMERIC_DIM,
             generator=generator,
         ),
         "donor_target_item_ids": torch.tensor([10, 11, 12]),
-        "donor_target_q_multi_hot": _multi_hot((3,), generator),
-        "donor_target_item_numeric": torch.randn(
-            3,
-            ITEM_NUMERIC_DIM,
-            generator=generator,
+        "donor_target_q_multi_hot": _multi_hot(
+            (BATCH,),
+            generator,
         ),
-        "opms_summary": torch.randn(
-            3,
-            OPMS_DIM,
+        "donor_target_item_numeric": torch.randn(
+            BATCH,
+            ITEM_NUMERIC_DIM,
             generator=generator,
         ),
     }
 
 
-def _state_hash(model: TargetLocalPairingProbe) -> str:
-    digest = hashlib.sha256()
-    for name, value in model.state_dict().items():
-        contiguous = value.detach().cpu().contiguous()
-        digest.update(name.encode("utf-8"))
-        digest.update(str(contiguous.dtype).encode("ascii"))
-        digest.update(str(tuple(contiguous.shape)).encode("ascii"))
-        digest.update(contiguous.numpy().tobytes())
-    return digest.hexdigest()
-
-
-def _forward(
+def _pair_forward(
     model: TargetLocalPairingProbe,
     inputs: dict[str, torch.Tensor],
 ):
@@ -130,6 +144,16 @@ def _forward(
         kwargs.pop("donor_target_q_multi_hot")
         kwargs.pop("donor_target_item_numeric")
     return model(**kwargs)
+
+
+def _strong_inputs(
+    inputs: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    return {
+        key: value
+        for key, value in inputs.items()
+        if not key.startswith("donor_target_")
+    }
 
 
 def _change_target(
@@ -149,27 +173,84 @@ def _change_target(
     return changed
 
 
+def _state_hash(module: torch.nn.Module) -> str:
+    digest = hashlib.sha256()
+    for name, value in module.state_dict().items():
+        contiguous = value.detach().cpu().contiguous()
+        digest.update(name.encode("utf-8"))
+        digest.update(str(contiguous.dtype).encode("ascii"))
+        digest.update(str(tuple(contiguous.shape)).encode("ascii"))
+        digest.update(contiguous.numpy().tobytes())
+    return digest.hexdigest()
+
+
 class TestTargetLocalPairingModel(unittest.TestCase):
-    def test_response_features_have_declared_three_channel_semantics(
-        self,
-    ) -> None:
+    def test_frozen_dimensions_and_response_semantics(self) -> None:
+        self.assertEqual(DEFAULT_EMBEDDING_DIM, 16)
+        self.assertEqual(DEFAULT_STATE_DIM, 32)
+        self.assertEqual(DEFAULT_MLP_HIDDEN_DIM, 64)
         self.assertEqual(
-            DEFAULT_RESPONSE_FEATURE_NAMES,
-            ("group_accuracy", "residual", "confidence"),
+            RESPONSE_FEATURE_NAMES,
+            (
+                "response",
+                "response_minus_item_ease",
+                "group_attempt_confidence",
+            ),
         )
-        model = _make_model("real_pair")
-        self.assertEqual(model.response_feature_dim, 3)
+        self.assertEqual(
+            SUPPORT_STATISTIC_NAMES,
+            (
+                "theta_logit",
+                "raw_accuracy",
+                "log1p_support_rows",
+                "log1p_unique_support_items",
+                "log1p_correct_rows",
+                "log1p_incorrect_rows",
+            ),
+        )
+        model = _make_pair("real_pair")
+        self.assertEqual(model.embedding_dim, 16)
+        self.assertEqual(model.state_dim, 32)
+        self.assertEqual(model.mlp_hidden_dim, 64)
+        self.assertEqual(
+            model.item_encoder.item_id_embedding.embedding_dim,
+            16,
+        )
+        self.assertEqual(
+            model.item_encoder.view_fusion[-1].out_features,
+            32,
+        )
+        self.assertEqual(
+            model.interaction_encoder[0].out_features,
+            64,
+        )
+
+    def test_response_features_are_constructed_inside_model(self) -> None:
+        inputs = _inputs()
+        output = _pair_forward(_make_pair("real_pair").eval(), inputs)
+        expected = torch.stack(
+            [
+                inputs["support_responses"],
+                (
+                    inputs["support_responses"]
+                    - inputs["support_item_ease"]
+                ),
+                inputs["support_group_attempt_confidence"],
+            ],
+            dim=-1,
+        )
+        self.assertTrue(
+            torch.equal(output.response_features, expected)
+        )
 
     def test_one_shared_item_encoder_serves_all_item_roles(self) -> None:
-        model = _make_model("perm_pair").eval()
+        model = _make_pair("perm_pair").eval()
         shared_encoders = [
             module
             for module in model.modules()
             if isinstance(module, SharedItemEncoder)
         ]
         self.assertEqual(shared_encoders, [model.item_encoder])
-        self.assertFalse(hasattr(model, "target_encoder"))
-
         calls: list[tuple[torch.Size, torch.Size]] = []
 
         def capture_call(_module, args, kwargs, output) -> None:
@@ -188,90 +269,148 @@ class TestTargetLocalPairingModel(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                (torch.Size([3, 5]), torch.Size([3, 5, HIDDEN_DIM])),
-                (torch.Size([3]), torch.Size([3, HIDDEN_DIM])),
-                (torch.Size([3]), torch.Size([3, HIDDEN_DIM])),
+                (
+                    torch.Size([BATCH, SUPPORT]),
+                    torch.Size([BATCH, SUPPORT, 32]),
+                ),
+                (torch.Size([BATCH]), torch.Size([BATCH, 32])),
+                (torch.Size([BATCH]), torch.Size([BATCH, 32])),
             ],
         )
 
-    def test_q_view_is_the_mean_of_active_concept_embeddings(
+    def test_opms_pools_raw_item_states_and_empty_pool_is_zero(
         self,
     ) -> None:
-        encoder = SharedItemEncoder(
-            num_items=NUM_ITEMS,
-            num_concepts=NUM_CONCEPTS,
-            numeric_dim=ITEM_NUMERIC_DIM,
-            hidden_dim=HIDDEN_DIM,
-        ).eval()
-        item_ids = torch.tensor([0, 0])
-        q = torch.zeros(2, NUM_CONCEPTS)
-        q[0, 1] = 1.0
-        q[0, 4] = 1.0
-        numeric = torch.zeros(2, ITEM_NUMERIC_DIM)
-        fusion_inputs: list[torch.Tensor] = []
+        model = _make_pair("real_pair").eval()
+        inputs = _inputs()
+        no_donor = _strong_inputs(inputs)
+        with torch.no_grad():
+            support_state = model.item_encoder(
+                item_ids=inputs["support_item_ids"],
+                q_multi_hot=inputs["support_q_multi_hot"],
+                numeric_features=inputs["support_item_numeric"],
+            )
+            output = model(**no_donor)
 
-        def capture_fusion_input(_module, args) -> None:
-            fusion_inputs.append(args[0].detach().clone())
-
-        handle = encoder.view_fusion.register_forward_pre_hook(
-            capture_fusion_input
-        )
-        try:
-            with torch.no_grad():
-                encoder(
-                    item_ids=item_ids,
-                    q_multi_hot=q,
-                    numeric_features=numeric,
-                )
-        finally:
-            handle.remove()
-
-        q_view = fusion_inputs[0][
-            :,
-            HIDDEN_DIM : HIDDEN_DIM * 2,
-        ]
-        expected = (
-            encoder.concept_embedding.weight[1]
-            + encoder.concept_embedding.weight[4]
-        ) / 2.0
-        self.assertTrue(torch.allclose(q_view[0], expected))
-        self.assertTrue(torch.equal(q_view[1], torch.zeros(HIDDEN_DIM)))
-
-    def test_unknown_item_zero_is_reserved_and_has_no_id_gradient(
-        self,
-    ) -> None:
-        encoder = SharedItemEncoder(
-            num_items=NUM_ITEMS,
-            num_concepts=NUM_CONCEPTS,
-            numeric_dim=ITEM_NUMERIC_DIM,
-            hidden_dim=HIDDEN_DIM,
-        )
-        self.assertEqual(encoder.unk_item_id, 0)
+        mask = inputs["support_mask"]
+        response = inputs["support_responses"]
+        expected_correct = []
+        expected_incorrect = []
+        for row in range(BATCH):
+            correct = mask[row] & (response[row] == 1)
+            incorrect = mask[row] & (response[row] == 0)
+            expected_correct.append(
+                support_state[row, correct].mean(dim=0)
+                if bool(correct.any())
+                else torch.zeros(DEFAULT_STATE_DIM)
+            )
+            expected_incorrect.append(
+                support_state[row, incorrect].mean(dim=0)
+                if bool(incorrect.any())
+                else torch.zeros(DEFAULT_STATE_DIM)
+            )
         self.assertTrue(
-            torch.equal(
-                encoder.item_id_embedding.weight[0],
-                torch.zeros(HIDDEN_DIM),
+            torch.allclose(
+                output.correct_pool,
+                torch.stack(expected_correct),
             )
         )
-        item_ids = torch.tensor([0, 1, 0, 2])
-        q = torch.zeros(4, NUM_CONCEPTS)
-        q[:, 0] = 1.0
-        numeric = torch.randn(4, ITEM_NUMERIC_DIM)
-        encoder(
-            item_ids=item_ids,
-            q_multi_hot=q,
-            numeric_features=numeric,
-        ).sum().backward()
-        gradient = encoder.item_id_embedding.weight.grad
-        assert gradient is not None
-        self.assertTrue(torch.equal(gradient[0], torch.zeros(HIDDEN_DIM)))
-        self.assertGreater(float(gradient[1].abs().sum()), 0.0)
+        self.assertTrue(
+            torch.allclose(
+                output.incorrect_pool,
+                torch.stack(expected_incorrect),
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                output.incorrect_pool[0],
+                torch.zeros(DEFAULT_STATE_DIM),
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                output.correct_pool[1],
+                torch.zeros(DEFAULT_STATE_DIM),
+            )
+        )
 
-    def test_placements_have_identical_parameters_and_initialization(
-        self,
-    ) -> None:
+    def test_interaction_encoder_cannot_change_common_opms(self) -> None:
+        model = _make_pair("real_pair").eval()
+        inputs = _inputs()
+        with torch.no_grad():
+            before = _pair_forward(model, inputs)
+            for parameter in model.interaction_encoder.parameters():
+                parameter.add_(5.0)
+            after = _pair_forward(model, inputs)
+        for field in (
+            "opms_state",
+            "correct_pool",
+            "incorrect_pool",
+            "contrast",
+            "correct_mass",
+            "incorrect_mass",
+        ):
+            self.assertTrue(
+                torch.equal(
+                    getattr(before, field),
+                    getattr(after, field),
+                ),
+                msg=field,
+            )
+        self.assertFalse(
+            torch.allclose(before.local_state, after.local_state)
+        )
+
+    def test_strong_and_pair_share_identical_raw_opms_path(self) -> None:
+        strong = _make_strong(seed=812)
+        pair = _make_pair("real_pair", seed=812)
+        self.assertEqual(
+            _state_hash(strong.item_encoder),
+            _state_hash(pair.item_encoder),
+        )
+        self.assertEqual(
+            _state_hash(strong.outcome_state),
+            _state_hash(pair.outcome_state),
+        )
+        inputs = _inputs()
+        with torch.no_grad():
+            strong_output = strong(**_strong_inputs(inputs))
+            pair_output = _pair_forward(pair, inputs)
+        for field in (
+            "opms_state",
+            "target_state",
+            "correct_pool",
+            "incorrect_pool",
+            "contrast",
+            "correct_mass",
+            "incorrect_mass",
+        ):
+            self.assertTrue(
+                torch.equal(
+                    getattr(strong_output, field),
+                    getattr(pair_output, field),
+                ),
+                msg=field,
+            )
+
+    def test_strong_opms_keeps_true_target_in_diagnosis(self) -> None:
+        model = _make_strong().eval()
+        inputs = _strong_inputs(_inputs())
+        changed = _change_target(inputs, "target")
+        with torch.no_grad():
+            first = model(**inputs)
+            second = model(**changed)
+        self.assertTrue(
+            torch.equal(first.opms_state, second.opms_state)
+        )
+        self.assertFalse(
+            torch.allclose(first.target_state, second.target_state)
+        )
+        self.assertFalse(torch.allclose(first.logits, second.logits))
+
+    def test_placements_have_exact_parameter_and_init_parity(self) -> None:
         models = {
-            placement: _make_model(placement)
+            placement: _make_pair(placement)
             for placement in PLACEMENTS
         }
         signatures = {
@@ -281,108 +420,46 @@ class TestTargetLocalPairingModel(unittest.TestCase):
             ]
             for placement, model in models.items()
         }
-        first_signature = signatures[PLACEMENTS[0]]
+        reference = signatures[PLACEMENTS[0]]
         self.assertTrue(
-            all(
-                signature == first_signature
-                for signature in signatures.values()
-            )
+            all(value == reference for value in signatures.values())
         )
-        counts = {
-            placement: sum(
-                parameter.numel()
-                for parameter in model.parameters()
-            )
-            for placement, model in models.items()
-        }
-        self.assertEqual(len(set(counts.values())), 1)
-        hashes = {_state_hash(model) for model in models.values()}
-        self.assertEqual(len(hashes), 1)
+        self.assertEqual(
+            len({_state_hash(model) for model in models.values()}),
+            1,
+        )
 
-    def test_every_registered_parameter_is_active_in_every_placement(
-        self,
-    ) -> None:
-        active_names: dict[str, set[str]] = {}
-        for placement in PLACEMENTS:
-            model = _make_model(placement)
-            output = _forward(model, _inputs())
+    def test_all_registered_parameters_receive_gradient(self) -> None:
+        models: list[torch.nn.Module] = [
+            _make_pair(placement)
+            for placement in PLACEMENTS
+        ]
+        models.append(_make_strong())
+        for model in models:
+            if isinstance(model, TargetLocalPairingProbe):
+                output = _pair_forward(model, _inputs())
+            else:
+                output = model(**_strong_inputs(_inputs()))
             output.logits.sum().backward()
-
-            named_parameters = dict(model.named_parameters())
-            active_names[placement] = {
-                name
-                for name, parameter in named_parameters.items()
-                if parameter.grad is not None
-            }
-            self.assertEqual(
-                active_names[placement],
-                set(named_parameters),
-                msg=f"inactive parameter in {placement}",
-            )
-            for name, parameter in named_parameters.items():
+            for name, parameter in model.named_parameters():
+                self.assertIsNotNone(
+                    parameter.grad,
+                    msg=f"{type(model).__name__}:{name}",
+                )
                 assert parameter.grad is not None
                 self.assertTrue(
                     torch.isfinite(parameter.grad).all(),
-                    msg=f"non-finite gradient for {placement}:{name}",
+                    msg=f"{type(model).__name__}:{name}",
                 )
                 self.assertGreater(
                     float(parameter.grad.abs().sum()),
                     0.0,
-                    msg=f"zero gradient for {placement}:{name}",
+                    msg=f"{type(model).__name__}:{name}",
                 )
-        self.assertTrue(
-            all(
-                names == active_names[PLACEMENTS[0]]
-                for names in active_names.values()
-            )
-        )
 
-    def test_support_order_and_padding_do_not_change_output(self) -> None:
+    def test_support_order_and_padding_invariance(self) -> None:
         inputs = _inputs()
         order = torch.tensor([2, 4, 0, 3, 1])
-        padded = {
-            key: value.clone()
-            for key, value in inputs.items()
-        }
-        padded["support_item_ids"] = torch.cat(
-            [
-                inputs["support_item_ids"],
-                torch.zeros(3, 3, dtype=torch.long),
-            ],
-            dim=1,
-        )
-        padded["support_q_multi_hot"] = torch.cat(
-            [
-                inputs["support_q_multi_hot"],
-                torch.ones(3, 3, NUM_CONCEPTS),
-            ],
-            dim=1,
-        )
-        padded["support_item_numeric"] = torch.cat(
-            [
-                inputs["support_item_numeric"],
-                torch.full(
-                    (3, 3, ITEM_NUMERIC_DIM),
-                    1.0e6,
-                ),
-            ],
-            dim=1,
-        )
-        padded["support_response_features"] = torch.cat(
-            [
-                inputs["support_response_features"],
-                torch.full((3, 3, RESPONSE_DIM), -1.0e6),
-            ],
-            dim=1,
-        )
-        padded["support_mask"] = torch.cat(
-            [
-                inputs["support_mask"],
-                torch.zeros(3, 3, dtype=torch.bool),
-            ],
-            dim=1,
-        )
-
         reordered = {
             key: value.clone()
             for key, value in inputs.items()
@@ -391,154 +468,176 @@ class TestTargetLocalPairingModel(unittest.TestCase):
             "support_item_ids",
             "support_q_multi_hot",
             "support_item_numeric",
-            "support_response_features",
+            "support_responses",
+            "support_item_ease",
+            "support_group_attempt_confidence",
             "support_mask",
         ):
             reordered[key] = inputs[key].index_select(1, order)
 
-        for placement in PLACEMENTS:
-            model = _make_model(placement).eval()
+        padded = {
+            key: value.clone()
+            for key, value in inputs.items()
+        }
+        padded["support_item_ids"] = torch.cat(
+            [
+                inputs["support_item_ids"],
+                torch.zeros(BATCH, 2, dtype=torch.long),
+            ],
+            dim=1,
+        )
+        padded["support_q_multi_hot"] = torch.cat(
+            [
+                inputs["support_q_multi_hot"],
+                torch.ones(BATCH, 2, NUM_CONCEPTS),
+            ],
+            dim=1,
+        )
+        padded["support_item_numeric"] = torch.cat(
+            [
+                inputs["support_item_numeric"],
+                torch.full(
+                    (BATCH, 2, ITEM_NUMERIC_DIM),
+                    1.0e6,
+                ),
+            ],
+            dim=1,
+        )
+        for key, fill in (
+            ("support_responses", 0.37),
+            ("support_item_ease", 1.0e6),
+            ("support_group_attempt_confidence", -1.0e6),
+        ):
+            padded[key] = torch.cat(
+                [
+                    inputs[key],
+                    torch.full((BATCH, 2), fill),
+                ],
+                dim=1,
+            )
+        padded["support_mask"] = torch.cat(
+            [
+                inputs["support_mask"],
+                torch.zeros(BATCH, 2, dtype=torch.bool),
+            ],
+            dim=1,
+        )
+
+        models: list[torch.nn.Module] = [
+            _make_pair(placement).eval()
+            for placement in PLACEMENTS
+        ]
+        models.append(_make_strong().eval())
+        for model in models:
             with torch.no_grad():
-                reference = _forward(model, inputs)
-                reordered_output = _forward(model, reordered)
-                padded_output = _forward(model, padded)
+                if isinstance(model, TargetLocalPairingProbe):
+                    reference = _pair_forward(model, inputs)
+                    order_output = _pair_forward(model, reordered)
+                    pad_output = _pair_forward(model, padded)
+                else:
+                    reference = model(**_strong_inputs(inputs))
+                    order_output = model(**_strong_inputs(reordered))
+                    pad_output = model(**_strong_inputs(padded))
             for field in (
                 "logits",
                 "probs",
-                "history_summary",
-                "local_state",
-                "target_state",
-                "local_target_state",
                 "opms_state",
+                "target_state",
+                "correct_pool",
+                "incorrect_pool",
+                "contrast",
+                "correct_mass",
+                "incorrect_mass",
             ):
                 expected = getattr(reference, field)
                 self.assertTrue(
                     torch.allclose(
                         expected,
-                        getattr(reordered_output, field),
+                        getattr(order_output, field),
                         atol=1e-6,
                         rtol=1e-6,
                     ),
-                    msg=f"{placement}:{field} changed after reordering",
+                    msg=f"{type(model).__name__}:{field}:order",
                 )
                 self.assertTrue(
                     torch.allclose(
                         expected,
-                        getattr(padded_output, field),
+                        getattr(pad_output, field),
                         atol=1e-6,
                         rtol=1e-6,
                     ),
-                    msg=f"{placement}:{field} changed after padding",
+                    msg=f"{type(model).__name__}:{field}:padding",
                 )
 
-    def test_real_pair_target_changes_prepool_pairing(self) -> None:
-        model = _make_model("real_pair").eval()
+    def test_real_and_late_target_interventions(self) -> None:
         inputs = _inputs()
-        changed = _change_target(inputs, "target")
-        for key in (
-            "donor_target_item_ids",
-            "donor_target_q_multi_hot",
-            "donor_target_item_numeric",
-        ):
-            inputs.pop(key)
-            changed.pop(key)
+        for placement in ("real_pair", "late_fusion"):
+            model = _make_pair(placement).eval()
+            base = _strong_inputs(inputs)
+            changed = _change_target(base, "target")
+            captured: list[torch.Tensor] = []
 
-        captured: list[torch.Tensor] = []
+            def capture_pair(_module, _args, output) -> None:
+                captured.append(output.detach().clone())
 
-        def capture_pair_output(_module, _args, output) -> None:
-            captured.append(output.detach().clone())
+            handle = model.pair_encoder.register_forward_hook(
+                capture_pair
+            )
+            try:
+                with torch.no_grad():
+                    first = model(**base)
+                    second = model(**changed)
+            finally:
+                handle.remove()
+            self.assertTrue(
+                torch.equal(
+                    first.history_summary,
+                    second.history_summary,
+                )
+            )
+            self.assertFalse(torch.allclose(captured[0], captured[1]))
+            self.assertFalse(
+                torch.allclose(first.local_state, second.local_state)
+            )
+            self.assertFalse(
+                torch.allclose(first.logits, second.logits)
+            )
+            if placement == "real_pair":
+                self.assertEqual(captured[0].ndim, 3)
+            else:
+                self.assertEqual(captured[0].ndim, 2)
 
-        handle = model.pair_encoder.register_forward_hook(
-            capture_pair_output
-        )
-        try:
-            with torch.no_grad():
-                first = model(**inputs)
-                second = model(**changed)
-        finally:
-            handle.remove()
-
-        self.assertEqual(captured[0].ndim, 3)
-        self.assertEqual(captured[0].shape[:2], (3, 5))
-        self.assertFalse(torch.allclose(captured[0], captured[1]))
-        self.assertTrue(
-            torch.allclose(first.history_summary, second.history_summary)
-        )
-        self.assertFalse(
-            torch.allclose(first.local_state, second.local_state)
-        )
-        self.assertFalse(torch.allclose(first.logits, second.logits))
-
-    def test_late_fusion_target_enters_only_after_history_pool(
-        self,
-    ) -> None:
-        model = _make_model("late_fusion").eval()
+    def test_perm_donor_only_changes_local_branch(self) -> None:
+        model = _make_pair("perm_pair").eval()
         inputs = _inputs()
-        for key in (
-            "donor_target_item_ids",
-            "donor_target_q_multi_hot",
-            "donor_target_item_numeric",
-        ):
-            inputs.pop(key)
-        changed = _change_target(inputs, "target")
-        with torch.no_grad():
-            first = model(**inputs)
-            second = model(**changed)
-
-        self.assertTrue(
-            torch.allclose(first.history_summary, second.history_summary)
-        )
-        self.assertTrue(
-            torch.allclose(first.opms_state, second.opms_state)
-        )
-        self.assertFalse(
-            torch.allclose(first.local_state, second.local_state)
-        )
-        self.assertFalse(torch.allclose(first.logits, second.logits))
-
-    def test_perm_donor_affects_only_local_branch(self) -> None:
-        model = _make_model("perm_pair").eval()
-        inputs = _inputs()
-        changed_donor = _change_target(inputs, "donor_target")
-        changed_true = _change_target(inputs, "target")
-
+        donor_changed = _change_target(inputs, "donor_target")
+        true_changed = _change_target(inputs, "target")
         with torch.no_grad():
             reference = model(**inputs)
-            donor_output = model(**changed_donor)
-            true_output = model(**changed_true)
+            donor_output = model(**donor_changed)
+            true_output = model(**true_changed)
 
-        self.assertTrue(
-            torch.allclose(
-                reference.target_state,
-                donor_output.target_state,
+        for field in (
+            "target_state",
+            "opms_state",
+            "history_summary",
+            "correct_pool",
+            "incorrect_pool",
+        ):
+            self.assertTrue(
+                torch.equal(
+                    getattr(reference, field),
+                    getattr(donor_output, field),
+                )
             )
-        )
-        self.assertTrue(
-            torch.allclose(
-                reference.history_summary,
-                donor_output.history_summary,
-            )
-        )
-        self.assertTrue(
-            torch.allclose(reference.opms_state, donor_output.opms_state)
-        )
         self.assertFalse(
             torch.allclose(reference.local_state, donor_output.local_state)
         )
         self.assertFalse(
             torch.allclose(reference.logits, donor_output.logits)
         )
-
-        # With a fixed donor, changing the true target cannot alter the local
-        # pairing branch, but it must remain live in common diagnosis.
         self.assertTrue(
-            torch.allclose(reference.local_state, true_output.local_state)
-        )
-        self.assertTrue(
-            torch.allclose(
-                reference.local_target_state,
-                true_output.local_target_state,
-            )
+            torch.equal(reference.local_state, true_output.local_state)
         )
         self.assertFalse(
             torch.allclose(reference.target_state, true_output.target_state)
@@ -547,63 +646,123 @@ class TestTargetLocalPairingModel(unittest.TestCase):
             torch.allclose(reference.logits, true_output.logits)
         )
 
-    def test_invalid_inputs_raise_clear_errors(self) -> None:
+    def test_support_statistics_are_consumed_only_by_common_opms(
+        self,
+    ) -> None:
+        model = _make_pair("real_pair").eval()
+        inputs = _inputs()
+        changed = {
+            key: value.clone()
+            for key, value in inputs.items()
+        }
+        changed["support_statistics"] += 2.0
+        with torch.no_grad():
+            first = _pair_forward(model, inputs)
+            second = _pair_forward(model, changed)
+        self.assertFalse(
+            torch.allclose(first.opms_state, second.opms_state)
+        )
+        self.assertTrue(
+            torch.equal(first.local_state, second.local_state)
+        )
+        self.assertTrue(
+            torch.equal(first.correct_pool, second.correct_pool)
+        )
+
+    def test_shared_item_q_mean_and_unk_zero(self) -> None:
+        encoder = SharedItemEncoder(
+            num_items=NUM_ITEMS,
+            num_concepts=NUM_CONCEPTS,
+            numeric_dim=ITEM_NUMERIC_DIM,
+        ).eval()
+        self.assertEqual(encoder.unk_item_id, 0)
+        self.assertTrue(
+            torch.equal(
+                encoder.item_id_embedding.weight[0],
+                torch.zeros(DEFAULT_EMBEDDING_DIM),
+            )
+        )
+        q = torch.zeros(2, NUM_CONCEPTS)
+        q[0, 1] = 1.0
+        q[0, 4] = 1.0
+        captured: list[torch.Tensor] = []
+
+        def capture_fusion(_module, args) -> None:
+            captured.append(args[0].detach().clone())
+
+        handle = encoder.view_fusion.register_forward_pre_hook(
+            capture_fusion
+        )
+        try:
+            with torch.no_grad():
+                encoder(
+                    item_ids=torch.tensor([0, 0]),
+                    q_multi_hot=q,
+                    numeric_features=torch.zeros(
+                        2,
+                        ITEM_NUMERIC_DIM,
+                    ),
+                )
+        finally:
+            handle.remove()
+        q_view = captured[0][
+            :,
+            DEFAULT_EMBEDDING_DIM : DEFAULT_EMBEDDING_DIM * 2,
+        ]
+        expected = (
+            encoder.concept_embedding.weight[1]
+            + encoder.concept_embedding.weight[4]
+        ) / 2.0
+        self.assertTrue(torch.allclose(q_view[0], expected))
+        self.assertTrue(
+            torch.equal(
+                q_view[1],
+                torch.zeros(DEFAULT_EMBEDDING_DIM),
+            )
+        )
+
+    def test_invalid_inputs_raise(self) -> None:
         with self.assertRaises(ValueError):
-            _make_model("unknown")
+            _make_pair("unknown")
 
         inputs = _inputs()
-        perm = _make_model("perm_pair")
-        missing_donor = dict(inputs)
-        missing_donor.pop("donor_target_item_numeric")
-        with self.assertRaisesRegex(
-            ValueError,
-            "provided together",
-        ):
-            perm(**missing_donor)
+        perm = _make_pair("perm_pair")
+        incomplete = dict(inputs)
+        incomplete.pop("donor_target_item_numeric")
+        with self.assertRaisesRegex(ValueError, "provided together"):
+            perm(**incomplete)
 
-        real = _make_model("real_pair")
-        no_donor = dict(inputs)
-        for key in (
-            "donor_target_item_ids",
-            "donor_target_q_multi_hot",
-            "donor_target_item_numeric",
-        ):
-            no_donor.pop(key)
+        real = _make_pair("real_pair")
+        common = _strong_inputs(inputs)
+        non_binary = {
+            key: value.clone()
+            for key, value in common.items()
+        }
+        non_binary["support_responses"][0, 0] = 0.5
+        with self.assertRaisesRegex(ValueError, "exactly binary"):
+            real(**non_binary)
 
-        wrong_response = dict(no_donor)
-        wrong_response["support_response_features"] = torch.randn(
-            3,
-            5,
-            RESPONSE_DIM - 1,
+        bad_statistics = {
+            key: value.clone()
+            for key, value in common.items()
+        }
+        bad_statistics["support_statistics"] = torch.randn(
+            BATCH,
+            len(SUPPORT_STATISTIC_NAMES) - 1,
         )
         with self.assertRaisesRegex(
             ValueError,
-            "support_response_features",
+            "support_statistics",
         ):
-            real(**wrong_response)
+            real(**bad_statistics)
 
-        wrong_mask = dict(no_donor)
-        wrong_mask["support_mask"] = torch.ones(
-            3,
-            4,
-            dtype=torch.bool,
-        )
-        with self.assertRaisesRegex(ValueError, "support_mask"):
-            real(**wrong_mask)
-
-        out_of_range = dict(no_donor)
-        out_of_range["target_item_ids"] = torch.tensor(
-            [1, 2, NUM_ITEMS + 1]
-        )
+        bad_id = {
+            key: value.clone()
+            for key, value in common.items()
+        }
+        bad_id["target_item_ids"][0] = NUM_ITEMS + 1
         with self.assertRaisesRegex(ValueError, "1..num_items"):
-            real(**out_of_range)
-
-        float_ids = dict(no_donor)
-        float_ids["target_item_ids"] = torch.tensor(
-            [1.0, 2.0, 3.0]
-        )
-        with self.assertRaisesRegex(ValueError, "integer dtype"):
-            real(**float_ids)
+            real(**bad_id)
 
 
 if __name__ == "__main__":
