@@ -169,8 +169,9 @@ bootstrap 每次重采样重新取三项差值最小值；Brier 与三个 contro
 
 ## 固定训练与揭盲
 
-四个 head 只在 optimizer query 训练，其 State 只来自 optimizer support；
-audit State 只来自 audit support。统一使用：
+四个 head 只在 optimizer query 中满足同一 eligible 定义的行上训练；
+其 State 只来自 optimizer support，audit State 只来自 audit support。
+统一使用：
 
 - seed 42，float32；
 - response BCE，无 auxiliary objective；
@@ -196,6 +197,20 @@ metric；OOM/非有限值明确失败，不改配方。
 Q3/Q4、去 top item/pair。曲面另报告固定 `g` 改变 `b` 的
 counterfactual gap、相对最佳加性投影的 interaction departure、以及是否
 塌缩为加性。叙事诊断不能救性能失败。
+
+### 曲面非塌缩的固定数值判据
+
+在读取任何 prediction 前，将 `item_offset=0`，在步长 0.05 的固定
+`b,g in {0.05,...,0.95}` 网格上枚举所有相邻 2x2 cells；只有四个角均
+满足 Q2 可实现域 `b <= g <= (1+b)/2` 的 cell 才参与。对每个 cell 计算
+
+```text
+interaction = F(b0,g0) - F(b0,g1) - F(b1,g0) + F(b1,g1)
+```
+
+`max(abs(interaction)) >= 0.001` 才记为 noncollapsed。该算法和阈值对
+两数据集相同；它只判断 Full 是否学到不可加性交互，不衡量效果好坏，
+也不能替代相对 Capacity/Standard NCD 的性能门。
 
 ## Stage 1 通过门
 
