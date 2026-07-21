@@ -419,7 +419,9 @@ class TestResponseCreditRunner(unittest.TestCase):
 
     def test_live_origin_check_requires_exact_branch_ref(self) -> None:
         advertised = SimpleNamespace(
-            stdout="abc123\trefs/heads/codex/student-local-inductive\n"
+            returncode=0,
+            stdout="abc123\trefs/heads/codex/student-local-inductive\n",
+            stderr="",
         )
         with patch(
             "scripts.run_response_credit_activation.subprocess.run",
@@ -440,6 +442,48 @@ class TestResponseCreditRunner(unittest.TestCase):
             ],
         )
 
+    def test_live_origin_retries_twice_then_succeeds(self) -> None:
+        responses = [
+            SimpleNamespace(returncode=128, stdout="", stderr="temporary one"),
+            SimpleNamespace(returncode=128, stdout="", stderr="temporary two"),
+            SimpleNamespace(
+                returncode=0,
+                stdout="abc123\trefs/heads/branch\n",
+                stderr="",
+            ),
+        ]
+        with (
+            patch(
+                "scripts.run_response_credit_activation.subprocess.run",
+                side_effect=responses,
+            ) as mocked,
+            patch("scripts.run_response_credit_activation.time.sleep") as sleep,
+        ):
+            self.assertEqual(_live_origin_branch_head("branch"), "abc123")
+        self.assertEqual(mocked.call_count, 3)
+        self.assertEqual(
+            [call.args[0] for call in sleep.call_args_list],
+            [0.5, 1.0],
+        )
+
+    def test_live_origin_final_failure_preserves_stderr(self) -> None:
+        responses = [
+            SimpleNamespace(returncode=128, stdout="", stderr="temporary one"),
+            SimpleNamespace(returncode=128, stdout="", stderr="temporary two"),
+            SimpleNamespace(returncode=128, stdout="", stderr="final network error"),
+        ]
+        with (
+            patch(
+                "scripts.run_response_credit_activation.subprocess.run",
+                side_effect=responses,
+            ) as mocked,
+            patch("scripts.run_response_credit_activation.time.sleep") as sleep,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "final network error"):
+                _live_origin_branch_head("branch")
+        self.assertEqual(mocked.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
     def test_formal_git_snapshot_rejects_live_origin_mismatch(self) -> None:
         outputs = iter(
             [
@@ -448,7 +492,11 @@ class TestResponseCreditRunner(unittest.TestCase):
                 SimpleNamespace(stdout="origin/branch\n"),
                 SimpleNamespace(stdout="branch\n"),
                 SimpleNamespace(stdout="local-head\n"),
-                SimpleNamespace(stdout="remote-head\trefs/heads/branch\n"),
+                SimpleNamespace(
+                    returncode=0,
+                    stdout="remote-head\trefs/heads/branch\n",
+                    stderr="",
+                ),
             ]
         )
         with patch(

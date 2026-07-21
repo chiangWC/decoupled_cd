@@ -246,12 +246,16 @@ while (( NEXT_TASK < ${#TASK_DATASETS[@]} || ${#RUNNING_PIDS[@]} > 0 )); do
   if (( ${#GPU_ROWS[@]} > 0 )); then
     mapfile -t GPU_ROWS < <(printf '%s\n' "${GPU_ROWS[@]}" | sort -t: -k1,1nr)
   fi
+  if (( NEXT_TASK < ${#TASK_DATASETS[@]} && ${#GPU_ROWS[@]} > 0 )); then
+    # One scheduler-level live-origin check per dispatch cycle. Every prediction
+    # runner still performs its own strict, retried live-origin verification.
+    assert_frozen_repository
+  fi
   for row in "${GPU_ROWS[@]}"; do
     if (( NEXT_TASK >= ${#TASK_DATASETS[@]} )); then
       break
     fi
     IFS=: read -r _score gpu free util <<<"$row"
-    assert_frozen_repository
     dataset="${TASK_DATASETS[$NEXT_TASK]}"
     variant="${TASK_VARIANTS[$NEXT_TASK]}"
     echo "Dispatching $dataset/$variant: gpu=$gpu free=${free}MiB util=${util}%" \

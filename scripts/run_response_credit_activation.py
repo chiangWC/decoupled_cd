@@ -10,6 +10,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import time
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -65,6 +66,8 @@ WEIGHT_DECAY = 1e-4
 BATCH_NAMESPACE = "response-credit-student-epoch-batches"
 EXPECTED_DATASETS = tuple(TARGET_SCOPE_BY_DATASET)
 EXPECTED_SPLITS = ("holdout", "standard")
+LIVE_ORIGIN_ATTEMPTS = 3
+LIVE_ORIGIN_BACKOFF_SECONDS = (0.5, 1.0)
 
 
 def _canonical_json(value: Any) -> str:
@@ -235,20 +238,41 @@ def _live_origin_branch_head(branch: str) -> str:
     if not branch or branch.startswith("-"):
         raise ValueError("A valid branch name is required for the origin check.")
     reference = f"refs/heads/{branch}"
-    result = subprocess.run(
-        ["git", "ls-remote", "--heads", "origin", reference],
-        cwd=PROJECT_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    lines = [line.split() for line in result.stdout.splitlines() if line.strip()]
-    matches = [parts[0] for parts in lines if len(parts) == 2 and parts[1] == reference]
-    if len(matches) != 1:
-        raise RuntimeError(
-            f"Expected exactly one live origin ref for {reference}; found {len(matches)}."
+    command = ["git", "ls-remote", "--heads", "origin", reference]
+    last_returncode: int | None = None
+    last_stderr = ""
+    for attempt in range(LIVE_ORIGIN_ATTEMPTS):
+        result = subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
         )
-    return matches[0]
+        last_returncode = int(result.returncode)
+        last_stderr = result.stderr.strip()
+        if result.returncode == 0:
+            lines = [
+                line.split() for line in result.stdout.splitlines() if line.strip()
+            ]
+            matches = [
+                parts[0]
+                for parts in lines
+                if len(parts) == 2 and parts[1] == reference
+            ]
+            if len(matches) != 1:
+                raise RuntimeError(
+                    "Expected exactly one live origin ref for "
+                    f"{reference}; found {len(matches)}. stderr={last_stderr!r}"
+                )
+            return matches[0]
+        if attempt < LIVE_ORIGIN_ATTEMPTS - 1:
+            time.sleep(LIVE_ORIGIN_BACKOFF_SECONDS[attempt])
+    raise RuntimeError(
+        "Live origin query failed after "
+        f"{LIVE_ORIGIN_ATTEMPTS} attempts for {reference}: "
+        f"returncode={last_returncode}, stderr={last_stderr!r}"
+    )
 
 
 def _seed_everything() -> None:
