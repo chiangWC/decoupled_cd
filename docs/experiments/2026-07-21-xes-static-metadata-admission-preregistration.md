@@ -76,3 +76,8 @@ The first formal invocation at commit `85bf3d9` stopped at import time because
 the executable had not added the repository root to `sys.path`. No input
 audit or mapping statistic was emitted. The follow-up fix changes only module
 discovery; every source, hash, mapping rule, and admission condition is frozen.
+
+The second invocation at commit `6c818b8` passed frozen input verification but
+stopped before materialization because the executable checked for
+`student_map` while the unmodified DFCD script names the field `stu_map`.
+The correction binds to the original schema and changes no audit statistic.

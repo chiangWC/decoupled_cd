@@ -311,7 +311,7 @@ def main() -> None:
     fingerprints = _verify_inputs(args)
     with Path(args.reconstructed_map).open("rb") as handle:
         mapping = pickle.load(handle)
-    required = {"reverse_question_map", "question_map", "student_map"}
+    required = {"reverse_question_map", "question_map", "stu_map"}
     if not required <= set(mapping):
         raise RuntimeError(f"Reconstructed map lacks {required - set(mapping)}")
     reverse = {
