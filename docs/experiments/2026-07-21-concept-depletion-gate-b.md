@@ -86,3 +86,50 @@ one-concept protocol provides no natural full-coverage audit row.
 - standard dataset and generated-arm SHA-256 hashes are recorded;
 - seed is fixed to 42 for model training and 2024 for deterministic protocol
   construction/bootstrap.
+
+## Result
+
+All five feasible dataset pairs were trained with the same ORCDF implementation,
+seed 42, 30-epoch ceiling, validation-AUC checkpoint selection and patience 5.
+The source standard test files were not opened. NIPS34 produced no eligible
+paired audit row under the frozen construction and is reported as unqualified.
+
+| Dataset | Paired students | Rows removed/student (mean) | Concept AUC | Random AUC | Log-loss damage | Student-bootstrap 95% CI | Supports |
+|---|---:|---:|---:|---:|---:|---:|:---:|
+| ASSIST09 | 1,650 | 11.34 | 0.750463 | 0.762728 | +0.024381 | [+0.004937, +0.042894] | yes |
+| ASSIST17 | 1,609 | 14.47 | 0.786011 | 0.785341 | +0.004296 | [-0.005727, +0.014814] | no |
+| MOOCRadar | 1,905 | 7.94 | 0.926925 | 0.927057 | +0.001321 | [-0.003146, +0.005895] | no |
+| XES3G5M | 1,898 | 2.09 | 0.775046 | 0.788854 | +0.013706 | [+0.005121, +0.022878] | yes |
+| EdNet | 1,769 | 46.27 | 0.744507 | 0.746998 | +0.002607 | [-0.005916, +0.010644] | no |
+
+Positive damage means that deleting target-concept history is worse than
+deleting the same number of target-disjoint history rows. ASSIST09 and XES3G5M
+support this effect. ASSIST17, MOOCRadar and EdNet have positive log-loss point
+estimates but intervals crossing zero; ASSIST17's paired AUC point estimate
+slightly favors the concept-depleted arm.
+
+## Decision
+
+**Gate B fails: 2/5 qualified datasets support the primary effect, below the
+pre-registered requirement of 3.** SVGCD confirmation is therefore not run.
+
+Together with Gate A, the evidence says that target-concept evidence can matter
+materially on particular datasets, but not that student-local concept
+incompleteness is a stable cross-dataset failure mode of strong CD models.
+Gate A supported only ASSIST17, whereas the stronger paired intervention
+supports ASSIST09 and XES3G5M. The non-overlap is itself evidence against a
+single broad TKC/UKC problem claim and shows that natural coverage association
+is not a reliable proxy for intervention damage.
+
+Accordingly, no new TKC/UKC completion module is justified by this audit. The
+existing standard-only RCPK route remains the active qualified result. The
+negative Gate A/B results must be retained as limitations rather than rescued
+by changing the outcome, dropping non-supporting datasets or weakening the
+gate.
+
+Machine artifacts remain under `results/problem_gate_b/` on xph:
+
+- paired protocols and hashes: `protocols/<dataset>/manifest.json`;
+- ORCDF checkpoints and row-aligned predictions: `orcdf/<dataset>/<arm>/`;
+- combined table and bootstrap summary: `orcdf_screen/gate_b_results.csv`
+  and `orcdf_screen/gate_b_summary.json`.
