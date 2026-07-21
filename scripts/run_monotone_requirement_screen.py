@@ -64,6 +64,24 @@ MODEL_MODES = {
 }
 SURFACE_STEP = 0.05
 SURFACE_NONCOLLAPSE_THRESHOLD = 0.001
+PREDICTION_COLUMNS = (
+    "row_id",
+    "student_id",
+    "item_id",
+    "q_pair_id",
+    "q_count",
+    "eligible",
+    "prob",
+)
+SURFACE_COLUMNS = (
+    "b",
+    "g",
+    "prob",
+    "requirement_surface",
+    "learned_surface",
+    "learned_logit",
+    "prob_epsilon_zero",
+)
 
 
 def _canonical_json(value: Any) -> str:
@@ -514,9 +532,11 @@ def _predict(
 
 
 def _surface_summary(frame: pd.DataFrame) -> dict[str, Any]:
-    required = {"b", "g", "prob", "learned_surface", "learned_logit", "prob_epsilon_zero"}
-    if required - set(frame.columns):
+    if tuple(frame.columns) != SURFACE_COLUMNS:
         raise ValueError("Surface frame is incomplete.")
+    numeric = frame.loc[:, SURFACE_COLUMNS].to_numpy(dtype=float)
+    if not np.isfinite(numeric).all():
+        raise ValueError("Surface frame contains non-finite values.")
     learned_values = frame["learned_surface"].to_numpy(dtype=float)
     clipped_points = int(
         np.count_nonzero((learned_values <= 1e-6) | (learned_values >= 1.0 - 1e-6))
@@ -644,10 +664,33 @@ def _surface_diagnostic(
 
 
 def _prediction_semantic_sha256(frame: pd.DataFrame) -> str:
-    return _hash_values(
-        f"{row.row_id}:{float(row.prob):.9g}"
-        for row in frame[["row_id", "prob"]].itertuples(index=False)
-    )
+    if tuple(frame.columns) != PREDICTION_COLUMNS:
+        raise RuntimeError("Prediction frame has a noncanonical schema.")
+    digest = hashlib.sha256()
+    digest.update(_hash_values(frame["row_id"].astype(str)).encode("ascii"))
+    probabilities = pd.to_numeric(
+        frame["prob"], errors="raise"
+    ).to_numpy(dtype="<f4")
+    if (
+        not np.isfinite(probabilities).all()
+        or (probabilities < 0.0).any()
+        or (probabilities > 1.0).any()
+    ):
+        raise RuntimeError("Prediction frame contains invalid probabilities.")
+    digest.update(probabilities.tobytes())
+    return digest.hexdigest()
+
+
+def _surface_semantic_sha256(frame: pd.DataFrame) -> str:
+    if tuple(frame.columns) != SURFACE_COLUMNS:
+        raise RuntimeError("Surface frame has a noncanonical schema.")
+    values = frame.loc[:, SURFACE_COLUMNS].to_numpy(dtype="<f4")
+    if not np.isfinite(values).all():
+        raise RuntimeError("Surface frame contains non-finite values.")
+    digest = hashlib.sha256()
+    digest.update(np.asarray(values.shape, dtype="<i8").tobytes())
+    digest.update(values.tobytes())
+    return digest.hexdigest()
 
 
 def predict_dataset(
@@ -715,10 +758,11 @@ def predict_dataset(
         training = _train_variant(model, batch=train_batch, steps=steps)
         final_gradient = _gradient_audit(model, batch=train_batch)
         final_sha = _state_dict_sha256(model.state_dict())
-        prediction = _predict(model, features=protocol.audit, device=device)
-        prediction_path = output_dir / f"predictions_{variant}.csv"
-        _atomic_csv(prediction_path, prediction)
-        semantic_sha = _prediction_semantic_sha256(prediction)
+        active_parameter_count = model.active_variant_parameter_count
+        total_parameter_count = sum(
+            parameter.numel() for parameter in model.parameters()
+        )
+        common_unary_sha = _common_unary_sha256(model)
         checkpoint_path = output_dir / f"checkpoint_{variant}.pt"
         _atomic_checkpoint(
             checkpoint_path,
@@ -733,6 +777,38 @@ def predict_dataset(
                 "expected_commit": expected_commit,
             },
         )
+        del model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        persisted = torch.load(
+            checkpoint_path,
+            map_location="cpu",
+            weights_only=True,
+        )
+        persisted_state = persisted["state_dict"]
+        if _state_dict_sha256(persisted_state) != final_sha:
+            raise RuntimeError(f"Checkpoint round-trip failed for {dataset}/{variant}.")
+        replay_model = _model(
+            variant=variant,
+            num_concepts=len(protocol.concept_index),
+        )
+        replay_model.load_state_dict(persisted_state, strict=True)
+        prediction = _predict(
+            replay_model,
+            features=protocol.audit,
+            device=torch.device("cpu"),
+        )
+        prediction_path = output_dir / f"predictions_{variant}.csv"
+        _atomic_csv(prediction_path, prediction)
+        persisted_prediction = pd.read_csv(prediction_path)
+        _assert_outcome_free_metadata(
+            frame=persisted_prediction,
+            expected=protocol.audit.metadata_frame(),
+            dataset=dataset,
+            variant=f"{variant}:persisted",
+        )
+        semantic_sha = _prediction_semantic_sha256(persisted_prediction)
         manifest = {
             "schema_version": 1,
             "dataset": dataset,
@@ -752,11 +828,9 @@ def predict_dataset(
             "input_hashes": input_hashes,
             "initial_state_sha256": initial_sha,
             "final_state_sha256": final_sha,
-            "active_parameter_count": model.active_variant_parameter_count,
-            "total_parameter_count": sum(
-                parameter.numel() for parameter in model.parameters()
-            ),
-            "common_unary_sha256": _common_unary_sha256(model),
+            "active_parameter_count": active_parameter_count,
+            "total_parameter_count": total_parameter_count,
+            "common_unary_sha256": common_unary_sha,
             "flops_audit": flops_audit,
             "initial_gradient_audit": initial_gradient,
             "final_gradient_audit": final_gradient,
@@ -774,22 +848,23 @@ def predict_dataset(
         manifests[variant] = manifest
         if variant == "full":
             surface_frame, surface_diagnostic = _surface_diagnostic(
-                model,
-                device=device,
+                replay_model,
+                device=torch.device("cpu"),
             )
             surface_path = output_dir / "full_surface.csv"
             _atomic_csv(surface_path, surface_frame)
-            surface_diagnostic = _surface_summary(pd.read_csv(surface_path))
+            persisted_surface = pd.read_csv(surface_path)
+            surface_diagnostic = _surface_summary(persisted_surface)
             surface_payload = {
                 **surface_diagnostic,
                 "surface_file": surface_path.name,
                 "surface_file_sha256": sha256_file(surface_path),
+                "surface_semantic_sha256": _surface_semantic_sha256(
+                    persisted_surface
+                ),
             }
             _atomic_json(output_dir / "full_surface.json", surface_payload)
-        model.cpu()
-        del model
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
+        del replay_model
 
     if surface_payload is None:
         raise RuntimeError("Full surface diagnostic was not produced.")
@@ -831,22 +906,18 @@ def _assert_outcome_free_metadata(
     dataset: str,
     variant: str,
 ) -> None:
-    columns = (
-        "row_id",
-        "student_id",
-        "item_id",
-        "q_pair_id",
-        "q_count",
-        "eligible",
-    )
-    missing = set(columns) - set(frame.columns)
-    if missing or len(frame) != len(expected):
+    metadata_columns = PREDICTION_COLUMNS[:-1]
+    if tuple(frame.columns) != PREDICTION_COLUMNS:
+        raise RuntimeError(
+            f"Outcome-free prediction schema failed for {dataset}/{variant}."
+        )
+    if len(frame) != len(expected):
         raise RuntimeError(
             f"Outcome-free metadata shape failed for {dataset}/{variant}."
         )
     if frame["row_id"].astype(str).duplicated().any():
         raise RuntimeError(f"Duplicate prediction row IDs for {dataset}/{variant}.")
-    for column in columns[:4]:
+    for column in metadata_columns[:4]:
         if not np.array_equal(
             frame[column].astype(str).to_numpy(),
             expected[column].astype(str).to_numpy(),
@@ -873,6 +944,15 @@ def _assert_outcome_free_metadata(
         expected["eligible"].to_numpy(dtype=bool),
     ):
         raise RuntimeError(f"Outcome-free eligible mismatch for {dataset}/{variant}.")
+    probability = pd.to_numeric(
+        frame["prob"], errors="raise"
+    ).to_numpy(dtype=float)
+    if (
+        not np.isfinite(probability).all()
+        or (probability < 0.0).any()
+        or (probability > 1.0).any()
+    ):
+        raise RuntimeError(f"Invalid probabilities for {dataset}/{variant}.")
 
 
 def _load_and_verify_barrier(
@@ -883,6 +963,7 @@ def _load_and_verify_barrier(
     require_formal: bool = True,
     expected_protocol_sha256: str | None = None,
     expected_audit: RequirementFeatureSet | None = None,
+    expected_barrier_sha256: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, pd.DataFrame]]:
     directory = output_root / dataset
     barrier_path = directory / "prediction_barrier.json"
@@ -896,6 +977,13 @@ def _load_and_verify_barrier(
     barrier["barrier_sha256"] = expected_hash
     if expected_hash != actual_hash:
         raise RuntimeError(f"Prediction barrier hash mismatch for {dataset}.")
+    if (
+        expected_barrier_sha256 is not None
+        and expected_hash != expected_barrier_sha256
+    ):
+        raise RuntimeError(
+            f"Externally pinned dataset barrier mismatch for {dataset}."
+        )
     if (
         barrier.get("dataset") != dataset
         or barrier.get("expected_variants") != list(VARIANT_NAMES)
@@ -931,9 +1019,13 @@ def _load_and_verify_barrier(
         raise RuntimeError(f"Expected a non-formal test artifact for {dataset}.")
     predictions = {}
     if require_formal and (
-        expected_protocol_sha256 is None or expected_audit is None
+        expected_protocol_sha256 is None
+        or expected_audit is None
+        or expected_barrier_sha256 is None
     ):
-        raise RuntimeError("Formal seal requires the rebuilt outcome-free protocol.")
+        raise RuntimeError(
+            "Formal verification requires rebuilt protocol and external dataset pin."
+        )
     if (
         expected_protocol_sha256 is not None
         and barrier.get("protocol_sha256") != expected_protocol_sha256
@@ -942,6 +1034,7 @@ def _load_and_verify_barrier(
     expected_metadata = (
         expected_audit.metadata_frame() if expected_audit is not None else None
     )
+    replayed_full_surface: pd.DataFrame | None = None
     for variant in VARIANT_NAMES:
         manifest_path = directory / f"manifest_{variant}.json"
         prediction_path = directory / f"predictions_{variant}.csv"
@@ -1034,28 +1127,77 @@ def _load_and_verify_barrier(
                 dataset=dataset,
                 variant=f"{variant}:checkpoint_replay",
             )
-            maximum_difference = float(
-                np.max(np.abs(replayed["prob"].to_numpy() - frame["prob"].to_numpy()))
-            )
-            if maximum_difference > 2e-6:
+            persisted_probability = frame["prob"].to_numpy(dtype="<f4")
+            replayed_probability = replayed["prob"].to_numpy(dtype="<f4")
+            if not np.array_equal(
+                persisted_probability,
+                replayed_probability,
+            ):
+                changed = int(
+                    np.count_nonzero(
+                        persisted_probability != replayed_probability
+                    )
+                )
                 raise RuntimeError(
                     f"Checkpoint replay mismatch for {dataset}/{variant}: "
-                    f"{maximum_difference}."
+                    f"{changed} float32 values differ."
                 )
-        predictions[variant] = frame
+            if variant == "full":
+                replayed_full_surface, _ = _surface_diagnostic(
+                    replay_model,
+                    device=torch.device("cpu"),
+                )
+            predictions[variant] = replayed
+        else:
+            predictions[variant] = frame
     surface_path = directory / barrier["surface"]["surface_file"]
     if (
         not surface_path.is_file()
         or sha256_file(surface_path) != barrier["surface"]["surface_file_sha256"]
     ):
         raise RuntimeError(f"Full surface artifact failed for {dataset}.")
-    recomputed_surface = _surface_summary(pd.read_csv(surface_path))
+    persisted_surface = pd.read_csv(surface_path)
+    persisted_surface_sha = _surface_semantic_sha256(persisted_surface)
     if (
-        recomputed_surface["noncollapsed"] != barrier["surface"]["noncollapsed"]
-        or abs(recomputed_surface["maximum_absolute_mixed_difference"]
-               - barrier["surface"]["maximum_absolute_mixed_difference"]) > 1e-9
+        persisted_surface_sha
+        != barrier["surface"].get("surface_semantic_sha256")
     ):
+        raise RuntimeError(f"Full surface semantic hash failed for {dataset}.")
+    recomputed_surface = _surface_summary(persisted_surface)
+    artifact_keys = {
+        "surface_file",
+        "surface_file_sha256",
+        "surface_semantic_sha256",
+    }
+    recorded_surface = {
+        key: value
+        for key, value in barrier["surface"].items()
+        if key not in artifact_keys
+    }
+    if _canonical_json(recomputed_surface) != _canonical_json(recorded_surface):
         raise RuntimeError(f"Full surface decision mismatch for {dataset}.")
+    if replayed_full_surface is not None:
+        persisted_values = persisted_surface.loc[
+            :, SURFACE_COLUMNS
+        ].to_numpy(dtype="<f4")
+        replayed_values = replayed_full_surface.loc[
+            :, SURFACE_COLUMNS
+        ].to_numpy(dtype="<f4")
+        if not np.array_equal(persisted_values, replayed_values):
+            raise RuntimeError(f"Full surface checkpoint replay failed for {dataset}.")
+        if (
+            _surface_semantic_sha256(replayed_full_surface)
+            != persisted_surface_sha
+        ):
+            raise RuntimeError(f"Full surface replay hash failed for {dataset}.")
+    elif require_formal:
+        raise RuntimeError(f"Full surface was not replayed for {dataset}.")
+    barrier["surface"] = {
+        **recomputed_surface,
+        "surface_file": surface_path.name,
+        "surface_file_sha256": sha256_file(surface_path),
+        "surface_semantic_sha256": persisted_surface_sha,
+    }
 
     return barrier, predictions
 
@@ -1064,7 +1206,12 @@ def seal_predictions(
     data_root: Path,
     output_root: Path,
     expected_commit: str,
+    expected_dataset_barrier_sha256: Mapping[str, str],
 ) -> dict[str, Any]:
+    if set(expected_dataset_barrier_sha256) != set(DATASET_DIRS):
+        raise ValueError(
+            "Seal requires one externally pinned barrier SHA-256 per dataset."
+        )
     snapshot = formal_snapshot(expected_commit)
     locked: dict[str, dict[str, Any]] = {}
     for dataset in DATASET_DIRS:
@@ -1082,6 +1229,9 @@ def seal_predictions(
             require_formal=True,
             expected_protocol_sha256=protocol.protocol_sha256,
             expected_audit=protocol.audit,
+            expected_barrier_sha256=expected_dataset_barrier_sha256[
+                dataset
+            ],
         )
         locked[dataset] = barrier
     payload = {
@@ -1096,6 +1246,10 @@ def seal_predictions(
         ]["fingerprint"],
         "snapshot": snapshot,
         "checkpoint_replay_and_protocol_metadata_verified": True,
+        "externally_pinned_dataset_barrier_sha256": {
+            dataset: expected_dataset_barrier_sha256[dataset]
+            for dataset in DATASET_DIRS
+        },
         "labels_loaded": False,
     }
     payload["global_barrier_sha256"] = hashlib.sha256(
@@ -1132,6 +1286,8 @@ def _load_global_barrier(
         or payload.get("checkpoint_replay_and_protocol_metadata_verified")
         is not True
         or set(payload.get("datasets", {})) != set(DATASET_DIRS)
+        or payload.get("externally_pinned_dataset_barrier_sha256")
+        != payload.get("datasets")
         or payload.get("snapshot") != {
             "head": expected_commit,
             "branch": EXPECTED_BRANCH,
@@ -1216,6 +1372,7 @@ def evaluate_all(
             require_formal=True,
             expected_protocol_sha256=protocol.protocol_sha256,
             expected_audit=protocol.audit,
+            expected_barrier_sha256=global_barrier["datasets"][dataset],
         )
         if (
             locked[dataset][0]["barrier_sha256"]
@@ -1293,6 +1450,14 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("--data-root", type=Path, required=True)
     seal.add_argument("--output-root", type=Path, required=True)
     seal.add_argument("--expected-commit", required=True)
+    seal.add_argument(
+        "--expected-assist17-barrier-sha256",
+        required=True,
+    )
+    seal.add_argument(
+        "--expected-moocradar-barrier-sha256",
+        required=True,
+    )
     evaluate.add_argument("--data-root", type=Path, required=True)
     evaluate.add_argument("--output-root", type=Path, required=True)
     evaluate.add_argument("--expected-commit", required=True)
@@ -1318,6 +1483,10 @@ def main() -> None:
                 {
                     "dataset": args.dataset,
                     "barrier_sha256": barrier["barrier_sha256"],
+                    "expected_commit": barrier["snapshot"]["head"],
+                    "architecture_fingerprint": barrier["architecture"][
+                        "fingerprint"
+                    ],
                     "labels_loaded": False,
                 },
                 ensure_ascii=False,
@@ -1328,6 +1497,10 @@ def main() -> None:
             data_root=args.data_root,
             output_root=args.output_root,
             expected_commit=args.expected_commit,
+            expected_dataset_barrier_sha256={
+                "ASSIST17": args.expected_assist17_barrier_sha256,
+                "MOOCRadar": args.expected_moocradar_barrier_sha256,
+            },
         )
         print(
             json.dumps(

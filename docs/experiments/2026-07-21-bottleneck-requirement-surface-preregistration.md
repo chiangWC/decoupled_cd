@@ -14,8 +14,8 @@ Requirement Surface**。
 才可讨论 bottleneck/non-compensatory 行为。DINA/GDINA 已有非补偿诊断，
 NCDM 正权网络也能表达部分交互，本轮不提出“首次非补偿诊断”主张。
 
-本预注册前只做 train/Q 结构计数和公开实现审阅。没有候选代码、训练、
-预测或 valid/test 读取。train-only 筛选通过仅激活端到端实现，不自动成为
+初始预注册提交前只做 train/Q 结构计数和公开实现审阅。没有候选代码、
+训练、预测或 valid/test 读取。train-only 筛选通过仅激活端到端实现，不自动成为
 论文模块；失败后不调阈值、不补 residual/gate/loss、不换名重跑。
 
 ### 正式执行前修订：非加性判据的尺度
@@ -29,6 +29,21 @@ probability surface 计算 mixed difference，即使 Capacity Control 在 logit
 阈值和所有性能门均不变。落盘工件同时保存 probability 与 surface logit，
 正式 barrier 从落盘后的 logit 列重新计算判定。该修订只修复判据尺度，
 没有查看候选训练、预测或任何 audit/valid/test 结果。
+
+### 正式揭盲前工程修订：外部数据集锚与 checkpoint 重放
+
+至少一次正式 `predict-dataset` train-only 运行已完成，其中包含冻结配方
+下四个 head 的训练、checkpoint 写入及 audit prediction/surface 生成；
+但未运行 `seal/evaluate`，未加载 audit-query labels，也未人工读取
+prediction、surface 或 audit metrics。只查看了运行状态、文件清单/大小
+及 outcome-free hash；产物随后作废删除。其后独立对抗审计发现：数据集
+barrier 尚未写入外部锚时，联合重签 checkpoint、prediction、manifest 与
+surface 可形成内部自洽伪造；原 `2e-6` replay 容差也可能吞掉改变排序的
+微小预测变化。
+
+因此正式流程增加下述逐数据集外部锚、CPU checkpoint 精确重放、surface
+逐点重放与严格 outcome-free schema。模型、数据、训练配方、性能门和
+noncollapse 门均未改变。
 
 ## 框架边界
 
@@ -198,11 +213,20 @@ bootstrap 每次重采样重新取三项差值最小值；Brier 与三个 contro
 - 固定 2,000 steps，第 2,000 步为唯一 checkpoint；
 - 无 scheduler、early stopping、checkpoint window 或调参。
 
-四种 prediction manifest 全部生成并对齐后，evaluation 才加载 audit-query
-label。A17/MOO 共八份 prediction 齐全后先单独运行 `seal`：校验冻结数据、
-commit、architecture、recipe、manifest、checkpoint、prediction 和曲面工件，
-写入全局 barrier，打印 SHA 后退出。SHA 必须先记录在实验目录之外；后续
-`evaluate` 必须由调用者显式传回该 SHA，且不能重写 barrier，之后才可揭盲。
+每个 head 训练完成后先落盘唯一 checkpoint，再从该 checkpoint 在 CPU
+重新加载并生成权威 prediction；CSV 读回后按 float32 bit pattern 与
+checkpoint replay 精确一致，评价只消费 replay frame。Full surface 同样从
+落盘 checkpoint 在 CPU 重放，固定点顺序及全部数值列必须逐点精确一致；
+gate 只消费重放绑定后的 summary。Prediction schema 固定为六个
+outcome-free metadata 字段加 `prob`，拒绝任何额外列。
+
+每个数据集的四种 prediction 齐全后，`predict-dataset` 将
+`dataset + barrier SHA + commit + architecture fingerprint` 打印到仓库及
+output root 之外的受控调用日志。`seal` 必须由调用者显式传回 A17/MOO
+各自首次输出的 SHA，不得从当前文件推导；先核对两个外部锚，再校验冻结
+数据、recipe、manifest、checkpoint、prediction 和曲面工件。之后写入全局
+barrier、打印 SHA 并退出。全局 SHA 也必须先记录在实验目录之外；后续
+`evaluate` 必须显式传回且不能重写 barrier，之后才可揭盲。
 runner 不接受 valid/test path；正式执行验证 clean HEAD、origin 同 SHA 和
 `decoupled_cd` 环境。训练前保存 batch、row、input、offset、初始化、source
 和 architecture hashes。过程只记录初始/末步 loss 与逐参数梯度健康，不显示

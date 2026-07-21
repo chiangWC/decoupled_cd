@@ -121,25 +121,46 @@ class TestMonotoneRequirementRunner(unittest.TestCase):
                 barrier["surface"],
             )
 
-            corrupted = predictions["full"].copy()
-            corrupted.loc[0, "eligible"] = not bool(corrupted.loc[0, "eligible"])
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "Outcome-free eligible mismatch",
-            ):
+            expected_metadata = protocol.audit.metadata_frame()
+            replacements = {
+                "row_id": "changed-row",
+                "student_id": "changed-student",
+                "item_id": "changed-item",
+                "q_pair_id": "changed-pair",
+                "q_count": int(predictions["full"].loc[0, "q_count"]) + 1,
+                "eligible": not bool(predictions["full"].loc[0, "eligible"]),
+            }
+            for column, replacement in replacements.items():
+                with self.subTest(metadata_column=column):
+                    corrupted = predictions["full"].copy()
+                    corrupted.loc[0, column] = replacement
+                    with self.assertRaisesRegex(RuntimeError, "Outcome-free"):
+                        runner._assert_outcome_free_metadata(
+                            frame=corrupted,
+                            expected=expected_metadata,
+                            dataset="ASSIST17",
+                            variant="full",
+                        )
+            with self.assertRaisesRegex(RuntimeError, "metadata shape"):
                 runner._assert_outcome_free_metadata(
-                    frame=corrupted,
-                    expected=protocol.audit.metadata_frame(),
+                    frame=predictions["full"].iloc[1:].reset_index(drop=True),
+                    expected=expected_metadata,
+                    dataset="ASSIST17",
+                    variant="full",
+                )
+            extra_outcome = predictions["full"].copy()
+            extra_outcome["audit_outcome"] = 0
+            with self.assertRaisesRegex(RuntimeError, "prediction schema"):
+                runner._assert_outcome_free_metadata(
+                    frame=extra_outcome,
+                    expected=expected_metadata,
                     dataset="ASSIST17",
                     variant="full",
                 )
 
             prediction_path = directory / "predictions_full.csv"
             tampered = pd.read_csv(prediction_path)
-            tampered.loc[0, "prob"] = min(
-                0.99,
-                float(tampered.loc[0, "prob"]) + 0.05,
-            )
+            tampered.loc[0, "prob"] = float(tampered.loc[0, "prob"]) + 1e-6
             runner._atomic_csv(prediction_path, tampered)
             semantic_sha = runner._prediction_semantic_sha256(tampered)
             manifest_path = directory / "manifest_full.json"
@@ -148,6 +169,25 @@ class TestMonotoneRequirementRunner(unittest.TestCase):
                 prediction_path
             )
             manifest["prediction_semantic_sha256"] = semantic_sha
+            checkpoint_path = directory / "checkpoint_full.pt"
+            checkpoint = torch.load(
+                checkpoint_path,
+                map_location="cpu",
+                weights_only=True,
+            )
+            changed_name = next(
+                name
+                for name in checkpoint["state_dict"]
+                if name.startswith("variant.")
+            )
+            checkpoint["state_dict"][changed_name].view(-1)[0] += 0.1
+            runner._atomic_checkpoint(checkpoint_path, checkpoint)
+            manifest["final_state_sha256"] = runner._state_dict_sha256(
+                checkpoint["state_dict"]
+            )
+            manifest["checkpoint_file_sha256"] = runner.sha256_file(
+                checkpoint_path
+            )
             runner._atomic_json(manifest_path, manifest)
             barrier_path = directory / "prediction_barrier.json"
             tampered_barrier = json.loads(barrier_path.read_text())
@@ -160,7 +200,70 @@ class TestMonotoneRequirementRunner(unittest.TestCase):
                 runner._canonical_json(tampered_barrier).encode("utf-8")
             ).hexdigest()
             runner._atomic_json(barrier_path, tampered_barrier)
+            with self.assertRaisesRegex(RuntimeError, "Externally pinned"):
+                runner._load_and_verify_barrier(
+                    output_root=output_root,
+                    dataset="ASSIST17",
+                    expected_commit=head,
+                    require_formal=False,
+                    expected_protocol_sha256=protocol.protocol_sha256,
+                    expected_audit=protocol.audit,
+                    expected_barrier_sha256=barrier["barrier_sha256"],
+                )
             with self.assertRaisesRegex(RuntimeError, "Checkpoint replay mismatch"):
+                runner._load_and_verify_barrier(
+                    output_root=output_root,
+                    dataset="ASSIST17",
+                    expected_commit=head,
+                    require_formal=False,
+                    expected_protocol_sha256=protocol.protocol_sha256,
+                    expected_audit=protocol.audit,
+                )
+
+    def test_surface_artifact_is_bound_to_full_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_data, tempfile.TemporaryDirectory() as raw_output:
+            data_root = Path(raw_data)
+            output_root = Path(raw_output)
+            _write_dataset(data_root)
+            protocol = runner._build_protocol(data_root, "ASSIST17")
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=runner.PROJECT_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            runner.predict_dataset(
+                dataset="ASSIST17",
+                data_root=data_root,
+                output_root=output_root,
+                expected_commit=head,
+                device=torch.device("cpu"),
+                steps=2,
+                require_formal=False,
+            )
+            directory = output_root / "ASSIST17"
+            surface_path = directory / "full_surface.csv"
+            forged_surface = pd.read_csv(surface_path)
+            forged_surface.loc[0, "learned_logit"] += 0.5
+            runner._atomic_csv(surface_path, forged_surface)
+            forged_summary = runner._surface_summary(forged_surface)
+            barrier_path = directory / "prediction_barrier.json"
+            forged_barrier = json.loads(barrier_path.read_text())
+            forged_barrier["surface"] = {
+                **forged_summary,
+                "surface_file": surface_path.name,
+                "surface_file_sha256": runner.sha256_file(surface_path),
+                "surface_semantic_sha256": runner._surface_semantic_sha256(
+                    forged_surface
+                ),
+            }
+            forged_barrier.pop("barrier_sha256")
+            forged_barrier["barrier_sha256"] = runner.hashlib.sha256(
+                runner._canonical_json(forged_barrier).encode("utf-8")
+            ).hexdigest()
+            runner._atomic_json(barrier_path, forged_barrier)
+            with self.assertRaisesRegex(RuntimeError, "surface checkpoint replay"):
                 runner._load_and_verify_barrier(
                     output_root=output_root,
                     dataset="ASSIST17",
@@ -222,6 +325,10 @@ class TestMonotoneRequirementRunner(unittest.TestCase):
                 },
                 "labels_loaded": False,
                 "checkpoint_replay_and_protocol_metadata_verified": True,
+                "externally_pinned_dataset_barrier_sha256": {
+                    "ASSIST17": "left",
+                    "MOOCRadar": "right",
+                },
             }
             sealed = runner.hashlib.sha256(
                 runner._canonical_json(payload).encode("utf-8")
