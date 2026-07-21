@@ -216,27 +216,32 @@ not satisfy any activation condition. Earlier exact-Q-by-ease and
 response-mobility calculations concern different permutations and must not be
 substituted for this donor-target audit.
 
-### Completed preliminary implementation audit (superseded for finalization)
+### Completed final implementation audit
 
-The four-dataset label-blind protocol audit at commit `9d95259` completed
-without test access. Its aggregate artifact is
-`results/goal_two_module/target_local_pairing_v14_protocol_9d95259/summary.json`
-with SHA-256
-`5d6f213131e0e043c56593ca275381167b4d9bb7d6756855cab20c907938d4ed`.
-Concrete replicate-0 values read from that audit JSON are:
+The retained-optimizer-finalized, four-dataset label-blind protocol audit at
+commit `e207b00` completed without test access. Its artifacts are under
+`results/goal_two_module/target_local_pairing_v15_protocol_e207b00/`.
+Concrete replicate-0 values read from the final audit JSON files are:
 
 | Dataset | Retained validation students | Query rows | Changed rows | Changed-row fraction | Changed students | Fixed points | Protocol status | Mapping SHA-256 |
 |---|---:|---:|---:|---:|---:|---:|---|---|
-| ASSIST17 | 348 | 6,491 | 6,080 | 0.9366815591 | 340 | 0 | `identified` (preliminary) | `515a4e1d7b0bb10fe9e695bca8d8ed7ad1c834f9b3e66d826321626f056e9efb` |
-| MOOCRadar | 419 | 8,133 | 7,492 | 0.9211852945 | 419 | 0 | `identified` (preliminary) | `ad0c5c5ea5561e01efa6dbb0c37f47b78b9f1003d0615e7e64726f452c39a85d` |
-| XES3G5M | 419 | 4,308 | 4,168 | 0.9675023213 | 419 | 0 | `identified` (preliminary) | `c96f649299fa4f02af3fabb55f59deb2cb5b6bde406cc6104494f1a8403e026c` |
-| Junyi | 670 | 3,078 | 2,528 | 0.8213125406 | 639 | 0 | `identified` (preliminary) | `4ace89db56d204337f2b4cd992538f232dada877ebc119383db36ebc1020ff5b` |
+| ASSIST17 | 348 | 6,491 | 6,080 | 0.9366815591 | 340 | 0 | `identified` | `515a4e1d7b0bb10fe9e695bca8d8ed7ad1c834f9b3e66d826321626f056e9efb` |
+| MOOCRadar | 419 | 8,133 | 7,492 | 0.9211852945 | 419 | 0 | `identified` | `ad0c5c5ea5561e01efa6dbb0c37f47b78b9f1003d0615e7e64726f452c39a85d` |
+| XES3G5M | 419 | 4,308 | 4,168 | 0.9675023213 | 419 | 0 | `identified` | `c96f649299fa4f02af3fabb55f59deb2cb5b6bde406cc6104494f1a8403e026c` |
+| Junyi | 670 | 3,078 | 2,528 | 0.8213125406 | 639 | 0 | `identified` | `4ace89db56d204337f2b4cd992538f232dada877ebc119383db36ebc1020ff5b` |
 
-This artifact used the provisional optimizer-role item union. It is retained
-only as provenance and preliminary implementation evidence; it is not the
-final preregistered protocol result. The audit must be rerun after the retained
-optimizer-profile known-item finalization above, and the final table and
-aggregate SHA-256 must replace this preliminary block before formal training.
+The retained-profile item-union correction removed zero additional validation
+query rows and zero additional validation students on all four datasets; this
+equality was checked rather than assumed. The individual final `summary.json`
+SHA-256 values are:
+
+- ASSIST17: `3e884141c00d70e23df2f18da67193968774727d0182e6819dcb5a78e5d17621`;
+- MOOCRadar: `77658461daf6a2771cb150620b7fad59aa89f03c807b456529fe9b246c340f4b`;
+- XES3G5M: `959cc4e4e15874cf952a2724d05011fe220c0f4ae9d19a06db05b92c430af7c8`;
+- Junyi: `b394005fab87df8d19ad8592c72a9dc8e540ca774c94b122d3c11e906509b4e5`.
+
+The superseded `9d95259` aggregate remains provenance only and must not be
+used to lock formal training inputs.
 
 ## Shared inputs
 
