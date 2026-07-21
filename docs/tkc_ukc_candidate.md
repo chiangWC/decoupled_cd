@@ -18,27 +18,28 @@ Holdout validation 首屏：
 
 Full 在两者均保持 validation strict win，但上表只相对弱 direct-prior control。加入同样消费 student evidence、concept 和 population prior 的 additive strong control 后，MOO/XES 的 target 增益仅 +0.000113/-0.000148；ASSIST17/Junyi 也只有 +0.001415/+0.000067。旧大幅度来自删除全部学生信息的弱对照，该模块拒绝。
 
-## 历史“已通过”结论已撤销：Calibrated Evidence Representation
+## 已拒绝：Calibrated History Representation
 
-最终 v9 拓扑下，Full 相对移除整个语义/校准 Evidence 方框、但保留同容量学生边际统计编码器的 raw-summary control 结果为：
+旧 `raw_summary_control` 同时删除题目语义和难度校准信息，因而不能归因
+attempted-item History。最终 clean gate 固定同一个信息匹配的
+`factorized_item_control` Requirement：Full 使用 `calibrated_history`，强
+control 使用保留正确率、难度校准、置信度和 coverage 的
+`calibrated_summary_control`，只移除 attempted-item semantic pool。
 
-| 数据集 | Full T | Control T | ΔT | student-clustered 95% CI |
-|---|---:|---:|---:|---:|
-| ASSIST17 | 0.796573 | 0.777750 | +0.018823 | [+0.015791, +0.022016] |
-| Junyi | 0.828647 | 0.817022 | +0.011626 | [+0.010140, +0.013342] |
+在 Q-consistent holdout validation 上，四个数据集的初始化哈希逐一相同：
 
-这组结果只证明 Full 强于删除题目语义和难度校准信息的
-`raw_summary_control`，不能单独归因给所声明的 History 机制。更强的
-`calibrated_summary_control` 保留正确率、难度校准、置信度和 coverage，只
-移除 attempted-item semantic pool。历史点估计中，Full 相对该强对照的
-target 增益为 ASSIST17 约 +0.018163、XES3G5M +0.003274、MOOCRadar
-+0.000646、Junyi +0.001783；只有 ASSIST17 达到当前模块幅度要求，不能满足
-至少两个胜出数据集的资格条件。
+| 数据集 | Full H | Control H | ΔH | Full T | Control T | ΔT | student-clustered 95% CI |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ASSIST17 | .799879 | .784089 | +.015790 | .781492 | .775977 | +.005515 | `[+.001274, +.009824]` |
+| MOOCRadar | .926716 | .926557 | +.000160 | .935352 | .935386 | -.000034 | `[-.001172, +.001147]` |
+| XES3G5M | .787696 | .786159 | +.001537 | .785818 | .784460 | +.001359 | `[-.000271, +.002989]` |
+| Junyi | .824025 | .822692 | +.001332 | .824025 | .822692 | +.001332 | `[+.000329, +.002343]` |
 
-此外，ASSIST17 旧结果使用 interaction-row `cpt_seq` 定义 coverage，而
-当前协议要求历史与目标均使用 exercise Q union。旧 artifact 不能继续充当
-Q-consistent 正式消融。Calibrated Evidence 因此降级为尚待重新设计或重新
-验证的输入路径，不再列为已通过论文模块。
+门槛要求至少两个胜出数据集 `ΔT >= 0.005`、其中一个 `>= 0.01`。实际只有
+ASSIST17 达到 0.005，且没有数据集达到 0.01；虽然 ASSIST17、Junyi 的 CI
+下界大于零，联合门槛仍失败。必要 T 门已经失败，因此不再补 standard
+control：S 结果无法逆转拒绝结论，只会补全一个失败模块的表格。完整记录见
+`docs/experiments/2026-07-21-history-clean-gate.md`。
 
 ## 已拒绝：Population-Calibrated Concept Prior
 
@@ -112,6 +113,7 @@ Full 在四个数据集仍均为 validation strict external win，但没有任�
 达到预注册的 `ΔT >= 0.002`，更没有达到 `0.003`。因此 Requirement gate
 明确失败，剩余 14 个 2x2 任务不运行；性能强不能替代模块归因。
 
-当前状态是“有四胜性能路径，但没有已通过的论文模块”。后续模块必须遵守
+History clean gate 也已失败。当前状态精确为：现有架构有 4 个 validation
+strict external wins，但 qualified paper modules 为 0。后续模块必须遵守
 `docs/research_goal.md` 的强对照与幅度门槛，不能再使用上述两组旧结论组成
 双模块论文叙事。
