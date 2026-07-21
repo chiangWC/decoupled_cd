@@ -377,15 +377,11 @@ class MonotoneRequirementSurface(nn.Module):
         bottleneck = readiness.masked_fill(~q_mask, 1.0).amin(dim=1)
         return bottleneck, aggregate, counts
 
-    def requirement_surface(
+    def _learned_surface(
         self,
         readiness: torch.Tensor,
-        q_mask: torch.Tensor,
-        item_offset: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        if item_offset is None:
-            item_offset = readiness.new_zeros(readiness.size(0))
-        boolean_mask = self._validate_inputs(readiness, q_mask, item_offset)
+        boolean_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         bottleneck, aggregate, counts = self._summaries(
             readiness,
             boolean_mask,
@@ -397,7 +393,29 @@ class MonotoneRequirementSurface(nn.Module):
             bottleneck,
             aggregate,
         )
-        learned = torch.where(counts == 1, unary_surface, variant_surface)
+        return torch.where(counts == 1, unary_surface, variant_surface), aggregate
+
+    def learned_surface(
+        self,
+        readiness: torch.Tensor,
+        q_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return the mechanism surface before epsilon blending and item offset."""
+        zeros = readiness.new_zeros(readiness.size(0))
+        boolean_mask = self._validate_inputs(readiness, q_mask, zeros)
+        learned, _ = self._learned_surface(readiness, boolean_mask)
+        return learned
+
+    def requirement_surface(
+        self,
+        readiness: torch.Tensor,
+        q_mask: torch.Tensor,
+        item_offset: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if item_offset is None:
+            item_offset = readiness.new_zeros(readiness.size(0))
+        boolean_mask = self._validate_inputs(readiness, q_mask, item_offset)
+        learned, aggregate = self._learned_surface(readiness, boolean_mask)
         return (1.0 - self.epsilon) * learned + self.epsilon * aggregate
 
     def forward(

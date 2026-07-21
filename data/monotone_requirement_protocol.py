@@ -445,8 +445,22 @@ def load_audit_query_labels(
     protocol: TrainOnlyRequirementProtocol,
     *,
     train_path: str | Path | None = None,
+    expected_train_sha256: str | None = None,
 ) -> pd.DataFrame:
     path = Path(train_path) if train_path is not None else protocol.train_path
+    protocol_sha256 = str(protocol.audit_summary["train_full_sha256"])
+    expected_sha256 = (
+        protocol_sha256
+        if expected_train_sha256 is None
+        else str(expected_train_sha256)
+    )
+    actual_sha256 = sha256_file(path)
+    if actual_sha256 != expected_sha256 or protocol_sha256 != expected_sha256:
+        raise RuntimeError(
+            "Train SHA-256 differs from the sealed pre-reveal source: "
+            f"protocol={protocol_sha256}, actual={actual_sha256}, "
+            f"sealed={expected_sha256}."
+        )
     if path.resolve() != protocol.train_path:
         raise ValueError("Evaluation path differs from frozen train path.")
     labels = _read_selected_labels(

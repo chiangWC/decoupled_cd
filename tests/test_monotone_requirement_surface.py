@@ -236,6 +236,53 @@ class MonotoneRequirementSurfaceTest(unittest.TestCase):
             atol=1e-7,
         )
 
+    def test_matches_pinned_ibm_pmlayer_numeric_oracle(self) -> None:
+        # Generated before formal training with IBM/pmlayer
+        # v1.0.1@89bcceb966b5c2feb506be3da413ed2549a71db1 on CPU.
+        one_dimensional = HierarchicalLattice1D(16)
+        with torch.no_grad():
+            one_dimensional.raw_gates.copy_(torch.linspace(-1.0, 1.0, 16))
+        one_inputs = torch.tensor([0.0, 0.125, 0.5, 0.9, 1.0])
+        one_expected = torch.tensor(
+            [
+                0.2689414322376251,
+                0.6314241886138916,
+                0.9830647706985474,
+                0.9999404549598694,
+                0.9999926686286926,
+            ]
+        )
+        torch.testing.assert_close(
+            one_dimensional(one_inputs),
+            one_expected,
+            rtol=1e-6,
+            atol=2e-7,
+        )
+
+        two_dimensional = HierarchicalLattice2D((4, 4))
+        with torch.no_grad():
+            two_dimensional.raw_gates.copy_(
+                torch.linspace(-2.0, 1.0, 16).reshape(4, 4)
+            )
+        two_inputs = torch.tensor(
+            [[0.05, 0.1], [0.2, 0.8], [0.5, 0.5], [0.9, 0.3], [1.0, 1.0]]
+        )
+        two_expected = torch.tensor(
+            [
+                0.18983781337738037,
+                0.5925215482711792,
+                0.7073634266853333,
+                0.879988431930542,
+                0.9951949715614319,
+            ]
+        )
+        torch.testing.assert_close(
+            two_dimensional(two_inputs[:, 0], two_inputs[:, 1]),
+            two_expected,
+            rtol=1e-6,
+            atol=2e-7,
+        )
+
     def test_invalid_empty_q_and_out_of_range_active_readiness_fail(self) -> None:
         model = MonotoneRequirementSurface(
             num_concepts=NUM_CONCEPTS,

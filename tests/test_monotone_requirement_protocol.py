@@ -334,11 +334,27 @@ class TestTrainOnlyRequirementProtocol(unittest.TestCase):
             )
             torch.testing.assert_close(left_batch.readiness, right_batch.readiness)
             torch.testing.assert_close(left_batch.q_mask, right_batch.q_mask)
+            mutated = pd.read_csv(first / "train.csv")
+            old_labels = load_audit_query_labels(original)
+            mutated.loc[0, "label"] = 1 - int(mutated.loc[0, "label"])
+            mutated.to_csv(first / "train.csv", index=False)
+            with self.assertRaisesRegex(
+                RuntimeError, "sealed pre-reveal source"
+            ):
+                load_audit_query_labels(original)
+
+            with self.assertRaisesRegex(RuntimeError, "sealed pre-reveal source"):
+                load_audit_query_labels(
+                    changed,
+                    expected_train_sha256=original.audit_summary[
+                        "train_full_sha256"
+                    ],
+                )
+
             torch.testing.assert_close(left_batch.item_offset, right_batch.item_offset)
             self.assertEqual(left_batch.row_ids, right_batch.row_ids)
             self.assertIsNone(left_batch.labels)
 
-            old_labels = load_audit_query_labels(original)
             new_labels = load_audit_query_labels(changed)
             self.assertEqual(old_labels["row_id"].tolist(), new_labels["row_id"].tolist())
             np.testing.assert_array_equal(
