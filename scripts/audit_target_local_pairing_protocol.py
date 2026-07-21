@@ -85,21 +85,16 @@ def _canonical_id(value: object) -> str:
     return str(int(number)) if number.is_integer() else text
 
 
-def load_validation_feature_rows(path: Path) -> pd.DataFrame:
-    """Read validation covariates while never loading or hashing its label."""
-    frame = pd.read_csv(path, usecols=lambda column: column != "label")
-    missing = {"stu_id", "exer_id", "cpt_seq"} - set(frame.columns)
+def _validation_identity_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    """Derive outcome-free validation row IDs from source identity columns."""
+    missing = {"stu_id", "exer_id"} - set(frame.columns)
     if missing:
         raise ValueError(
-            f"Validation data is missing feature columns: {sorted(missing)}"
+            f"Validation data is missing identity columns: {sorted(missing)}"
         )
-    output = frame.loc[:, ["stu_id", "exer_id", "cpt_seq"]].copy()
+    output = frame.loc[:, ["stu_id", "exer_id"]].copy()
     output["stu_id"] = output["stu_id"].map(_canonical_id)
     output["exer_id"] = output["exer_id"].map(_canonical_id)
-    output["cpt_seq"] = output["cpt_seq"].map(canonical_concepts)
-    if (output["cpt_seq"] == "").any():
-        raise ValueError("Every validation interaction must have a concept.")
-
     if "split_row_index" in frame:
         stable_index = pd.to_numeric(
             frame["split_row_index"], errors="raise"
@@ -127,7 +122,43 @@ def load_validation_feature_rows(path: Path) -> pd.DataFrame:
         ],
     )
     if output["source_row_id"].duplicated().any():
-        raise RuntimeError("Validation feature row-ID collision detected.")
+        raise RuntimeError("Validation label-free row-ID collision detected.")
+    return output
+
+
+def validation_row_order_sha256(frame: pd.DataFrame) -> str:
+    """Hash validation row IDs in their current prediction/evaluation order."""
+    if "source_row_id" not in frame:
+        raise ValueError("Validation rows are missing source_row_id.")
+    return _hash_values(frame["source_row_id"].astype(str))
+
+
+def _unique_validation_ids(frame: pd.DataFrame, *, name: str) -> pd.Series:
+    if "source_row_id" not in frame:
+        raise ValueError(f"{name} is missing source_row_id.")
+    identifiers = frame["source_row_id"].astype(str)
+    duplicated = identifiers[identifiers.duplicated(keep=False)]
+    if not duplicated.empty:
+        examples = sorted(set(duplicated))[:5]
+        raise RuntimeError(
+            f"{name} contains duplicate source_row_id values: {examples}"
+        )
+    return identifiers
+
+
+def load_validation_feature_rows(path: Path) -> pd.DataFrame:
+    """Read validation covariates while never loading or hashing its label."""
+    frame = pd.read_csv(path, usecols=lambda column: column != "label")
+    missing = {"stu_id", "exer_id", "cpt_seq"} - set(frame.columns)
+    if missing:
+        raise ValueError(
+            f"Validation data is missing feature columns: {sorted(missing)}"
+        )
+    identity = _validation_identity_rows(frame)
+    output = identity.copy()
+    output["cpt_seq"] = frame["cpt_seq"].map(canonical_concepts)
+    if (output["cpt_seq"] == "").any():
+        raise ValueError("Every validation interaction must have a concept.")
     return output.reset_index(drop=True)
 
 
@@ -149,20 +180,110 @@ def load_validation_labels_for_evaluation(
     path: Path,
     *,
     feature_rows: pd.DataFrame,
+    expected_valid_sha256: str,
 ) -> pd.DataFrame:
-    """Load outcomes only after prediction, aligned by label-free row IDs."""
-    labels = pd.read_csv(path, usecols=["label"])["label"]
-    labels = pd.to_numeric(labels, errors="raise").astype(int)
-    if len(labels) != len(feature_rows):
-        raise RuntimeError("Validation labels and feature rows have different lengths.")
+    """Reload outcomes after prediction and select them by label-free row ID."""
+    feature_ids = _unique_validation_ids(feature_rows, name="Validation features")
+    feature_order_before = validation_row_order_sha256(feature_rows)
+    valid_sha256_before = sha256_file(path)
+    if valid_sha256_before != expected_valid_sha256:
+        raise RuntimeError(
+            "Validation full-file SHA-256 differs from the frozen protocol audit."
+        )
+
+    frame = pd.read_csv(
+        path,
+        usecols=lambda column: column
+        in {"stu_id", "exer_id", "split_row_index", "label"},
+    )
+    if "label" not in frame:
+        raise ValueError("Validation data is missing label.")
+    identity = _validation_identity_rows(frame)
+    all_label_ids = _unique_validation_ids(identity, name="Validation labels")
+    labels = pd.to_numeric(frame["label"], errors="raise").astype(int)
     if not set(labels.unique()).issubset({0, 1}):
         raise ValueError("Validation labels must be binary.")
-    return pd.DataFrame(
+    label_rows = identity.assign(label=labels.to_numpy())
+
+    feature_id_set = set(feature_ids)
+    label_id_set = set(all_label_ids)
+    missing = sorted(feature_id_set - label_id_set)
+    if missing:
+        raise RuntimeError(
+            "Validation feature/label ID sets differ; labels are missing IDs: "
+            f"{missing[:5]}"
+        )
+    selected = label_rows.loc[all_label_ids.isin(feature_id_set)].copy()
+    selected_ids = _unique_validation_ids(selected, name="Selected validation labels")
+    if len(selected) != len(feature_rows) or set(selected_ids) != feature_id_set:
+        raise RuntimeError("Selected validation label IDs do not match feature IDs.")
+
+    valid_sha256_after = sha256_file(path)
+    if valid_sha256_after != valid_sha256_before:
+        raise RuntimeError("Validation file changed while labels were being loaded.")
+    feature_order_after = validation_row_order_sha256(feature_rows)
+    if feature_order_after != feature_order_before:
+        raise RuntimeError("Validation feature row order changed during label loading.")
+    selected.attrs.update(
         {
-            "source_row_id": feature_rows["source_row_id"].astype(str).to_numpy(),
-            "label": labels.to_numpy(),
+            "valid_full_sha256_before": valid_sha256_before,
+            "valid_full_sha256_after": valid_sha256_after,
+            "feature_row_order_sha256_before": feature_order_before,
+            "feature_row_order_sha256_after": feature_order_after,
         }
     )
+    return selected.reset_index(drop=True)
+
+
+def join_validation_predictions_with_labels(
+    predictions: pd.DataFrame,
+    labels: pd.DataFrame,
+    *,
+    expected_prediction_order_sha256: str | None = None,
+) -> pd.DataFrame:
+    """Join one prediction and one label per row ID without changing order."""
+    if "label" in predictions:
+        raise ValueError("Predictions must not already contain label.")
+    prediction_ids = _unique_validation_ids(
+        predictions, name="Validation predictions"
+    )
+    label_ids = _unique_validation_ids(labels, name="Validation labels")
+    prediction_id_set = set(prediction_ids)
+    label_id_set = set(label_ids)
+    if prediction_id_set != label_id_set:
+        missing = sorted(prediction_id_set - label_id_set)
+        unexpected = sorted(label_id_set - prediction_id_set)
+        raise RuntimeError(
+            "Validation prediction/label ID sets differ: "
+            f"missing_labels={missing[:5]}, unexpected_labels={unexpected[:5]}"
+        )
+
+    order_before = validation_row_order_sha256(predictions)
+    if (
+        expected_prediction_order_sha256 is not None
+        and order_before != expected_prediction_order_sha256
+    ):
+        raise RuntimeError("Validation prediction row-order SHA-256 is unexpected.")
+    joined = predictions.merge(
+        labels.loc[:, ["source_row_id", "label"]],
+        on="source_row_id",
+        how="left",
+        sort=False,
+        validate="one_to_one",
+    )
+    if joined["label"].isna().any() or len(joined) != len(predictions):
+        raise RuntimeError("Validation prediction/label join is incomplete.")
+    order_after = validation_row_order_sha256(joined)
+    if order_after != order_before:
+        raise RuntimeError("Validation prediction order changed during label join.")
+    joined.attrs.update(labels.attrs)
+    joined.attrs.update(
+        {
+            "prediction_row_order_sha256_before": order_before,
+            "prediction_row_order_sha256_after": order_after,
+        }
+    )
+    return joined
 
 
 def _replace_q(
@@ -374,6 +495,13 @@ def load_validation_only_protocol(
             "optimizer_validation_students": 0,
             "validation_support_query_groups": 0,
         },
+        "known_items": {
+            "provisional_optimizer_role_union": len(known_items),
+            "provisional_optimizer_role_union_sha256": _hash_values(
+                sorted(known_items)
+            ),
+            "finalized_after_optimizer_retention": False,
+        },
         "hashes": {
             "optimizer_students": _hash_values(sorted(optimizer_output_students)),
             "validation_students": _hash_values(sorted(validation_output_students)),
@@ -480,6 +608,163 @@ def build_optimizer_profiles(
         "query_rows": int(sum(len(profile.query) for profile in profiles)),
         "support_query_group_overlap": 0,
     }
+
+
+def retained_optimizer_items(profiles: Iterable[StudentProfile]) -> set[str]:
+    """Return the item union actually represented by retained optimizer rows."""
+    items: set[str] = set()
+    for profile in profiles:
+        items.update(profile.support["exer_id"].astype(str))
+        items.update(profile.query["exer_id"].astype(str))
+    if not items:
+        raise RuntimeError("Retained optimizer profiles contain no items.")
+    return items
+
+
+def finalize_protocol_for_retained_optimizer(
+    protocol: ValidationOnlyProtocol,
+    profiles: Iterable[StudentProfile],
+) -> ValidationOnlyProtocol:
+    """Finalize validation eligibility using only retained optimizer items."""
+    retained_profiles = list(profiles)
+    known_items = retained_optimizer_items(retained_profiles)
+    retained_optimizer_students = {
+        str(profile.student) for profile in retained_profiles
+    }
+    assigned_optimizer_students = set(
+        protocol.optimizer_train["stu_id"].astype(str)
+    )
+    if not retained_optimizer_students <= assigned_optimizer_students:
+        raise RuntimeError("Retained optimizer profiles contain an unassigned student.")
+
+    support_before = protocol.validation_support
+    query_before = protocol.validation_query
+    support_known_mask = support_before["exer_id"].astype(str).isin(known_items)
+    query_known_mask = query_before["exer_id"].astype(str).isin(known_items)
+    newly_unknown_support = support_before.loc[~support_known_mask]
+    newly_unknown_query = query_before.loc[~query_known_mask]
+    support = support_before.loc[support_known_mask].copy()
+    query = query_before.loc[query_known_mask].copy()
+
+    support_groups = _group_set(support)
+    query_overlap_mask = np.asarray(
+        [
+            (str(student), str(item)) in support_groups
+            for student, item in zip(
+                query["stu_id"], query["exer_id"], strict=True
+            )
+        ],
+        dtype=bool,
+    )
+    newly_overlapping_query = query.loc[query_overlap_mask]
+    query = query.loc[~query_overlap_mask].copy()
+
+    support_counts = (
+        support.assign(_student=support["stu_id"].astype(str))
+        .groupby("_student")["exer_id"]
+        .nunique()
+    )
+    query_counts = (
+        query.assign(_student=query["stu_id"].astype(str))
+        .groupby("_student")["exer_id"]
+        .nunique()
+    )
+    candidate_students = set(support["stu_id"].astype(str)) | set(
+        query["stu_id"].astype(str)
+    )
+    validation_students = {
+        student
+        for student in candidate_students
+        if int(support_counts.get(student, 0)) >= MIN_SUPPORT_GROUPS
+        and int(query_counts.get(student, 0)) >= MIN_QUERY_GROUPS
+    }
+    validation_support = (
+        _select_students(support, validation_students)
+        .sort_values("source_row_id", kind="stable")
+        .reset_index(drop=True)
+    )
+    validation_query = (
+        _select_students(query, validation_students)
+        .sort_values("source_row_id", kind="stable")
+        .reset_index(drop=True)
+    )
+    validation_output_students = set(validation_query["stu_id"].astype(str))
+    if retained_optimizer_students & validation_output_students:
+        raise RuntimeError("Retained optimizer and validation students overlap.")
+    if _group_set(validation_support) & _group_set(validation_query):
+        raise RuntimeError("Final validation support/query groups overlap.")
+    if not set(validation_support["exer_id"].astype(str)) <= known_items:
+        raise RuntimeError("Final validation support contains an unknown item.")
+    if not set(validation_query["exer_id"].astype(str)) <= known_items:
+        raise RuntimeError("Final validation query contains an unknown item.")
+
+    prior_validation_students = set(
+        protocol.validation_query["stu_id"].astype(str)
+    )
+    audit = dict(protocol.audit)
+    audit["assigned_students"] = dict(audit["assigned_students"])
+    audit["assigned_students"]["validation_retained"] = len(
+        validation_output_students
+    )
+    audit["rows"] = dict(audit["rows"])
+    audit["rows"].update(
+        {
+            "validation_support": len(validation_support),
+            "validation_query": len(validation_query),
+            "validation_support_unknown_item_removed": int(
+                audit["rows"]["validation_support_unknown_item_removed"]
+                + len(newly_unknown_support)
+            ),
+            "validation_query_unknown_item_removed": int(
+                audit["rows"]["validation_query_unknown_item_removed"]
+                + len(newly_unknown_query)
+            ),
+            "validation_query_support_group_overlap_removed": int(
+                audit["rows"]["validation_query_support_group_overlap_removed"]
+                + len(newly_overlapping_query)
+            ),
+        }
+    )
+    audit["known_items"] = {
+        **audit.get("known_items", {}),
+        "retained_optimizer_profile_union": len(known_items),
+        "retained_optimizer_profile_union_sha256": _hash_values(
+            sorted(known_items)
+        ),
+        "new_validation_support_rows_removed": len(newly_unknown_support),
+        "new_validation_query_rows_removed": len(newly_unknown_query),
+        "new_validation_students_removed": len(
+            prior_validation_students - validation_output_students
+        ),
+        "finalized_after_optimizer_retention": True,
+    }
+    audit["hashes"] = dict(audit["hashes"])
+    audit["hashes"].update(
+        {
+            "retained_optimizer_students": _hash_values(
+                sorted(retained_optimizer_students)
+            ),
+            "retained_optimizer_items": _hash_values(sorted(known_items)),
+            "validation_students": _hash_values(
+                sorted(validation_output_students)
+            ),
+            "validation_support_rows": _hash_values(
+                validation_support["source_row_id"].astype(str)
+            ),
+            "validation_query_rows": _hash_values(
+                validation_query["source_row_id"].astype(str)
+            ),
+        }
+    )
+    return ValidationOnlyProtocol(
+        dataset=protocol.dataset,
+        source_dir=protocol.source_dir,
+        optimizer_train=protocol.optimizer_train,
+        validation_support=validation_support,
+        validation_query=validation_query,
+        q_lookup=protocol.q_lookup,
+        audit=audit,
+    )
 
 
 def build_validation_profiles(
@@ -783,7 +1068,8 @@ def audit_dataset_protocol(
     profiles, optimizer_audit = build_optimizer_profiles(
         protocol.optimizer_train, q_lookup=protocol.q_lookup
     )
-    items = sorted(protocol.q_lookup)
+    protocol = finalize_protocol_for_retained_optimizer(protocol, profiles)
+    items = sorted(retained_optimizer_items(profiles))
     item_index = {item: index for index, item in enumerate(items)}
     fold_references = build_fold_references(
         profiles,

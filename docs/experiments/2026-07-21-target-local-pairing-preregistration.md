@@ -30,27 +30,32 @@ probe as a paper module. Failure closes the current history/pairing branch.
 
 ## Literature source and novelty boundary
 
-The primary implementation analogy is the deterministic target-to-context read
-in [Attentive Neural Processes](https://arxiv.org/abs/1901.05761): a target
-location reads a set of observed context input-output pairs before prediction.
+The primary implementation analogy is the deterministic target-to-context path
+in [Attentive Neural Processes](https://arxiv.org/abs/1901.05761): each target
+input attends to observed context input-output pairs before its prediction.
 The associated
 [Google DeepMind Neural Processes repository](https://github.com/google-deepmind/neural-processes)
 contains ANP notebooks under Apache-2.0. We use the paper-level data-flow
 analogy and an independent PyTorch implementation; no notebook code is copied.
 
 [DIN](https://www.kdd.org/kdd2018/accepted-papers/view/deep-interest-network-for-click-through-rate-prediction)
-and [TAGNN](https://arxiv.org/abs/2005.02844) are adjacent recommendation
-precedents: both construct target-dependent summaries of historical behavior
-instead of one fixed user/session vector. They motivate the placement question
-but are not cognitive-diagnosis methods and are not implementation sources.
+conditions attention over a user's behavior on the candidate item, while
+[TAGNN](https://arxiv.org/abs/2005.02844) makes its session representation vary
+with the candidate target. They are adjacent recommendation precedents for a
+target-dependent history summary, not cognitive-diagnosis methods or
+implementation sources.
 
 The novelty boundary is deliberately narrow.
-[SAKT](https://arxiv.org/abs/1907.06837) and
-[AKT](https://arxiv.org/abs/2007.12324) already use a current question to
-select or weight past question-response interactions in knowledge tracing.
+[SAKT](https://arxiv.org/abs/1907.06837) already queries past
+exercise-response interactions with the current exercise, and
+[AKT](https://arxiv.org/abs/2007.12324) uses the current question in its
+context-aware, monotonic attention over past interactions. Both are direct
+knowledge-tracing precedents for the target-conditioned-history motif.
 Consequently, this project must not claim the first target-aware history
 aggregation, the first question-conditioned student representation, or a new
-attention primitive.
+attention primitive. The present probe uses an independent target/item MLP and
+masked mean; it is not a renamed implementation of any of these attention
+architectures.
 
 The audit tests only whether, under a **student-local inductive cognitive
 diagnosis protocol** with no free student-ID state, response-calibrated support
@@ -99,11 +104,20 @@ For optimizer students, source train is divided by complete
 support groups and 3 query groups. Five leave-student-out folds use namespace
 `"target-local-optimizer-fold"`.
 
+The provisional item union from all optimizer-role students is not the final
+known-item set. After the inner 10/3 retention rule, the final known set is
+exactly the support-plus-query item union of retained optimizer profiles.
+Validation support and query are filtered against that final union, then the
+validation 10/3 student rule, row counts, student hashes, and row hashes are
+recomputed. An item appearing only for an optimizer student rejected by the
+inner rule is therefore unknown and cannot retain a validation target.
+
 For validation students:
 
 - support consists only of their source-train rows;
 - query consists only of their source-valid rows;
-- rows containing items unknown to the optimizer role are removed;
+- rows containing items absent from retained optimizer support-plus-query are
+  removed;
 - a `(student,item)` group occurring in support is removed from query;
 - at least 10 support groups and 3 query groups must remain.
 
@@ -111,22 +125,37 @@ Student retention, donor feasibility, scalers, item statistics, and features
 are label-blind with respect to validation query. The complete validation file
 receives a provenance byte hash, but that hash never enters splitting, mapping,
 features, or model input. The feature projection has its own label-free hash.
-Validation-query labels are loaded separately by stable row ID only after
-aligned probabilities have been produced.
+Validation-query labels are loaded separately only after probabilities have
+been produced. The outcome-free row ID hashes canonical `stu_id`, canonical
+`exer_id`, and `split_row_index` when present, otherwise immutable source-file
+row position. The label loader re-reads `stu_id`, `exer_id`, optional
+`split_row_index`, and `label`, reconstructs the same IDs, and checks the full
+`valid.csv` SHA-256 both before and after the read against the frozen source
+audit. Duplicate IDs and missing selected IDs are fatal. Predictions and
+selected labels must have exactly equal ID sets and join one-to-one; the
+prediction-order SHA-256 must be identical before and after the join. Equal row
+counts alone never establish alignment.
 
 ### Foldwise train-only statistics
 
 For optimizer fold `f`, item ease, attempt count, conditional-response
-signature, ease-tercile boundaries, scalers, and learned preprocessing use only
-optimizer students outside `f`. Validation uses quantities rebuilt from all
-optimizer students. No held student's response contributes to its own item
-statistics. A zero-count item uses one shared unknown-item representation,
-never an untrained item-specific embedding.
+signature, ease-tercile boundaries, and their learned preprocessing use only
+optimizer students outside `f`. Validation item quantities are rebuilt from
+all retained optimizer students. No held student's response contributes to its
+own item statistics. A zero-count item uses one shared unknown-item
+representation, never an untrained item-specific embedding.
 
-## Frozen donor-target permutation
+Numeric scalers are fit once from the assembled optimizer OOF feature set:
+held-fold support-row descriptors plus their true query-target-row
+descriptors. Donor rows never enter as extra scaler-fit samples and therefore
+cannot reweight an item by duplication. After fitting, a donor operation only
+replaces target features that have been transformed with that same frozen item
+numeric scaler; validation rows never enter a scaler fit either.
 
-This permutation changes only the target supplied to the local pre-pool
-branch. It does not shuffle support responses.
+## Frozen donor-target maps
+
+Each map changes only the target supplied to the local pre-pool branch. It does
+not shuffle support responses.
 
 For each student, unique query target-item groups are partitioned by
 
@@ -151,11 +180,23 @@ Thus:
 
 Replicate 0 is frozen for the independently trained PermPair control on both
 optimizer and validation records; it is not resampled per epoch. Replicates
-0--199 form the validation permutation reference distribution. Every run
-records each cell's distinct-item count, eligible and changed row/student
-counts, fixed-point count, row-level true-target-to-donor mapping, and mapping
-SHA-256. A dataset is `not_identified` if fewer than 20% of validation query
-rows change or fewer than 100 validation students have a movable cell.
+0--199 are frozen donor-sensitivity maps. After model fitting is complete, the
+maps are applied to one fixed trained RealPair model without refitting,
+checkpoint choice, threshold choice, or model selection. They report how its
+predictions and AUC respond to admissible donor targets; they are not a
+permutation null distribution and produce no p-value. Every run records each
+cell's distinct-item count, eligible and changed row/student counts,
+fixed-point count, row-level true-target-to-donor mapping, and mapping SHA-256.
+A dataset is `not_identified` if fewer than 20% of validation query rows change
+or fewer than 100 validation students have a movable cell.
+
+A conditional randomization p-value would require exchangeability of the
+observed true local target and donor assignments under a specified null. That
+condition is unavailable here: the true target is structurally distinguished,
+donors are deterministic functions of student, item, train-only ease stratum,
+and replicate, and the fixed model was fit on the true-target RealPair path.
+The 200 constrained maps therefore support a fixed-model sensitivity
+diagnostic only.
 
 ## Label-blind feasibility precheck
 
@@ -175,13 +216,46 @@ not satisfy any activation condition. Earlier exact-Q-by-ease and
 response-mobility calculations concern different permutations and must not be
 substituted for this donor-target audit.
 
+### Completed preliminary implementation audit (superseded for finalization)
+
+The four-dataset label-blind protocol audit at commit `9d95259` completed
+without test access. Its aggregate artifact is
+`results/goal_two_module/target_local_pairing_v14_protocol_9d95259/summary.json`
+with SHA-256
+`5d6f213131e0e043c56593ca275381167b4d9bb7d6756855cab20c907938d4ed`.
+Concrete replicate-0 values read from that audit JSON are:
+
+| Dataset | Retained validation students | Query rows | Changed rows | Changed-row fraction | Changed students | Fixed points | Protocol status | Mapping SHA-256 |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| ASSIST17 | 348 | 6,491 | 6,080 | 0.9366815591 | 340 | 0 | `identified` (preliminary) | `515a4e1d7b0bb10fe9e695bca8d8ed7ad1c834f9b3e66d826321626f056e9efb` |
+| MOOCRadar | 419 | 8,133 | 7,492 | 0.9211852945 | 419 | 0 | `identified` (preliminary) | `ad0c5c5ea5561e01efa6dbb0c37f47b78b9f1003d0615e7e64726f452c39a85d` |
+| XES3G5M | 419 | 4,308 | 4,168 | 0.9675023213 | 419 | 0 | `identified` (preliminary) | `c96f649299fa4f02af3fabb55f59deb2cb5b6bde406cc6104494f1a8403e026c` |
+| Junyi | 670 | 3,078 | 2,528 | 0.8213125406 | 639 | 0 | `identified` (preliminary) | `4ace89db56d204337f2b4cd992538f232dada877ebc119383db36ebc1020ff5b` |
+
+This artifact used the provisional optimizer-role item union. It is retained
+only as provenance and preliminary implementation evidence; it is not the
+final preregistered protocol result. The audit must be rerun after the retained
+optimizer-profile known-item finalization above, and the final table and
+aggregate SHA-256 must replace this preliminary block before formal training.
+
 ## Shared inputs
 
-Every probe receives:
+Every probe receives, for every individual support row, its item identity,
+union-Q concepts, and foldwise-train-only ease/count/signature. The three
+row-level response columns are frozen as:
 
-- every support interaction's item identity, union-Q concepts, train-only
-  ease/count/signature, response, response residual, and confidence;
-- support-derived student accuracy, size, and confidence;
+- `response`: that row's binary outcome;
+- `response_minus_foldwise_item_ease`: that row's response minus its foldwise
+  train-only item ease;
+- `group_attempts_over_group_attempts_plus_one`: if the support contains
+  `n_ui` rows for that student's item, `n_ui / (n_ui + 1)`, repeated on each of
+  those rows as group-attempt confidence.
+
+The separate six-column support summary, in exact tensor order, is
+`theta_logit`, `raw_accuracy`, `log1p_support_rows`,
+`log1p_unique_support_items`, `log1p_correct_rows`, and
+`log1p_incorrect_rows`. Every probe also receives:
+
 - the true target identity, union-Q concepts, and train-only statistics;
 - true correct/incorrect item-state means, contrast, counts, and confidences.
 
@@ -248,8 +322,9 @@ must leave every prediction invariant.
 
 ## Fixed optimization
 
-- item and concept embedding dimensions: 16 each;
-- item/state dimension: 32; placement hidden dimension: 64;
+- frozen item-numeric descriptor width: 16; item-ID and concept embedding
+  dimensions: 16 each;
+- fused item/state dimension: 32; every probe MLP hidden dimension: 64;
 - no dropout, auxiliary loss, scheduler, dataset override, or special loss;
 - binary cross-entropy with logits;
 - AdamW, learning rate `0.001`, weight decay `0.0001`;
@@ -260,14 +335,24 @@ must leave every prediction invariant.
 
 All variants start from one serialized initialization. PermPair is a separate
 training job, not an inference-only corruption. The 200 further donor maps are
-evaluation-only and never trigger refitting or model choice.
+fixed-model sensitivity diagnostics only and never trigger refitting or model
+choice.
 
 ## Metrics and activation gate
 
 All variants predict the same validation query row IDs in the same order. The
 primary metric is overall AUC; Brier is the calibration guard. ACC and RMSE are
 descriptive. Inference uses 2,000 paired student-cluster bootstrap replicates
-with seed 2024.
+with seed 2024. Each replicate draws one validation-student multiset and applies
+that exact draw jointly to RealPair and all three controls. It reports the
+three pairwise AUC-difference intervals and, within the same replicate,
+
+```text
+Delta_AUC_joint_min = min_c (AUC(RealPair) - AUC(c)).
+```
+
+The joint-min 95% interval is computed from the 2,000 replicate-wise minima,
+not by taking the minimum of three separately sampled intervals.
 
 No control is selected after observing validation. For every control
 `c` in `{Strong-OPMS, PermPair, LateFusion}`, report:
@@ -278,29 +363,34 @@ Delta_Brier_c = Brier(RealPair) - Brier(c).
 ```
 
 The dataset effect is `min_c Delta_AUC_c`: RealPair must beat every control.
-Using one fixed trained RealPair, the conditional-permutation p-value is
-
-```text
-p = (1 + number of permuted-local-target AUC >= RealPair AUC) / 201,
-```
-
-with the common true-target path unchanged.
+The 200 fixed-model donor maps report sensitivity curves and quantiles with the
+common true-target path unchanged, but no inferential p-value.
 
 Further module work activates only if all conditions hold:
 
 1. at least two identified datasets have dataset effect `>=0.002`;
 2. at least one identified dataset has dataset effect `>=0.003`;
-3. at least one dataset has paired-bootstrap 95% CI lower bounds above zero
-   against all three controls;
-4. permutation `p<=0.05` on every dataset counted in condition 1;
-5. RealPair Brier regression is at most `0.0002` against every control on
+3. at least one identified dataset has a joint-min paired-bootstrap 95% CI
+   lower bound above zero;
+4. RealPair Brier regression is at most `0.0002` against every control on
    every dataset counted in condition 1;
-6. on no identified dataset is RealPair AUC more than `0.001` below any
+5. on no identified dataset is RealPair AUC more than `0.001` below any
    control.
 
 The gate is conjunctive. No threshold, control, metric, or dataset may be
 changed after validation. A `not_identified` dataset is reported but supplies
 neither support nor a regression failure.
+
+Three target-item robustness summaries are mandatory but non-gating. First,
+define the top 1% most frequent target items using optimizer-train-only item
+frequency before reading validation labels or predictions, remove their
+validation rows, and recompute all effects. Second, run a target-item-cluster
+bootstrap using one shared item draw for all four variants. Third, report
+leave-one-validation-target-item-out influence on the three pairwise effects
+and their joint minimum, retaining only removals whose remaining rows contain
+both outcome classes. The primary student-cluster bootstrap already addresses
+student dependence. These item diagnostics may qualify interpretation but
+cannot activate or veto module work.
 
 ## Required outputs
 
@@ -312,10 +402,15 @@ The implementation records:
 - Q-union conflicts and unknown-item filtering;
 - foldwise reference-student/row hashes and ease-tercile edges;
 - donor cell sizes, mapping hashes, changed fractions/students, and fixed
-  points for replicate 0 and all 200 validation replicates;
+  points for replicate 0 and all 200 validation donor-sensitivity maps;
 - architecture, input, initialization, minibatch, active-parameter,
   prediction, and gradient-check audits;
-- AUC, Brier, ACC, RMSE, all pairwise deltas, three bootstrap reports, and the
-  permutation p-value.
+- AUC, Brier, ACC, RMSE, all pairwise deltas, three pairwise bootstrap reports,
+  and the joint-min bootstrap report;
+- for every fixed-model donor map, mapping/input/prediction/order SHA-256 plus
+  the AUC-sensitivity distribution and its frozen quantiles;
+- non-gating optimizer-frequency top-1%-target-item exclusion,
+  target-item-cluster bootstrap, and validation-target-item-LOO sensitivity
+  summaries.
 
 Generated mappings and predictions remain unversioned under `results/`.

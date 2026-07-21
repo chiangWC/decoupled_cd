@@ -267,6 +267,227 @@ class TestValidationOnlyProtocol(unittest.TestCase):
 
             self.assertEqual(mapping_hash(one), mapping_hash(two))
 
+    def test_validation_labels_join_by_id_and_preserve_prediction_order(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_root:
+            path = Path(raw_root) / "valid.csv"
+            source = pd.DataFrame(
+                {
+                    "stu_id": [1, 2, 3],
+                    "exer_id": [10, 20, 30],
+                    "cpt_seq": ["c0", "c1", "c2"],
+                    "split_row_index": [90, 10, 50],
+                    "label": [0, 1, 1],
+                }
+            )
+            source.to_csv(path, index=False)
+            features = MODULE.load_validation_feature_rows(path).iloc[[2, 0]].copy()
+            predictions = features.loc[:, ["source_row_id"]].assign(
+                probability=[0.8, 0.2]
+            )
+            order_sha256 = MODULE.validation_row_order_sha256(predictions)
+            valid_sha256 = MODULE.sha256_file(path)
+            labels = MODULE.load_validation_labels_for_evaluation(
+                path,
+                feature_rows=features,
+                expected_valid_sha256=valid_sha256,
+            )
+            shuffled_labels = labels.sample(frac=1.0, random_state=7)
+            shuffled_labels.attrs.update(labels.attrs)
+            joined = MODULE.join_validation_predictions_with_labels(
+                predictions,
+                shuffled_labels,
+                expected_prediction_order_sha256=order_sha256,
+            )
+
+            self.assertEqual(
+                joined["source_row_id"].tolist(),
+                predictions["source_row_id"].tolist(),
+            )
+            self.assertEqual(joined["label"].astype(int).tolist(), [1, 0])
+            self.assertEqual(
+                joined.attrs["valid_full_sha256_before"], valid_sha256
+            )
+            self.assertEqual(
+                joined.attrs["valid_full_sha256_after"], valid_sha256
+            )
+            self.assertEqual(
+                joined.attrs["prediction_row_order_sha256_before"],
+                order_sha256,
+            )
+            self.assertEqual(
+                joined.attrs["prediction_row_order_sha256_after"],
+                order_sha256,
+            )
+
+    def test_validation_label_loader_rejects_equal_length_wrong_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_root:
+            path = Path(raw_root) / "valid.csv"
+            source = pd.DataFrame(
+                {
+                    "stu_id": [1, 2],
+                    "exer_id": [10, 20],
+                    "cpt_seq": ["c0", "c1"],
+                    "split_row_index": [0, 1],
+                    "label": [0, 1],
+                }
+            )
+            source.to_csv(path, index=False)
+            features = MODULE.load_validation_feature_rows(path)
+            wrong = source.copy()
+            wrong.loc[1, "exer_id"] = 999
+            wrong.to_csv(path, index=False)
+
+            with self.assertRaisesRegex(RuntimeError, "ID sets differ"):
+                MODULE.load_validation_labels_for_evaluation(
+                    path,
+                    feature_rows=features,
+                    expected_valid_sha256=MODULE.sha256_file(path),
+                )
+
+    def test_validation_label_join_rejects_duplicate_ids_and_bad_file_sha(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_root:
+            path = Path(raw_root) / "valid.csv"
+            pd.DataFrame(
+                {
+                    "stu_id": [1, 2],
+                    "exer_id": [10, 20],
+                    "cpt_seq": ["c0", "c1"],
+                    "label": [0, 1],
+                }
+            ).to_csv(path, index=False)
+            features = MODULE.load_validation_feature_rows(path)
+            with self.assertRaisesRegex(RuntimeError, "full-file SHA-256"):
+                MODULE.load_validation_labels_for_evaluation(
+                    path,
+                    feature_rows=features,
+                    expected_valid_sha256="0" * 64,
+                )
+
+            labels = MODULE.load_validation_labels_for_evaluation(
+                path,
+                feature_rows=features,
+                expected_valid_sha256=MODULE.sha256_file(path),
+            )
+            predictions = features.loc[:, ["source_row_id"]].assign(
+                probability=[0.1, 0.9]
+            )
+            duplicate_predictions = pd.concat(
+                [predictions, predictions.iloc[[0]]], ignore_index=True
+            )
+            with self.assertRaisesRegex(RuntimeError, "duplicate source_row_id"):
+                MODULE.join_validation_predictions_with_labels(
+                    duplicate_predictions, labels
+                )
+
+    def test_retained_optimizer_items_finalize_validation_targets(self) -> None:
+        common_items = [f"i{index}" for index in range(13)]
+        skipped_only_item = "skipped-only"
+
+        def rows(student: str, items: list[str], prefix: str) -> pd.DataFrame:
+            return pd.DataFrame(
+                [
+                    _interaction(
+                        student,
+                        item,
+                        f"{prefix}-{index}",
+                        label=index % 2,
+                        concept="c",
+                    )
+                    for index, item in enumerate(items)
+                ]
+            )
+
+        kept_support = rows("optimizer-kept", common_items[:10], "kept-s")
+        kept_query = rows("optimizer-kept", common_items[10:], "kept-q")
+        retained_profile = MODULE.StudentProfile(
+            student="optimizer-kept",
+            support=kept_support,
+            query=kept_query,
+            theta=0.0,
+            raw_accuracy=0.5,
+            seen_concepts=frozenset({"c"}),
+            fold=0,
+        )
+        optimizer_train = pd.concat(
+            [
+                kept_support,
+                kept_query,
+                rows("optimizer-skipped", [skipped_only_item], "skipped"),
+            ],
+            ignore_index=True,
+        )
+        validation_support = rows("validation", common_items[:10], "valid-s")
+        validation_query = rows(
+            "validation",
+            common_items[10:] + [skipped_only_item],
+            "valid-q",
+        )
+        initial_query_hash = MODULE._hash_values(
+            validation_query["source_row_id"].astype(str)
+        )
+        audit = {
+            "assigned_students": {"validation_retained": 1},
+            "rows": {
+                "validation_support": len(validation_support),
+                "validation_query": len(validation_query),
+                "validation_support_unknown_item_removed": 0,
+                "validation_query_unknown_item_removed": 0,
+                "validation_query_support_group_overlap_removed": 0,
+            },
+            "known_items": {
+                "provisional_optimizer_role_union": len(common_items) + 1,
+                "finalized_after_optimizer_retention": False,
+            },
+            "hashes": {
+                "validation_students": MODULE._hash_values(["validation"]),
+                "validation_support_rows": MODULE._hash_values(
+                    validation_support["source_row_id"].astype(str)
+                ),
+                "validation_query_rows": initial_query_hash,
+            },
+        }
+        protocol = MODULE.ValidationOnlyProtocol(
+            dataset="synthetic",
+            source_dir=Path("."),
+            optimizer_train=optimizer_train,
+            validation_support=validation_support,
+            validation_query=validation_query,
+            q_lookup={
+                item: ("c",) for item in common_items + [skipped_only_item]
+            },
+            audit=audit,
+        )
+
+        finalized = MODULE.finalize_protocol_for_retained_optimizer(
+            protocol, [retained_profile]
+        )
+
+        self.assertNotIn(
+            skipped_only_item,
+            set(finalized.validation_query["exer_id"].astype(str)),
+        )
+        self.assertEqual(len(finalized.validation_query), 3)
+        self.assertEqual(
+            finalized.audit["assigned_students"]["validation_retained"], 1
+        )
+        self.assertEqual(
+            finalized.audit["known_items"]["retained_optimizer_profile_union"],
+            len(common_items),
+        )
+        self.assertEqual(
+            finalized.audit["known_items"]["new_validation_query_rows_removed"],
+            1,
+        )
+        self.assertTrue(
+            finalized.audit["known_items"][
+                "finalized_after_optimizer_retention"
+            ]
+        )
+        self.assertNotEqual(
+            finalized.audit["hashes"]["validation_query_rows"],
+            initial_query_hash,
+        )
+
 
 class TestOptimizerAndDonorProtocol(unittest.TestCase):
     def test_optimizer_split_is_atomic_and_folds_are_deterministic(self) -> None:
