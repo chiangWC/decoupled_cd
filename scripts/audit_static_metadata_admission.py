@@ -656,8 +656,11 @@ def reconstruct_junyi(
         student = int(user_record["user_id"]) - 1
         for record in user_record["logs"]:
             item = int(record["exer_id"]) - 1
-            concept = int(record["knowledge_code"]) - 1
-            source_item_concept_identity &= item == concept
+            concepts = {
+                value - 1
+                for value in parse_concepts(record["knowledge_code"])
+            }
+            source_item_concept_identity &= concepts == {item}
             source_pairs[
                 (student, item)
             ] += 1

@@ -109,3 +109,10 @@ already written 4-hop, 25%, and 3-of-4 thresholds. The corrected source and
 this amendment must be committed before the formal run. Consequently this is
 an outcome-blind, validation-topology audit, not a claim of blind topology
 testing or predictive effectiveness.
+
+The first formal invocation at commit `9a672a3` aborted before writing an
+audit payload because an added provenance assertion assumed scalar Junyi
+`knowledge_code`, whereas the frozen source stores a list. The parser was
+corrected to compare the one-based code set with the exercise ID. No gate
+statistics were emitted by that invocation, and no source, threshold, or
+decision rule changed.

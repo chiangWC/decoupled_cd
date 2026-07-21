@@ -10,6 +10,7 @@ from scripts.audit_static_metadata_admission import (
     TypedGraph,
     add_filtered_group_edges,
     load_q_map,
+    parse_concepts,
     protocol_fingerprint_paths,
     read_flat_pairs,
     target_reachability,
@@ -162,6 +163,10 @@ class StaticMetadataAdmissionTest(unittest.TestCase):
                 load_q_map(path),
                 {0: {1, 2}, 1: {3, 4}},
             )
+
+    def test_concept_parser_accepts_junyi_code_lists(self) -> None:
+        self.assertEqual(parse_concepts([3]), (3,))
+        self.assertEqual(parse_concepts([3, 7]), (3, 7))
 
     def test_protocol_fingerprint_covers_audit_inputs(self) -> None:
         paths = protocol_fingerprint_paths("toy", "/tmp/toy")
