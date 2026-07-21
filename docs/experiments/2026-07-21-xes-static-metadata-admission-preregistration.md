@@ -69,3 +69,10 @@ The audit writes a hash-bound sidecar containing:
 Passing admission only permits the next train-only pseudo-target signal screen.
 It does not claim that KC routes improve prediction, authorize a neural module,
 or add XES to a final paper table by itself.
+
+## Process note
+
+The first formal invocation at commit `85bf3d9` stopped at import time because
+the executable had not added the repository root to `sys.path`. No input
+audit or mapping statistic was emitted. The follow-up fix changes only module
+discovery; every source, hash, mapping rule, and admission condition is frozen.
