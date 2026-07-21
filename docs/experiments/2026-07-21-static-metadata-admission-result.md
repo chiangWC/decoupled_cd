@@ -59,6 +59,21 @@ future, independently sourced data pool changes this admission result; it
 must not be attached to the current model as an optional dataset-specific
 branch.
 
+## Later scope correction
+
+The rejection above applies to the preregistered claim that metadata must add
+otherwise unreachable topology on at least three of these four protocols. It
+must not be read as evidence that real static relations lack predictive value,
+or that metadata-rich datasets cannot support a publishable component.
+
+A separately preregistered train-only signal audit subsequently compared real
+relations with Q-only and degree/type-matched rewires. It found a sizeable
+ASSIST09 pseudo-overall AUC gain (+0.018898) even though the exact-zero gain did
+not pass the completion gate. Thus the original topology result remains
+correct, while its earlier broad wording about the whole research direction is
+superseded. See
+`2026-07-21-static-metadata-signal-result.md`.
+
 ## Process deviations
 
 Before the formal run, an EdNet schema preview displayed five response labels;

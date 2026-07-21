@@ -25,8 +25,11 @@ An ordinary win requires all three raw-AUC conditions:
 - `T > external`.
 
 For each claimed module, compare Full with the stronger reasonable direct or
-capacity-matched control. The module must improve T by at least 0.005 on at
-least two Full-winning datasets, improve T by at least 0.01 on at least one of
+capacity-matched control. Before implementation, declare whether the component
+is responsible for overall diagnosis quality, the target slice, calibration,
+or another metric directly needed by the external-win objective. The module
+must improve that declared primary metric by at least 0.005 on at least two
+Full-winning datasets, improve it by at least 0.01 on at least one of
 them, and have a student-clustered paired-bootstrap 95% confidence interval
 whose lower bound is above zero on at least one Full-winning dataset. No other
 S/H/T axis on a Full-winning dataset may regress materially.
