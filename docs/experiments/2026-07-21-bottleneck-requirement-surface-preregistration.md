@@ -18,6 +18,18 @@ NCDM 正权网络也能表达部分交互，本轮不提出“首次非补偿诊
 预测或 valid/test 读取。train-only 筛选通过仅激活端到端实现，不自动成为
 论文模块；失败后不调阈值、不补 residual/gate/loss、不换名重跑。
 
+### 正式执行前修订：非加性判据的尺度
+
+在任何正式训练或 prediction 生成之前，经独立只读审查发现：若直接对
+probability surface 计算 mixed difference，即使 Capacity Control 在 logit
+尺度严格可加，外层 sigmoid 也可能产生非零二阶差分，从而造成假阳性。
+因此固定将下文曲面判据中的 `F` 定义为去除公共 `item_offset` 和仅用于
+严格单调数值保证的 `epsilon*g` 后，机制自身 `learned_surface` 的 logit，
+即 `F=logit(learned_surface)`；固定网格、可实现域、`0.001`
+阈值和所有性能门均不变。落盘工件同时保存 probability 与 surface logit，
+正式 barrier 从落盘后的 logit 列重新计算判定。该修订只修复判据尺度，
+没有查看候选训练、预测或任何 audit/valid/test 结果。
+
 ## 框架边界
 
 若通过，模块接在 Claude v2 的
@@ -205,6 +217,7 @@ counterfactual gap、相对最佳加性投影的 interaction departure、以及�
 满足 Q2 可实现域 `b <= g <= (1+b)/2` 的 cell 才参与。对每个 cell 计算
 
 ```text
+F(b,g) = logit(learned_surface(b,g; before epsilon blend and item_offset))
 interaction = F(b0,g0) - F(b0,g1) - F(b1,g0) + F(b1,g1)
 ```
 
