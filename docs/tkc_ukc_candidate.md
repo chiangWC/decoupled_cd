@@ -81,6 +81,19 @@ Capacity control 是当前 target-conditioned MLP，Direct control 是 monotonic
 
 Capacity control 保留相同输入、全局作答统计、四倍语义输入宽度和完全相同参数量，但把两个集合都替换为不区分结果的 attempted-item set；Direct control 只消费原 Evidence 输出与全局统计。ASSIST17/MOOCRadar 相对逐数据集较强对照的 target 增益只有 +0.000391/+0.000741，拒绝。
 
+## 已拒绝：Bottleneck-Aware Monotone Requirement Surface
+
+该 Diagnosis 候选借鉴 Hierarchical Lattice Layer 的硬单调曲面，以目标
+概念 readiness 的最小值与均值作为二维输入；同容量强对照是在 logit
+尺度可加的两个一维 lattice，另有只读均值的 Pooled 和正权 NCD 对照。
+
+正式 train-only Stage 1 中，ASSIST17/MOOCRadar 相对逐数据集最强对照的
+Q2 AUC 增益分别为 -0.000188/+0.001095，student-clustered 95% CI 为
+[-0.002282,+0.001621]/[-0.006344,+0.004211]。两处曲面虽均 noncollapsed，
+但没有形成足够、稳定的预测收益；MOO 的小增益在去除 top-5 Q-pair 后
+转负。候选拒绝且不进入 Claude v2。完整记录见
+`docs/experiments/2026-07-21-bottleneck-requirement-surface-result.md`。
+
 ## 历史“已通过”结论已推翻：Exercise-Specific Requirement Query
 
 该候选从已训练模型反向归因得到：Q view 表示题目要求哪些概念，exercise-specific view 表示同一 Q 组合在具体题目中的实现方式；二者共同生成下游 Diagnosis 唯一消费的 target requirement query。这个“协同身份 + 内容侧信息”映射借鉴 hybrid recommendation 的问题分解，例如 [Collaborative Deep Learning for Recommender Systems](https://dl.acm.org/doi/10.1145/2783258.2783273)，但 CD 模块与代码独立实现，不移植原模型。
