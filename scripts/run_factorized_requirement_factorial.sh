@@ -11,7 +11,7 @@ Usage:
     --data-root /path/to/knofield_data \
     --legacy-result-root /path/to/results/goal_two_module \
     [--output-root results/goal_two_module/factorized_requirement_factorial_v10] \
-    [--stage requirement_gate|full_factorial] \
+    [--stage requirement_gate|paired_full|full_factorial] \
     [--devices cuda:0,cuda:2,cuda:3] [--max-parallel 3] \
     [--expected-commit <sha>] [--gate-approved] [--execute]
   bash scripts/run_factorized_requirement_factorial.sh \
@@ -19,6 +19,9 @@ Usage:
     --scheduler-self-test
 
 The default requirement_gate stage contains only eight w/o-Requirement jobs.
+The paired_full stage reruns the eight Full cells on the current code and data
+pipeline so that a gate never compares against legacy checkpoints produced by
+different preprocessing semantics.
 The 14-job full_factorial stage requires an explicit --gate-approved after the
 pre-registered Requirement gate passes. Without --execute the script only
 prints its selected plan. Validation uses valid.csv as the train.py test
@@ -137,6 +140,20 @@ REQUIREMENT_GATE_TASKS=(
     "junyi|holdout|wo_requirement"
 )
 
+# A data-pipeline change can preserve raw file hashes while changing the
+# tensors consumed by a model (for example, reconstructing all exercise
+# concepts from Q). These jobs provide a commit-matched Full for a clean gate.
+PAIRED_FULL_TASKS=(
+    "assist17|standard|full_current"
+    "assist17|holdout|full_current"
+    "moocradar|standard|full_current"
+    "moocradar|holdout|full_current"
+    "xes3g5m|standard|full_current"
+    "xes3g5m|holdout|full_current"
+    "junyi|standard|full_current"
+    "junyi|holdout|full_current"
+)
+
 # Stage 2 fills only the remaining 14 cells after Stage 1 passes. Full exists
 # for all eight cells; the strong History control already exists for ASSIST17
 # holdout and Junyi holdout.
@@ -161,11 +178,14 @@ case "$STAGE" in
     requirement_gate)
         TASKS=("${REQUIREMENT_GATE_TASKS[@]}")
         ;;
+    paired_full)
+        TASKS=("${PAIRED_FULL_TASKS[@]}")
+        ;;
     full_factorial)
         TASKS=("${FULL_FACTORIAL_TASKS[@]}")
         ;;
     *)
-        echo "--stage must be requirement_gate or full_factorial." >&2
+        echo "--stage must be requirement_gate, paired_full, or full_factorial." >&2
         exit 2
         ;;
 esac
@@ -248,6 +268,10 @@ dataset_recipe() {
 variant_modes() {
     local variant="$1"
     case "$variant" in
+        full_current)
+            EVIDENCE_MODE="calibrated_history"
+            REQUIREMENT_MODE="exercise_specific"
+            ;;
         wo_history)
             EVIDENCE_MODE="calibrated_summary_control"
             REQUIREMENT_MODE="exercise_specific"
