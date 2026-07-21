@@ -22,6 +22,29 @@ class RecoveryScopeTest(unittest.TestCase):
         for dataset in registry["active_pool"]:
             self.assertEqual(set(registry["datasets"][dataset]["external_axes"]), {"S", "H", "T"})
 
+        assist17 = registry["datasets"]["assist_17"]
+        validation_mask = assist17["target_mask_protocol"]["validation"]
+        self.assertEqual(validation_mask["status"], "q_consistent")
+        self.assertEqual(
+            validation_mask["history_concept_source"],
+            "exercise_q_union",
+        )
+        self.assertEqual(
+            validation_mask["target_concept_source"],
+            "exercise_q_union",
+        )
+        self.assertEqual(validation_mask["target_rows"], 6851)
+        target_axis = assist17["external_axes"]["T"]
+        self.assertEqual(target_axis["validation_auc"], 0.7722901914958902)
+        self.assertEqual(target_axis["validation_target_auc"], 0.7722901914958902)
+        self.assertEqual(target_axis["test_target_mask_status"], "legacy_mixed")
+        self.assertEqual(
+            target_axis["test_target_status"],
+            "pending_q_consistent_confirmation",
+        )
+        self.assertFalse(target_axis["test_target_eligible_for_formal_comparison"])
+        self.assertFalse(target_axis["test_auc_eligible_for_formal_comparison"])
+
     def test_rejected_model_families_are_not_present(self) -> None:
         rejected = (
             PROJECT_ROOT / "models" / "r28_completion.py",

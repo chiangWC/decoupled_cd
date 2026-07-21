@@ -18,7 +18,7 @@ Holdout validation 首屏：
 
 Full 在两者均保持 validation strict win，但上表只相对弱 direct-prior control。加入同样消费 student evidence、concept 和 population prior 的 additive strong control 后，MOO/XES 的 target 增益仅 +0.000113/-0.000148；ASSIST17/Junyi 也只有 +0.001415/+0.000067。旧大幅度来自删除全部学生信息的弱对照，该模块拒绝。
 
-## 已通过：Calibrated Evidence Representation
+## 历史“已通过”结论已撤销：Calibrated Evidence Representation
 
 最终 v9 拓扑下，Full 相对移除整个语义/校准 Evidence 方框、但保留同容量学生边际统计编码器的 raw-summary control 结果为：
 
@@ -27,7 +27,18 @@ Full 在两者均保持 validation strict win，但上表只相对弱 direct-pri
 | ASSIST17 | 0.796573 | 0.777750 | +0.018823 | [+0.015791, +0.022016] |
 | Junyi | 0.828647 | 0.817022 | +0.011626 | [+0.010140, +0.013342] |
 
-两者 Full 均胜 validation 外部线，因此 Evidence 是第一个正式通过的框架模块。内部部分消融继续如实报告：只移除题目语义、保留 calibrated summary 时，ASSIST17 target 下降 0.018163，Junyi 只下降 0.001783；后者说明两种内部证据高度冗余，不能把语义分支另算一个贡献模块。
+这组结果只证明 Full 强于删除题目语义和难度校准信息的
+`raw_summary_control`，不能单独归因给所声明的 History 机制。更强的
+`calibrated_summary_control` 保留正确率、难度校准、置信度和 coverage，只
+移除 attempted-item semantic pool。历史点估计中，Full 相对该强对照的
+target 增益为 ASSIST17 约 +0.018163、XES3G5M +0.003274、MOOCRadar
++0.000646、Junyi +0.001783；只有 ASSIST17 达到当前模块幅度要求，不能满足
+至少两个胜出数据集的资格条件。
+
+此外，ASSIST17 旧结果使用 interaction-row `cpt_seq` 定义 coverage，而
+当前协议要求历史与目标均使用 exercise Q union。旧 artifact 不能继续充当
+Q-consistent 正式消融。Calibrated Evidence 因此降级为尚待重新设计或重新
+验证的输入路径，不再列为已通过论文模块。
 
 ## 已拒绝：Population-Calibrated Concept Prior
 
@@ -69,7 +80,7 @@ Capacity control 是当前 target-conditioned MLP，Direct control 是 monotonic
 
 Capacity control 保留相同输入、全局作答统计、四倍语义输入宽度和完全相同参数量，但把两个集合都替换为不区分结果的 attempted-item set；Direct control 只消费原 Evidence 输出与全局统计。ASSIST17/MOOCRadar 相对逐数据集较强对照的 target 增益只有 +0.000391/+0.000741，拒绝。
 
-## 已通过：Exercise-Specific Requirement Query
+## 历史“已通过”结论已推翻：Exercise-Specific Requirement Query
 
 该候选从已训练模型反向归因得到：Q view 表示题目要求哪些概念，exercise-specific view 表示同一 Q 组合在具体题目中的实现方式；二者共同生成下游 Diagnosis 唯一消费的 target requirement query。这个“协同身份 + 内容侧信息”映射借鉴 hybrid recommendation 的问题分解，例如 [Collaborative Deep Learning for Recommender Systems](https://dl.acm.org/doi/10.1145/2783258.2783273)，但 CD 模块与代码独立实现，不移植原模型。
 
@@ -80,6 +91,27 @@ Capacity control 保留相同输入、全局作答统计、四倍语义输入宽
 | ASSIST17 | 0.796573 | 0.784683 | +0.011890 | [+0.009019, +0.014802] |
 | XES3G5M | 0.785070 | 0.769736 | +0.015335 | [+0.010817, +0.019966] |
 
-两点 CI 下界均大于 0，且 Full 保持 validation external win，因此该模块正式通过。
+旧 `q_only_control` 与 `concept_prototype_control` 都删除了目标题身份，因此
+上表把“保留 item 信息”的收益误归因为 Q-item 联合机制。新的
+`factorized_item_control` 保留完全相同的 Q view、exact target item ID、
+item representation、item difficulty 和公共 Diagnosis，参数量也完全相同；
+它只把 joint hidden-unit nonlinear composition 替换为 factorized additive
+composition。
 
-最终门槛不变：同一架构至少三胜；两个模块各自在至少两个 Full 胜出数据集 target 提升不低于 0.005，其中一个不低于 0.01，并至少一个 student-clustered paired-bootstrap CI 下界大于 0。
+ASSIST17 的旧 Full、旧外部预测和当前协议还分别使用了 row/row、row/Q 与
+Q/Q 三种 target mask。以当前 Q/Q mask 对 Full 和强 control 成对重跑后：
+
+| 数据集 | Full T | factorized control T | ΔT | student-clustered 95% CI |
+|---|---:|---:|---:|---:|
+| ASSIST17 | 0.780853 | 0.781492 | -0.000639 | [-0.003034, +0.001680] |
+| MOOCRadar | 0.936415 | 0.935352 | +0.001063 | [+0.000101, +0.002099] |
+| XES3G5M | 0.785588 | 0.785818 | -0.000230 | [-0.001974, +0.001441] |
+| Junyi | 0.825002 | 0.824025 | +0.000978 | [+0.000051, +0.001952] |
+
+Full 在四个数据集仍均为 validation strict external win，但没有任何数据集
+达到预注册的 `ΔT >= 0.002`，更没有达到 `0.003`。因此 Requirement gate
+明确失败，剩余 14 个 2x2 任务不运行；性能强不能替代模块归因。
+
+当前状态是“有四胜性能路径，但没有已通过的论文模块”。后续模块必须遵守
+`docs/research_goal.md` 的强对照与幅度门槛，不能再使用上述两组旧结论组成
+双模块论文叙事。

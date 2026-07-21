@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "updated_at": "2026-07-14",
+  "updated_at": "2026-07-21",
   "model_seed": 42,
   "split_seed": 2024,
   "required_external_wins": 3,
@@ -81,6 +81,23 @@
       "standard_dir": "assist_17",
       "holdout_dir": "assist_17_chold_v2",
       "target_scope": "bucket:zero",
+      "target_mask_protocol": {
+        "validation": {
+          "status": "q_consistent",
+          "history_concept_source": "exercise_q_union",
+          "target_concept_source": "exercise_q_union",
+          "target_rows": 6851,
+          "note": "Recomputed from train.csv, valid.csv, and Q_matrix.csv; prediction-file coverage columns are not reused."
+        },
+        "test": {
+          "status": "pending_q_consistent_confirmation",
+          "legacy_semantics": "legacy_mixed",
+          "history_concept_source": "interaction_row_cpt_seq",
+          "target_concept_source": "exercise_q_union",
+          "eligible_for_formal_comparison": false,
+          "note": "The retained numeric test T cannot be re-sliced row-wise from the available artifact and must not be used as a new-model formal test line."
+        }
+      },
       "data_version": "knofield-recent-2026-07-13",
       "fingerprints": {
         "standard": {
@@ -122,10 +139,17 @@
         "T": {
           "model": "ORCDF",
           "seed": 42,
-          "validation_auc": 0.781337386057394,
+          "validation_auc": 0.7722901914958902,
           "test_auc": 0.7808065019879786,
-          "validation_target_auc": 0.781337386057394,
+          "validation_target_auc": 0.7722901914958902,
           "test_target_auc": 0.7808065019879786,
+          "validation_target_rows": 6851,
+          "validation_target_mask_status": "q_consistent",
+          "test_target_mask_status": "legacy_mixed",
+          "test_target_status": "pending_q_consistent_confirmation",
+          "test_target_eligible_for_formal_comparison": false,
+          "test_auc_status": "legacy_mixed_pending_q_consistent_confirmation",
+          "test_auc_eligible_for_formal_comparison": false,
           "validation_prediction_path": "results/external_benchmarks/legacy/orcdf_a17_holdout/valid_predictions.csv",
           "validation_prediction_sha256": "c1561b684670faf7de55da889f6304f5faa514b36316ae2eed3d8f7c637739ce",
           "validation_rows": 39527
