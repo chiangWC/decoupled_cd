@@ -8,8 +8,15 @@ out of scope.
 The terminal objective is one architecture topology that simultaneously:
 
 - obtains at least three ordinary external wins;
-- contains at least two independent framework modules that pass clean
-  ablation on datasets won by the Full model.
+- is a coherent framework whose functional components have explicit
+  responsibilities and interfaces.
+
+The number of claimed contribution modules is not fixed. Standard encoders,
+diagnosis heads, and other necessary framework boxes may remain non-contribution
+components. Every component presented as a contribution must pass clean
+ablation on datasets won by the Full model; components with weak ablations are
+kept only as implementation details. The final paper claims all and only the
+components supported by fair, material ablation effects.
 
 An ordinary win requires all three raw-AUC conditions:
 
@@ -29,7 +36,10 @@ final paper narrative are not frozen. TKC/UKC is an entry hypothesis rather
 than a mandatory story. Literature-derived, cross-domain and independently
 designed modules are all eligible. A mechanism is retained only when the Full
 model wins externally and its fair ablation is strong; provenance alone does
-not qualify or disqualify it.
+not qualify or disqualify it. A signal route is not rejected merely because
+its input is absent from part of the current pool: if the route has predictive
+value and clean ablations on a coherent set of at least three qualified
+datasets, the dynamic pool and narrative may be updated accordingly.
 
 Search is validation-driven. Test confirmation occurs only after architecture,
 training recipe and ablations are frozen. A short rolling plan may organize the
