@@ -57,6 +57,13 @@ Apache-2.0；wheel SHA-256 为
 借鉴点是硬单调曲面参数化；拟议贡献边界是把学生局部状态映射为
 `(weakest readiness, aggregate readiness)` 后进行多概念题诊断。
 
+正式训练前已用上述固定 tag 的官方 CPU 实现做 257 点随机数值 oracle：
+在相同 raw gates 下，1D `[16]` 最大绝对误差 `5.9604645e-08`，2D
+`[4,4]` 最大绝对误差 `1.1920929e-07`；组合输出 SHA-256 分别为
+`caff47a07b0ff7c5835580021b9a92344139e2212cf08d7a6258eb32c525c1fa`
+和 `e171ab0fbd3da0ea4e012c2927a1dca16c3ec19666230ffa71291212003b18ab`。
+仓库测试另冻结一组小型官方输出 fixture；此审计没有读取候选数据标签。
+
 ## 冻结的 train-only 协议
 
 ### 数据与划分
@@ -192,11 +199,14 @@ bootstrap 每次重采样重新取三项差值最小值；Brier 与三个 contro
 - 无 scheduler、early stopping、checkpoint window 或调参。
 
 四种 prediction manifest 全部生成并对齐后，evaluation 才加载 audit-query
-label。A17/MOO 共八份 prediction 齐全后才显示指标。runner 不接受
-valid/test path；正式执行验证 clean HEAD、origin 同 SHA 和
-`decoupled_cd` 环境。训练前保存 batch、row、input、offset、初始化、
-source 和 architecture hashes。过程只记录 loss/梯度健康，不显示 audit
-metric；OOM/非有限值明确失败，不改配方。
+label。A17/MOO 共八份 prediction 齐全后先单独运行 `seal`：校验冻结数据、
+commit、architecture、recipe、manifest、checkpoint、prediction 和曲面工件，
+写入全局 barrier，打印 SHA 后退出。SHA 必须先记录在实验目录之外；后续
+`evaluate` 必须由调用者显式传回该 SHA，且不能重写 barrier，之后才可揭盲。
+runner 不接受 valid/test path；正式执行验证 clean HEAD、origin 同 SHA 和
+`decoupled_cd` 环境。训练前保存 batch、row、input、offset、初始化、source
+和 architecture hashes。过程只记录初始/末步 loss 与逐参数梯度健康，不显示
+audit metric；OOM/非有限值明确失败，不改配方。
 
 ## 输出与问题实证
 
