@@ -11,9 +11,9 @@ Usage:
     --data-root /path/to/knofield_data \
     --legacy-result-root /path/to/results/goal_two_module \
     [--output-root results/goal_two_module/factorized_requirement_factorial_v10] \
-    [--stage requirement_gate|paired_full|full_factorial] \
+    [--stage requirement_gate|paired_full|history_gate] \
     [--devices cuda:0,cuda:2,cuda:3] [--max-parallel 3] \
-    [--expected-commit <sha>] [--gate-approved] [--execute]
+    [--expected-commit <sha>] [--execute]
   bash scripts/run_factorized_requirement_factorial.sh \
     --devices self_gpu0,self_gpu1 --max-parallel 9 \
     --scheduler-self-test
@@ -22,11 +22,13 @@ The default requirement_gate stage contains only eight w/o-Requirement jobs.
 The paired_full stage reruns the eight Full cells on the current code and data
 pipeline so that a gate never compares against legacy checkpoints produced by
 different preprocessing semantics.
-The 14-job full_factorial stage requires an explicit --gate-approved after the
-pre-registered Requirement gate passes. Without --execute the script only
-prints its selected plan. Validation uses valid.csv as the train.py test
-placeholder, so no test file is opened and --evaluation-stage validation never
-computes test metrics.
+The history_gate stage contains only four holdout w/o-both jobs. Its matched
+History-Full anchors are the existing <dataset>_holdout_wo_requirement
+artifacts, so both sides use factorized_item_control and differ only in History
+representation. The rejected Requirement full-factorial stage is deliberately
+unavailable. Without --execute the script only prints its selected plan.
+Validation uses valid.csv as the train.py test placeholder, so no test file is
+opened and --evaluation-stage validation never computes test metrics.
 EOF
 }
 
@@ -37,7 +39,6 @@ DEVICES="cpu"
 MAX_PARALLEL=1
 EXPECTED_COMMIT=""
 STAGE="requirement_gate"
-GATE_APPROVED=0
 SCHEDULER_SELF_TEST=0
 EXECUTE=0
 
@@ -70,10 +71,6 @@ while [[ $# -gt 0 ]]; do
         --stage)
             STAGE="$2"
             shift 2
-            ;;
-        --gate-approved)
-            GATE_APPROVED=1
-            shift
             ;;
         --scheduler-self-test)
             SCHEDULER_SELF_TEST=1
@@ -154,23 +151,14 @@ PAIRED_FULL_TASKS=(
     "junyi|holdout|full_current"
 )
 
-# Stage 2 fills only the remaining 14 cells after Stage 1 passes. Full exists
-# for all eight cells; the strong History control already exists for ASSIST17
-# holdout and Junyi holdout.
-FULL_FACTORIAL_TASKS=(
-    "assist17|standard|wo_history"
-    "assist17|standard|wo_both"
+# Requirement failed its Q-consistent gate. The only remaining clean question
+# is whether calibrated History beats calibrated summary when both paths use
+# the same factorized Requirement control. Existing *_holdout_wo_requirement
+# predictions are the matched History-Full anchors.
+HISTORY_GATE_TASKS=(
     "assist17|holdout|wo_both"
-    "moocradar|standard|wo_history"
-    "moocradar|standard|wo_both"
-    "moocradar|holdout|wo_history"
     "moocradar|holdout|wo_both"
-    "xes3g5m|standard|wo_history"
-    "xes3g5m|standard|wo_both"
-    "xes3g5m|holdout|wo_history"
     "xes3g5m|holdout|wo_both"
-    "junyi|standard|wo_history"
-    "junyi|standard|wo_both"
     "junyi|holdout|wo_both"
 )
 
@@ -181,11 +169,11 @@ case "$STAGE" in
     paired_full)
         TASKS=("${PAIRED_FULL_TASKS[@]}")
         ;;
-    full_factorial)
-        TASKS=("${FULL_FACTORIAL_TASKS[@]}")
+    history_gate)
+        TASKS=("${HISTORY_GATE_TASKS[@]}")
         ;;
     *)
-        echo "--stage must be requirement_gate, paired_full, or full_factorial." >&2
+        echo "--stage must be requirement_gate, paired_full, or history_gate." >&2
         exit 2
         ;;
 esac
@@ -524,16 +512,17 @@ if [[ -n "$(git status --short)" ]]; then
     echo "Formal execution requires a clean worktree." >&2
     exit 4
 fi
+REMOTE_CONTAINING_HEAD="$(git branch -r --contains "$CURRENT_HEAD" 2>/dev/null || true)"
+if [[ -z "$REMOTE_CONTAINING_HEAD" ]]; then
+    echo "Formal execution requires HEAD to be present on a fetched remote ref." >&2
+    exit 4
+fi
 if [[ -z "$EXPECTED_COMMIT" ]]; then
     echo "Formal execution requires --expected-commit." >&2
     exit 4
 fi
-if [[ -z "$LEGACY_RESULT_ROOT" ]]; then
+if [[ "$STAGE" != "history_gate" && -z "$LEGACY_RESULT_ROOT" ]]; then
     echo "Formal execution requires --legacy-result-root." >&2
-    exit 4
-fi
-if [[ "$STAGE" == "full_factorial" && "$GATE_APPROVED" -ne 1 ]]; then
-    echo "full_factorial requires --gate-approved." >&2
     exit 4
 fi
 RESOLVED_EXPECTED_COMMIT="$(
@@ -549,11 +538,18 @@ printf 'stage=%s\nbranch=%s\nhead=%s\nexpected_commit=%s\n' \
     "$STAGE" "$CURRENT_BRANCH" "$CURRENT_HEAD" \
     "$RESOLVED_EXPECTED_COMMIT" \
     > "$OUTPUT_ROOT/runner_identity_${STAGE}.log"
-python scripts/audit_factorized_requirement_artifacts.py \
-    --manifest configs/factorized_requirement_artifacts.json \
-    --artifact-root "$LEGACY_RESULT_ROOT" \
-    --output "$OUTPUT_ROOT/locked_artifact_audit_${STAGE}.json" \
-    > "$OUTPUT_ROOT/locked_artifact_audit_${STAGE}.stdout.log"
+if [[ "$STAGE" == "history_gate" ]]; then
+    python scripts/audit_history_gate_anchors.py \
+        --artifact-root "$OUTPUT_ROOT" \
+        --output "$OUTPUT_ROOT/locked_history_anchor_audit.json" \
+        > "$OUTPUT_ROOT/locked_history_anchor_audit.stdout.log"
+else
+    python scripts/audit_factorized_requirement_artifacts.py \
+        --manifest configs/factorized_requirement_artifacts.json \
+        --artifact-root "$LEGACY_RESULT_ROOT" \
+        --output "$OUTPUT_ROOT/locked_artifact_audit_${STAGE}.json" \
+        > "$OUTPUT_ROOT/locked_artifact_audit_${STAGE}.stdout.log"
+fi
 
 TASK_RUNNER_FUNCTION="run_task"
 if ! run_scheduled_tasks; then
