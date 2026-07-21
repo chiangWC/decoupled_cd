@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ from scripts.run_response_credit_activation import (
     load_standard_stage1_barrier,
     parse_args,
     run_aggregate_phase,
+    run_prediction_barrier_phase,
 )
 from utils.response_credit_evaluation import (
     BOOTSTRAP_REPLICATES,
@@ -122,7 +124,136 @@ def _write_official_stage1(
     return path
 
 
+def _write_prediction_matrix(root: Path) -> list[Path]:
+    directories = []
+    probability_columns = {
+        "full": "prob_full",
+        "direct": "prob_direct",
+        "capacity": "prob_capacity",
+    }
+    for dataset in ("MOOCRadar", "NIPS34"):
+        for variant, probability in probability_columns.items():
+            directory = root / dataset / variant
+            directory.mkdir(parents=True)
+            prediction_path = directory / f"{variant}.csv"
+            frame = pd.DataFrame(
+                {
+                    "source_row_id": [f"{dataset}-0", f"{dataset}-1"],
+                    "stu_id": [1, 2],
+                    "exer_id": [10, 11],
+                    "target_coverage": [0.0, 0.5],
+                    "in_c": [True, False],
+                    "in_c_strict": [False, False],
+                    "in_t": [True, False],
+                    probability: [0.4, 0.6],
+                }
+            )
+            _atomic_csv(prediction_path, frame)
+            manifest = {
+                "schema_version": 1,
+                "phase": "response_credit_predict",
+                "formal": True,
+                "dataset": dataset,
+                "split_kind": "holdout",
+                "variant": variant,
+                "git": {
+                    "head": "commit",
+                    "worktree_clean": True,
+                    "formal_enforced": True,
+                    "live_origin_branch_head": "commit",
+                },
+                "optimization": {"epochs": 20},
+                "model": {
+                    "architecture": {"topology_sha256": "topology"},
+                },
+                "artifacts": {
+                    "predictions": {
+                        "path": prediction_path.name,
+                        "sha256": hashlib.sha256(
+                            prediction_path.read_bytes()
+                        ).hexdigest(),
+                        "semantic_sha256": f"semantic-{dataset}-{variant}",
+                        "row_order_sha256": f"order-{dataset}",
+                        "rows": len(frame),
+                    }
+                },
+                "leakage_audit": {
+                    "validation_labels_loaded": False,
+                    "prediction_artifact_contains_label": False,
+                    "test_files_opened": False,
+                },
+            }
+            (directory / "prediction_manifest.json").write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+            directories.append(directory)
+    return directories
+
+
 class TestResponseCreditRunner(unittest.TestCase):
+    def test_global_prediction_barrier_accepts_complete_unlabeled_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            directories = _write_prediction_matrix(root / "predictions")
+            result = run_prediction_barrier_phase(
+                prediction_dirs=directories,
+                split_kind="holdout",
+                output_dir=root / "barrier",
+            )
+        self.assertTrue(result["checks"]["all_six_predictions_present"])
+        self.assertTrue(result["checks"]["csv_headers_are_label_free"])
+        self.assertFalse(result["leakage_audit"]["validation_labels_loaded"])
+        self.assertFalse(result["leakage_audit"]["source_files_opened"])
+
+    def test_global_prediction_barrier_rejects_incomplete_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            directories = _write_prediction_matrix(root / "predictions")
+            with self.assertRaisesRegex(RuntimeError, "exactly 6"):
+                run_prediction_barrier_phase(
+                    prediction_dirs=directories[:-1],
+                    split_kind="holdout",
+                    output_dir=root / "barrier",
+                )
+
+    def test_global_prediction_barrier_rejects_label_column(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            directories = _write_prediction_matrix(root / "predictions")
+            directory = directories[0]
+            manifest_path = directory / "prediction_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            prediction_path = directory / manifest["artifacts"]["predictions"]["path"]
+            frame = pd.read_csv(prediction_path)
+            frame["label"] = [0, 1]
+            _atomic_csv(prediction_path, frame)
+            manifest["artifacts"]["predictions"]["sha256"] = hashlib.sha256(
+                prediction_path.read_bytes()
+            ).hexdigest()
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "label column"):
+                run_prediction_barrier_phase(
+                    prediction_dirs=directories,
+                    split_kind="holdout",
+                    output_dir=root / "barrier",
+                )
+
+    def test_global_prediction_barrier_rejects_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            directories = _write_prediction_matrix(root / "predictions")
+            manifest_path = directories[0] / "prediction_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["artifacts"]["predictions"]["sha256"] = "bad"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "SHA mismatch"):
+                run_prediction_barrier_phase(
+                    prediction_dirs=directories,
+                    split_kind="holdout",
+                    output_dir=root / "barrier",
+                )
+
     def test_topology_hash_excludes_dataset_dimensions(self) -> None:
         first = SimpleNamespace(
             num_items=10,
@@ -364,6 +495,20 @@ class TestResponseCreditRunner(unittest.TestCase):
                     "/forbidden/test.csv",
                 ]
             )
+
+    def test_prediction_barrier_cli_has_no_source_argument(self) -> None:
+        arguments = [
+            "prediction-barrier",
+            "--split-kind",
+            "holdout",
+            "--output-dir",
+            "/out",
+        ]
+        for index in range(6):
+            arguments.extend(["--prediction-dir", f"/prediction/{index}"])
+        arguments.extend(["--source-dir", "/forbidden/valid"])
+        with self.assertRaises(SystemExit):
+            parse_args(arguments)
 
 
 if __name__ == "__main__":

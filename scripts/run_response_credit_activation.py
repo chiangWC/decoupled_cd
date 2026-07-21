@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -892,6 +893,197 @@ def run_predict_phase(
     return manifest
 
 
+def _inspect_prediction_csv(
+    directory: Path,
+    *,
+    variant: str,
+    spec: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate one unlabeled CSV without loading any outcome or source file."""
+    relative_path = Path(str(spec.get("path", "")))
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise RuntimeError(f"Prediction path escapes its artifact directory: {directory}.")
+    prediction_path = (directory / relative_path).resolve()
+    directory_resolved = directory.resolve()
+    if prediction_path.parent != directory_resolved or not prediction_path.is_file():
+        raise RuntimeError(f"Prediction artifact is missing for {variant}: {prediction_path}.")
+    actual_sha256 = sha256_file(prediction_path)
+    if actual_sha256 != spec.get("sha256"):
+        raise RuntimeError(f"Prediction SHA mismatch for {variant}.")
+
+    with prediction_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        try:
+            header = next(reader)
+        except StopIteration as error:
+            raise RuntimeError(f"Prediction CSV is empty for {variant}.") from error
+        if not header or len(header) != len(set(header)):
+            raise RuntimeError(f"Prediction CSV header is invalid for {variant}.")
+        if any(column.strip().casefold() == "label" for column in header):
+            raise RuntimeError(f"Prediction CSV contains a label column for {variant}.")
+        required = {
+            "source_row_id",
+            "stu_id",
+            "exer_id",
+            "target_coverage",
+            "in_c",
+            "in_c_strict",
+            "in_t",
+            PROBABILITY_COLUMNS[variant],
+        }
+        if set(header) != required:
+            raise RuntimeError(f"Prediction CSV lacks required columns for {variant}.")
+        rows = 0
+        for row in reader:
+            if len(row) != len(header):
+                raise RuntimeError(f"Prediction CSV has a malformed row for {variant}.")
+            rows += 1
+    if rows != int(spec.get("rows", -1)):
+        raise RuntimeError(f"Prediction row count mismatch for {variant}.")
+    return {
+        "path": str(prediction_path),
+        "sha256": actual_sha256,
+        "rows": rows,
+        "header": header,
+        "row_order_sha256": spec.get("row_order_sha256"),
+        "semantic_sha256": spec.get("semantic_sha256"),
+    }
+
+
+def run_prediction_barrier_phase(
+    *,
+    prediction_dirs: Sequence[Path],
+    split_kind: str,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Prove that all six formal, label-free predictions exist before evaluation."""
+    if split_kind not in EXPECTED_SPLITS:
+        raise ValueError(f"Unexpected split kind: {split_kind}.")
+    expected_pairs = {
+        (dataset, variant)
+        for dataset in EXPECTED_DATASETS
+        for variant in VARIANTS
+    }
+    if len(prediction_dirs) != len(expected_pairs):
+        raise RuntimeError(
+            f"Prediction barrier requires exactly {len(expected_pairs)} directories."
+        )
+
+    inspected: dict[tuple[str, str], dict[str, Any]] = {}
+    commits: set[str] = set()
+    topologies: set[str] = set()
+    for raw_directory in prediction_dirs:
+        directory = Path(raw_directory).resolve()
+        manifest_path = directory / "prediction_manifest.json"
+        if not manifest_path.is_file():
+            raise RuntimeError(f"Prediction manifest is missing: {manifest_path}.")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        dataset = str(manifest.get("dataset", ""))
+        variant = str(manifest.get("variant", ""))
+        pair = (dataset, variant)
+        if pair not in expected_pairs or pair in inspected:
+            raise RuntimeError(f"Unexpected or duplicate prediction pair: {pair}.")
+        if (
+            manifest.get("schema_version") != 1
+            or manifest.get("phase") != "response_credit_predict"
+            or manifest.get("formal") is not True
+            or manifest.get("split_kind") != split_kind
+        ):
+            raise RuntimeError(f"Prediction manifest is not formal {split_kind}: {pair}.")
+
+        git = manifest.get("git", {})
+        commit = git.get("head")
+        if (
+            not isinstance(commit, str)
+            or not commit
+            or git.get("worktree_clean") is not True
+            or git.get("formal_enforced") is not True
+            or git.get("live_origin_branch_head") != commit
+        ):
+            raise RuntimeError(f"Prediction git provenance is invalid: {pair}.")
+        architecture = manifest.get("model", {}).get("architecture", {})
+        topology = architecture.get("topology_sha256")
+        if not isinstance(topology, str) or not topology:
+            raise RuntimeError(f"Prediction topology is missing: {pair}.")
+        leakage = manifest.get("leakage_audit", {})
+        if (
+            leakage.get("validation_labels_loaded") is not False
+            or leakage.get("prediction_artifact_contains_label") is not False
+            or leakage.get("test_files_opened") is not False
+        ):
+            raise RuntimeError(f"Prediction leakage audit failed: {pair}.")
+        if manifest.get("optimization", {}).get("epochs") != EPOCHS:
+            raise RuntimeError(f"Formal prediction epochs are invalid: {pair}.")
+
+        artifact = _inspect_prediction_csv(
+            directory,
+            variant=variant,
+            spec=manifest.get("artifacts", {}).get("predictions", {}),
+        )
+        inspected[pair] = {
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": sha256_file(manifest_path),
+            "prediction": artifact,
+        }
+        commits.add(commit)
+        topologies.add(topology)
+
+    if set(inspected) != expected_pairs:
+        raise RuntimeError("Prediction barrier does not contain the preregistered matrix.")
+    if len(commits) != 1 or len(topologies) != 1:
+        raise RuntimeError("Predictions do not share one commit and topology.")
+    for dataset in EXPECTED_DATASETS:
+        dataset_rows = {
+            inspected[(dataset, variant)]["prediction"]["rows"]
+            for variant in VARIANTS
+        }
+        dataset_orders = {
+            inspected[(dataset, variant)]["prediction"]["row_order_sha256"]
+            for variant in VARIANTS
+        }
+        if len(dataset_rows) != 1 or len(dataset_orders) != 1 or None in dataset_orders:
+            raise RuntimeError(f"Prediction rows/order differ across variants for {dataset}.")
+
+    _require_empty_output(output_dir)
+    payload = {
+        "schema_version": 1,
+        "phase": "response_credit_prediction_barrier",
+        "formal": True,
+        "split_kind": split_kind,
+        "git_commit": next(iter(commits)),
+        "architecture_topology_sha256": next(iter(topologies)),
+        "expected_matrix": {
+            "datasets": list(EXPECTED_DATASETS),
+            "variants": list(VARIANTS),
+            "prediction_count": len(expected_pairs),
+        },
+        "predictions": {
+            dataset: {
+                variant: inspected[(dataset, variant)]
+                for variant in VARIANTS
+            }
+            for dataset in EXPECTED_DATASETS
+        },
+        "checks": {
+            "all_six_predictions_present": True,
+            "all_formal": True,
+            "same_commit": True,
+            "same_topology": True,
+            "split_matches": True,
+            "artifact_hashes_and_rows_match": True,
+            "csv_headers_are_label_free": True,
+            "prediction_leakage_audits_pass": True,
+        },
+        "leakage_audit": {
+            "validation_labels_loaded": False,
+            "source_files_opened": False,
+            "test_files_opened": False,
+        },
+    }
+    _atomic_json(output_dir / "prediction_barrier.json", payload)
+    return payload
+
+
 def _load_variant_prediction(
     directory: Path,
     *,
@@ -1325,6 +1517,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     predict.add_argument("--expected-commit")
     predict.add_argument("--stage1-json", type=Path)
 
+    barrier = subparsers.add_parser("prediction-barrier")
+    barrier.add_argument(
+        "--prediction-dir",
+        required=True,
+        action="append",
+        type=Path,
+    )
+    barrier.add_argument("--split-kind", required=True, choices=EXPECTED_SPLITS)
+    barrier.add_argument("--output-dir", required=True, type=Path)
+
     evaluate = subparsers.add_parser("evaluate")
     evaluate.add_argument("--full-dir", required=True, type=Path)
     evaluate.add_argument("--direct-dir", required=True, type=Path)
@@ -1382,6 +1584,19 @@ def main(argv: Sequence[str] | None = None) -> None:
             "variant": result["variant"],
             "formal": result["formal"],
             "prediction_rows": result["artifacts"]["predictions"]["rows"],
+        }
+    elif args.command == "prediction-barrier":
+        result = run_prediction_barrier_phase(
+            prediction_dirs=args.prediction_dir,
+            split_kind=args.split_kind,
+            output_dir=args.output_dir,
+        )
+        printable = {
+            "phase": result["phase"],
+            "split_kind": result["split_kind"],
+            "prediction_count": result["expected_matrix"]["prediction_count"],
+            "git_commit": result["git_commit"],
+            "checks": result["checks"],
         }
     elif args.command == "evaluate":
         result = run_evaluate_phase(
