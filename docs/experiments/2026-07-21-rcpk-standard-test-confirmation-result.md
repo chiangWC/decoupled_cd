@@ -54,6 +54,11 @@ module gains above `0.005`, one exceeds `0.01`, and all three reported paired
 confidence intervals have positive lower bounds. XES3G5M's regression is only
 `0.000273`, below the `0.001` safety tolerance.
 
+Junyi also permits a paired Full-versus-external test comparison because its
+ORCDF row predictions are retained. The external delta is `+0.012290`, with
+student-clustered 95% CI `[+0.010964, +0.013741]` and
+`P(delta > 0) = 1.000`.
+
 ## Integrity
 
 - All checkpoints and controls were selected from validation results before
