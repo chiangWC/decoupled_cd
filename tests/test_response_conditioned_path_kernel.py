@@ -116,6 +116,6 @@ def test_disabled_model_keeps_frozen_fingerprint() -> None:
         num_students=2,
         num_exercises=3,
         num_concepts=2,
-        concept_dim=8,
+        concept_dim=64,
     )
     assert model.architecture_fingerprint == "099906acdba8c3b4"
