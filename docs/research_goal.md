@@ -47,3 +47,29 @@ datasets, the dynamic pool and narrative may be updated accordingly.
 Search is validation-driven. Test confirmation occurs only after architecture,
 training recipe and ablations are frozen. A short rolling plan may organize the
 current candidate, but it must not replace these terminal conditions.
+
+## Standard-only amendment (2026-07-21)
+
+The concept-holdout RCPK screen failed and remains a negative result. Following
+that evidence, the active RCPK paper route narrows its declared responsibility
+to standard overall diagnosis and no longer uses H/T as a success condition or
+as a TKC/UKC-completion claim. This is a disclosed research-question pivot, not
+an alternate slice selected to hide a failed holdout experiment.
+
+For this route, the terminal performance condition is at least three wins over
+the frozen external standard-test AUC lines from the registered same-split
+benchmark runs under one architecture fingerprint. Row-level external
+predictions remain mandatory for validation-driven selection and should also be
+retained for test whenever available.
+The existing module effect thresholds above apply to standard AUC: at least two
+externally won datasets improve by `0.005`, at least one improves by `0.01`, at
+least one student-clustered paired-bootstrap confidence interval has a positive
+lower bound, and any regression on another standard-winning dataset is below
+`0.001`.
+
+RCPK meets this amended terminal condition on the frozen 2026-07-21 test
+confirmation. ASSIST09, NIPS34, and Junyi are external-plus-module wins;
+XES3G5M is an additional external architecture win with a negligible negative
+module delta and is not used as attribution evidence. The next phase is paper
+validation and comparison, not compulsory module accumulation. The rejected
+H/T results remain reportable limitations.

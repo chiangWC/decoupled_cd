@@ -62,20 +62,36 @@ def _scope_mask(frame: pd.DataFrame, scope: str) -> np.ndarray:
     raise ValueError(f"Unsupported scope: {scope}")
 
 
-def _validate_alignment(full: pd.DataFrame, control: pd.DataFrame) -> None:
+def _validate_alignment(
+    full: pd.DataFrame,
+    control: pd.DataFrame,
+    *,
+    require_target_scope: bool,
+) -> None:
     if len(full) != len(control):
         raise ValueError("Prediction files have different row counts.")
     required = ["stu_id", "exer_id", "label", "prob"]
     for column in required:
         if column not in full or column not in control:
             raise ValueError(f"Missing required prediction column: {column}")
-    for column in ["stu_id", "exer_id", "label"]:
+    for column in ["stu_id", "exer_id"]:
         left = full[column].astype(str).to_numpy()
         right = control[column].astype(str).to_numpy()
         if not np.array_equal(left, right):
             mismatch = int(np.flatnonzero(left != right)[0])
             raise ValueError(f"Prediction rows are misaligned at row {mismatch} ({column}).")
-    if not np.array_equal(
+    left_labels = pd.to_numeric(full["label"], errors="raise").to_numpy(
+        dtype=float
+    )
+    right_labels = pd.to_numeric(control["label"], errors="raise").to_numpy(
+        dtype=float
+    )
+    if not np.array_equal(left_labels, right_labels):
+        mismatch = int(np.flatnonzero(left_labels != right_labels)[0])
+        raise ValueError(
+            f"Prediction rows are misaligned at row {mismatch} (label)."
+        )
+    if require_target_scope and not np.array_equal(
         _target_scope_values(full),
         _target_scope_values(control),
     ):
@@ -90,7 +106,11 @@ def paired_student_cluster_bootstrap(
     replicates: int,
     seed: int,
 ) -> dict[str, Any]:
-    _validate_alignment(full, control)
+    _validate_alignment(
+        full,
+        control,
+        require_target_scope=scope != "overall",
+    )
     mask = _scope_mask(full, scope)
     scoped = full.loc[mask].reset_index(drop=True)
     scoped_control = control.loc[mask].reset_index(drop=True)

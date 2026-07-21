@@ -37,3 +37,20 @@ when it satisfies the external-win and clean-ablation contract in
 `docs/research_goal.md`. The final paper problem and contribution may then be
 formulated from the validated failure mechanism and measured gains rather than
 imposed in advance.
+
+## Active validated exception (2026-07-21)
+
+RCPK is the first model to exercise the non-TKC/UKC exception above. Its
+concept-holdout route was rejected, while its declared standard-representation
+responsibility passed frozen validation, clean controls, and standard-test
+confirmation. The current active paper route is therefore relation-aware
+standard cognitive diagnosis, with RCPK as the sole claimed contribution
+module. See
+`docs/experiments/2026-07-21-rcpk-standard-test-confirmation-result.md`.
+
+Do not restart r26/r28/r29 completion searches or relabel RCPK as UKC
+completion. Do not force a second contribution module: the matched History Set
+audit failed and is retained only as a negative experiment. New structural
+work requires a separate, evidence-backed responsibility and preregistered
+control; otherwise proceed with paper validation, external comparisons, and
+analysis of the qualified RCPK mechanism.
