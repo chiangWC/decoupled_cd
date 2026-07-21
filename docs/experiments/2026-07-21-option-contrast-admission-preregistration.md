@@ -103,11 +103,69 @@ history rows remain. The key excludes label, correctness, and option identity.
 Coverage is recomputed from the remaining history: NIPS uses low coverage and
 EdNet/ENEM use exact zero. All hidden rows form the pseudo-overall set, while rows in
 that coverage scope form pseudo-T.
+Before fitting any estimator, the pseudo-T scope must contain at least 500 rows,
+100 students, and 100 examples of each label. A dataset failing this feasibility
+check is retained in the audit as `insufficient_target_support` and does not
+contribute a pseudo-T delta or gate decision; its failure does not alter the
+pseudo-target mask or promote another dataset.
+
 
 Five student-disjoint cross-fit folds are assigned by a stable student-only hash;
 this is not a multi-seed experiment. Global statistics and estimator parameters for
 a held fold are fitted on the other four folds only. A held student's pseudo-target
 label and selected option are never inputs.
+
+### Frozen estimator
+
+Within each held outer fold, the other four student folds are the only reference
+population. Their retained histories define a student-by-concept state using a
+Beta(1,1) posterior on observed concepts. For every `(item, correctness)` cell, a
+binary cell-to-concept signature is the selector-weighted concept state shrunk by
+strength 20 toward the reference global concept prior. Averaging these signatures
+over a student's retained history produces the Direct completion state.
+
+Correct responses have no categorical residual. For each supported
+`(item, wrong selected option)` cell, Full learns a concept signature hierarchically
+shrunk by strength 20 toward that item's binary-wrong signature. Full consumes only
+the residual between these two signatures; the hierarchical shrinkage itself is
+the reference support weighting, and a cell/concept requires five reference students. A student's residuals
+are averaged over retained wrong responses and receive an additional
+`n/(n+3)` reliability factor. Thus the Full-minus-Direct information difference is
+only wrong-option identity.
+
+Reference-student features use exact leave-one-student sufficient-statistic
+subtraction from binary/option cells, global concept priors, item-ease shrinkage,
+and shuffle fallback counts. Held-student features use all reference students.
+Shuffle uses the same signature table and feature block as Full,
+but resamples each retained wrong option from the reference
+`P(option | item, incorrect)` using a hash of dataset/student/item that excludes the
+real option. Empty cells fall back first to the option-count distribution, then to a
+uniform legal wrong option. Correct responses are unchanged.
+
+All variants share 13 fixed common features: history count/balance, observed-concept
+fraction, target-Q size, reference-only target-item count/ease, target-Q seen
+fraction/attempts, and Direct target-Q state/reliability summaries. Full and Shuffle
+add the same six residual-state/reliability features; Direct receives six zeros, so
+all classifiers have the same 19-dimensional interface. One `StandardScaler` is fit
+on the vertically pooled three reference designs. Each variant then uses the fixed
+classifier:
+
+```python
+LogisticRegression(
+    C=1.0,
+    penalty="l2",
+    solver="liblinear",
+    max_iter=1000,
+    random_state=42,
+)
+```
+
+The five held-fold predictions are concatenated once. The stronger control is fixed
+from complete OOF pseudo-T AUC, with ties selecting Direct. If deterministic
+AUC/Brier gates cannot pass, bootstrap is skipped because it cannot rescue them.
+Otherwise the fixed Full/control pair receives 2,000 student-clustered paired
+bootstrap replicates with seed 2024; the control is never reselected inside a
+replicate.
 
 Three fixed estimators share the same folds and output interface:
 
