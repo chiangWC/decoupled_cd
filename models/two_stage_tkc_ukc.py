@@ -9,6 +9,10 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from .student_conditioned_relation_query import (
+    StudentConditionedRelationQuery,
+)
+
 
 VALID_DIAGNOSIS_MODES = {
     "item_hypernetwork",
@@ -64,6 +68,7 @@ class TwoStageForwardOutput:
     probs: torch.Tensor
     cognitive_probs: torch.Tensor
     framework_state: torch.Tensor
+    target_student_state: torch.Tensor
     mastery: torch.Tensor
     state_reliability: torch.Tensor
     student_state: torch.Tensor
@@ -1125,7 +1130,7 @@ class ItemConditionedHyperDiagnosis(nn.Module):
 
 
 class TwoStageTKCUKCCDM(nn.Module):
-    """Two claimed modules followed by a fixed Q-conditioned diagnosis."""
+    """Composable history, state, target-query, and diagnosis framework."""
 
     def __init__(
         self,
@@ -1145,6 +1150,12 @@ class TwoStageTKCUKCCDM(nn.Module):
         readout_dropout: float = 0.0,
         max_guess: float = 0.3,
         max_slip: float = 0.3,
+        relation_query_mode: str = "disabled",
+        relation_query_edge_index: torch.Tensor | None = None,
+        relation_query_edge_type: torch.Tensor | None = None,
+        relation_query_num_aux_nodes: int = 0,
+        relation_query_variant: str = "none",
+        relation_query_hops: int = 4,
         **_unused_kwargs,
     ) -> None:
         super().__init__()
@@ -1183,6 +1194,22 @@ class TwoStageTKCUKCCDM(nn.Module):
             raise ValueError(f"Unsupported completion mode: {completion_mode}")
         if diagnosis_mode not in VALID_DIAGNOSIS_MODES:
             raise ValueError(f"Unsupported diagnosis mode: {diagnosis_mode}")
+        if relation_query_mode not in {"disabled", "student_conditioned"}:
+            raise ValueError(
+                f"Unsupported relation query mode: {relation_query_mode}"
+            )
+        if relation_query_mode == "student_conditioned":
+            if (
+                relation_query_edge_index is None
+                or relation_query_edge_type is None
+            ):
+                raise ValueError(
+                    "student_conditioned relation query requires a graph."
+                )
+            if diagnosis_mode != "target_conditioned":
+                raise ValueError(
+                    "relation query requires target_conditioned diagnosis."
+                )
         self.concept_dim = int(concept_dim)
         self.semantic_node_mode = semantic_node_mode
         self.evidence_mode = evidence_mode
@@ -1194,6 +1221,8 @@ class TwoStageTKCUKCCDM(nn.Module):
         self.evidence_cap = float(evidence_cap)
         self.max_guess = float(max_guess)
         self.max_slip = float(max_slip)
+        self.relation_query_mode = relation_query_mode
+        self.relation_query_variant = str(relation_query_variant)
 
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
@@ -1217,6 +1246,19 @@ class TwoStageTKCUKCCDM(nn.Module):
         )
         self.target_requirement = ExerciseSpecificRequirementQuery(
             dim=concept_dim
+        )
+        self.relation_query = (
+            StudentConditionedRelationQuery(
+                dim=concept_dim,
+                num_exercises=num_exercises,
+                num_concepts=num_concepts,
+                num_aux_nodes=relation_query_num_aux_nodes,
+                edge_index=relation_query_edge_index,
+                edge_type=relation_query_edge_type,
+                hops=relation_query_hops,
+            )
+            if relation_query_mode == "student_conditioned"
+            else None
         )
         self.cognitive_match = nn.Sequential(
             nn.Linear(concept_dim * 4, concept_dim),
@@ -1282,7 +1324,11 @@ class TwoStageTKCUKCCDM(nn.Module):
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v9",
+            "family": (
+                "student_conditioned_relation_query_v1"
+                if self.relation_query is not None
+                else "two_stage_tkc_ukc_v9"
+            ),
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
@@ -1297,6 +1343,8 @@ class TwoStageTKCUKCCDM(nn.Module):
                 "monotonic_control"
             ),
         }
+        if self.relation_query is not None:
+            payload["relation_query"] = "student_conditioned_four_hop"
         return hashlib.sha256(
             json.dumps(payload, sort_keys=True).encode("utf-8")
         ).hexdigest()[:16]
@@ -1311,6 +1359,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             and self.concept_prior_mode == "population_q"
             and self.completion_mode == "personalized_interaction"
             and self.diagnosis_mode == "target_conditioned"
+            and self.relation_query is None
         ):
             return self.architecture_fingerprint
         payload = {
@@ -1322,6 +1371,8 @@ class TwoStageTKCUKCCDM(nn.Module):
             "concept_prior_mode": self.concept_prior_mode,
             "completion_mode": self.completion_mode,
             "diagnosis_mode": self.diagnosis_mode,
+            "relation_query_mode": self.relation_query_mode,
+            "relation_query_variant": self.relation_query_variant,
             "factorized_control_version": 1,
         }
         return hashlib.sha256(
@@ -1370,6 +1421,14 @@ class TwoStageTKCUKCCDM(nn.Module):
         factorized_item_capacity = (
             self.target_requirement.factorized_parameter_count()
         )
+        relation_query_capacity = (
+            sum(
+                parameter.numel()
+                for parameter in self.relation_query.parameters()
+            )
+            if self.relation_query is not None
+            else 0
+        )
         return {
             "semantic_node_alignment": {
                 "bidirectional_q": shared_semantic_capacity,
@@ -1393,6 +1452,10 @@ class TwoStageTKCUKCCDM(nn.Module):
             "observed_anchor_state_field": (
                 self.observed_anchor_state_field.active_parameter_counts()
             ),
+            "student_conditioned_relation_query": {
+                "active": relation_query_capacity,
+                "graph_variant": relation_query_capacity,
+            },
             "diagnosis": {
                 "item_hypernetwork": hyper_diagnosis,
                 "target_conditioned": full_diagnosis,
@@ -1504,6 +1567,21 @@ class TwoStageTKCUKCCDM(nn.Module):
             target_states * q_vectors.unsqueeze(-1)
         ).sum(dim=1) / q_count
         q_repr = requirement_output.q_repr
+        relation_query_diagnostics: dict[str, torch.Tensor] = {}
+        if self.relation_query is not None:
+            relation_query_output = self.relation_query(
+                upstream_target_state=q_state,
+                target_requirement=q_repr,
+                student_exercise_mask=mask,
+                response_matrix=responses,
+                exercise_evidence=exercise_evidence,
+                target_state_rows=target_state_rows,
+                target_exercise_ids=target_exercise_ids,
+            )
+            q_state = relation_query_output.target_student_state
+            relation_query_diagnostics = (
+                relation_query_output.diagnostics
+            )
         match_features = torch.cat(
             [
                 q_state,
@@ -1585,6 +1663,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             probs=probs,
             cognitive_probs=cognitive_probs,
             framework_state=framework_state,
+            target_student_state=q_state,
             mastery=mastery,
             state_reliability=completion_output.reliability,
             student_state=refinement_output.student_evidence,
@@ -1600,6 +1679,7 @@ class TwoStageTKCUKCCDM(nn.Module):
                 **requirement_output.diagnostics,
                 **prior_output.diagnostics,
                 **completion_output.diagnostics,
+                **relation_query_diagnostics,
                 "diagnosis_item_conditioned_interaction_norm": (
                     (q_state * q_repr).norm(dim=-1)
                 ),

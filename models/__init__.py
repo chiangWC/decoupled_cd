@@ -6,6 +6,10 @@ from .two_stage_tkc_ukc import TwoStageForwardOutput, TwoStageTKCUKCCDM
 from .ensemble_cdm import DecoupledCDMEnsemble
 from .hetero_propagation import HeterogeneousGraphPropagation, PropagationOutput
 from .propagation_v2 import DecoupledPropagationV2
+from .student_conditioned_relation_query import (
+    RelationQueryOutput,
+    StudentConditionedRelationQuery,
+)
 
 __all__ = [
     "CountPriorBaseline",
@@ -19,4 +23,6 @@ __all__ = [
     "TwoStageTKCUKCCDM",
     "HeterogeneousGraphPropagation",
     "PropagationOutput",
+    "RelationQueryOutput",
+    "StudentConditionedRelationQuery",
 ]

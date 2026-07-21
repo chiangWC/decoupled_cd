@@ -18,6 +18,10 @@ from .pipeline import (
 from .pipeline import prepare_experiment_split_bundles
 from .q_matrix import build_concept_graph_from_q, build_q_matrix_tensor, normalize_concept_sequence
 from .readers import read_interactions, read_q_matrix
+from .static_relations import (
+    StaticRelationGraph,
+    load_static_relation_graph,
+)
 
 __all__ = [
     "InteractionDataset",
@@ -39,5 +43,7 @@ __all__ = [
     "prepare_step_data_bundle",
     "read_interactions",
     "read_q_matrix",
+    "StaticRelationGraph",
+    "load_static_relation_graph",
     "save_concept_graph_csv",
 ]

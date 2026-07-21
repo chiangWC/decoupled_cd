@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from configs import apply_dataset_defaults
 from data import prepare_experiment_split_bundles, prepare_step_data_bundle
+from data import load_static_relation_graph
 from data.pool_protocol import sha256_file
 from models import (
     CountPriorBaseline,
@@ -151,6 +152,32 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--completion-evidence-cap", type=float, default=20.0)
+    parser.add_argument(
+        "--relation-query-mode",
+        choices=["disabled", "student_conditioned"],
+        default="disabled",
+        help=(
+            "Student-conditioned query over train-only response memory and "
+            "typed static curriculum relations."
+        ),
+    )
+    parser.add_argument(
+        "--static-relation-graph",
+        default=None,
+        help="Canonical generated static-relation JSON for relation query.",
+    )
+    parser.add_argument(
+        "--static-relation-mode",
+        choices=["full", "q_only"],
+        default="full",
+        help="Use admitted metadata relations or the Q-only direct control.",
+    )
+    parser.add_argument(
+        "--relation-query-hops",
+        type=int,
+        default=4,
+        help="Number of frozen response-memory transport steps.",
+    )
     parser.add_argument(
         "--context-target-frac",
         type=float,
@@ -1195,6 +1222,31 @@ def main() -> None:
         test_bundle = single_bundle
         bundles = {"train": single_bundle, "valid": single_bundle, "test": single_bundle}
 
+    static_relation_graph = None
+    if args.relation_query_mode == "student_conditioned":
+        if args.static_relation_graph is None:
+            raise ValueError(
+                "--static-relation-graph is required for relation query."
+            )
+        static_relation_graph = load_static_relation_graph(
+            args.static_relation_graph,
+            mode=args.static_relation_mode,
+            q_matrix_tensor=train_bundle.q_matrix_tensor,
+            exercise_id_map=train_bundle.exercise_id_map,
+            concept_id_map=train_bundle.concept_id_map,
+        )
+        logger.info(
+            "Static relation query graph: mode=%s sha256=%s audit=%s",
+            static_relation_graph.mode,
+            static_relation_graph.source_sha256,
+            static_relation_graph.audit,
+        )
+    elif args.static_relation_graph is not None:
+        raise ValueError(
+            "--static-relation-graph requires --relation-query-mode "
+            "student_conditioned."
+        )
+
     model_kwargs = dict(
         num_students=train_bundle.num_students,
         num_exercises=train_bundle.num_exercises,
@@ -1262,6 +1314,25 @@ def main() -> None:
             readout_dropout=args.v2_readout_dropout,
             max_guess=args.v2_gs_max_guess,
             max_slip=args.v2_gs_max_slip,
+            relation_query_mode=args.relation_query_mode,
+            relation_query_edge_index=(
+                static_relation_graph.edge_index
+                if static_relation_graph is not None else None
+            ),
+            relation_query_edge_type=(
+                static_relation_graph.edge_type
+                if static_relation_graph is not None else None
+            ),
+            relation_query_num_aux_nodes=(
+                static_relation_graph.num_aux_nodes
+                if static_relation_graph is not None else 0
+            ),
+            relation_query_variant=(
+                f"{static_relation_graph.audit['source_variant']}:"
+                f"{static_relation_graph.mode}"
+                if static_relation_graph is not None else "none"
+            ),
+            relation_query_hops=args.relation_query_hops,
         )
     elif args.model == "v2":
         model = DecoupledCDMV2(
@@ -1441,6 +1512,12 @@ def main() -> None:
         "state_completion_mode": args.state_completion_mode,
         "diagnosis_mode": args.diagnosis_mode,
         "completion_evidence_cap": args.completion_evidence_cap,
+        "relation_query_mode": args.relation_query_mode,
+        "static_relation_mode": (
+            args.static_relation_mode
+            if static_relation_graph is not None else None
+        ),
+        "relation_query_hops": args.relation_query_hops,
         "context_target_frac": args.context_target_frac,
         "architecture_fingerprint": architecture_fingerprint,
         "ablation_variant_fingerprint": ablation_variant_fingerprint,
@@ -1460,6 +1537,19 @@ def main() -> None:
         "concept_graph": args.concept_graph,
         "prerequisite_graph": args.prerequisite_graph,
         "similarity_graph": args.similarity_graph,
+        "static_relation_graph": args.static_relation_graph,
+        "static_relation_source_sha256": (
+            static_relation_graph.source_sha256
+            if static_relation_graph is not None else None
+        ),
+        "static_relation_edge_sha256": (
+            static_relation_graph.edge_sha256
+            if static_relation_graph is not None else None
+        ),
+        "static_relation_audit": (
+            static_relation_graph.audit
+            if static_relation_graph is not None else None
+        ),
         "num_students": train_bundle.num_students,
         "num_exercises": train_bundle.num_exercises,
         "num_concepts": train_bundle.num_concepts,
