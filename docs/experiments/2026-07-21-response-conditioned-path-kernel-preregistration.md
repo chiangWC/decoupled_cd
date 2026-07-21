@@ -134,3 +134,22 @@ Bootstrap clusters by student and is not a model seed. Test confirmation remains
 closed until architecture, recipes and comparisons are frozen. Failure is recorded
 without adding learned attention, a residual head, an alternate target slice or a
 renamed retry.
+
+## Protocol amendment before a valid first screen
+
+The first end-to-end execution exposed a training-boundary mismatch before any
+candidate comparison was accepted. With legacy `context_target_frac=0`, the
+training response being supervised remains in the student's response matrix. RCPK
+can return to the same exercise through a Q/metadata cycle and therefore consume
+that response during training, while validation correctly excludes the target.
+The observed falling training loss and collapsed validation AUC are leakage-style
+overfitting, not a valid module estimate.
+
+Those runs are marked `invalid_protocol` and cannot support either acceptance or
+rejection. Before rerunning, the implementation must require
+`context_target_frac=0.20` for Full and every control. This value is inherited from
+the already frozen train-only static-representation screen rather than selected
+from model results. The existing context-target builder removes hidden exercises
+from the response mask and concept evidence and supervises only those hidden rows.
+All other architecture, graph, optimization, seed and decision thresholds remain
+unchanged. No test result was opened.

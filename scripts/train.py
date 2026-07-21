@@ -894,6 +894,11 @@ def validate_model_args(args: argparse.Namespace) -> None:
                 raise ValueError(
                     "The frozen response path screen uses factorized_item_control."
                 )
+            if abs(args.context_target_frac - 0.20) > 1.0e-12:
+                raise ValueError(
+                    "Response path training requires leakage-free "
+                    "--context-target-frac 0.20."
+                )
         if not 0.0 <= args.context_target_frac < 1.0:
             raise ValueError("--context-target-frac must be in [0, 1).")
         if (
