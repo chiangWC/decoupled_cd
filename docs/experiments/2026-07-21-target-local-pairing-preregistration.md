@@ -7,8 +7,9 @@ contribution. It asks:
 
 > After retaining a strong outcome-partitioned history summary and the true
 > target in every path, does placing the target inside each historical
-> item-response encoding, before set aggregation, add reproducible information
-> unavailable to an information-matched late-fusion set encoder?
+> item-response encoding, before set aggregation, add reproducible predictive
+> signal beyond a late-fusion encoder with the same raw inputs and exactly
+> matched active capacity?
 
 The audit starts from negative evidence. Outcome-Partitioned Multi-Set improved
 its control by only `+0.000391` on ASSIST17 and `+0.000741` on MOOCRadar.
@@ -26,6 +27,37 @@ enter a nonlinear interaction encoder before history compression.
 
 Passing activates a new module-design search; it does not qualify the audit
 probe as a paper module. Failure closes the current history/pairing branch.
+
+## Literature source and novelty boundary
+
+The primary implementation analogy is the deterministic target-to-context read
+in [Attentive Neural Processes](https://arxiv.org/abs/1901.05761): a target
+location reads a set of observed context input-output pairs before prediction.
+The associated
+[Google DeepMind Neural Processes repository](https://github.com/google-deepmind/neural-processes)
+contains ANP notebooks under Apache-2.0. We use the paper-level data-flow
+analogy and an independent PyTorch implementation; no notebook code is copied.
+
+[DIN](https://www.kdd.org/kdd2018/accepted-papers/view/deep-interest-network-for-click-through-rate-prediction)
+and [TAGNN](https://arxiv.org/abs/2005.02844) are adjacent recommendation
+precedents: both construct target-dependent summaries of historical behavior
+instead of one fixed user/session vector. They motivate the placement question
+but are not cognitive-diagnosis methods and are not implementation sources.
+
+The novelty boundary is deliberately narrow.
+[SAKT](https://arxiv.org/abs/1907.06837) and
+[AKT](https://arxiv.org/abs/2007.12324) already use a current question to
+select or weight past question-response interactions in knowledge tracing.
+Consequently, this project must not claim the first target-aware history
+aggregation, the first question-conditioned student representation, or a new
+attention primitive.
+
+The audit tests only whether, under a **student-local inductive cognitive
+diagnosis protocol** with no free student-ID state, response-calibrated support
+interactions should generate a target-specific diagnostic state. Any eventual
+claim would have to come from a CD-specific state interface, clean controls,
+external wins, and a qualified ablation. The audit alone establishes none of
+those claims.
 
 ## Completely test-independent protocol
 
@@ -76,8 +108,11 @@ For validation students:
 - at least 10 support groups and 3 query groups must remain.
 
 Student retention, donor feasibility, scalers, item statistics, and features
-are label-blind with respect to validation query. Validation-query labels are
-used only after aligned probabilities have been produced.
+are label-blind with respect to validation query. The complete validation file
+receives a provenance byte hash, but that hash never enters splitting, mapping,
+features, or model input. The feature projection has its own label-free hash.
+Validation-query labels are loaded separately by stable row ID only after
+aligned probabilities have been produced.
 
 ### Foldwise train-only statistics
 
@@ -169,8 +204,8 @@ logit = H_opms(B(u,j)).
 ```
 
 This is the direct strong-history control corresponding to the prior negative
-evidence. It is not called information or capacity matched because it
-compresses the interaction set before the placement probe.
+evidence. It is not called same-raw-input or capacity matched because its
+irreversible outcome pooling precedes the placement probe.
 
 ### RealPair
 
@@ -189,7 +224,7 @@ logit  = H(B(u,j), t_j, z_perm).
 PermPair is independently trained with the same frozen donor rule used at
 validation. Only its local target changes.
 
-### LateFusion information-matched control
+### LateFusion same-raw-input, exact-capacity control
 
 ```text
 s_late = masked_mean_i G(h_ui)
