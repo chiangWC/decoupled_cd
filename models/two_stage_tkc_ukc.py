@@ -9,6 +9,11 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from .response_conditioned_path_kernel import (
+    PathKernelGraph,
+    ResponseConditionedPathKernel,
+)
+
 
 VALID_DIAGNOSIS_MODES = {
     "item_hypernetwork",
@@ -1145,6 +1150,8 @@ class TwoStageTKCUKCCDM(nn.Module):
         readout_dropout: float = 0.0,
         max_guess: float = 0.3,
         max_slip: float = 0.3,
+        response_path_graph: PathKernelGraph | None = None,
+        response_path_hops: int = 4,
         **_unused_kwargs,
     ) -> None:
         super().__init__()
@@ -1194,6 +1201,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         self.evidence_cap = float(evidence_cap)
         self.max_guess = float(max_guess)
         self.max_slip = float(max_slip)
+        self.response_path_enabled = response_path_graph is not None
 
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
@@ -1278,9 +1286,32 @@ class TwoStageTKCUKCCDM(nn.Module):
         self.outcome_evidence_refinement = (
             OutcomePartitionedEvidenceRefinement(dim=concept_dim)
         )
+        self.response_path_kernel = (
+            ResponseConditionedPathKernel(
+                dim=concept_dim,
+                graph=response_path_graph,
+                hops=response_path_hops,
+                item_ease_shrinkage=20.0,
+            )
+            if response_path_graph is not None
+            else None
+        )
 
     @property
     def architecture_fingerprint(self) -> str:
+        if self.response_path_enabled:
+            payload = {
+                "family": "two_stage_tkc_ukc_response_path_v1",
+                "concept_dim": self.concept_dim,
+                "student_id_embedding": False,
+                "student_specific_bypass": False,
+                "response_path_hops": self.response_path_kernel.hops,
+                "response_path_features": 6,
+                "diagnosis_consumes_composed_target_state": True,
+            }
+            return hashlib.sha256(
+                json.dumps(payload, sort_keys=True).encode("utf-8")
+            ).hexdigest()[:16]
         payload = {
             "family": "two_stage_tkc_ukc_v9",
             "concept_dim": self.concept_dim,
@@ -1303,6 +1334,17 @@ class TwoStageTKCUKCCDM(nn.Module):
 
     @property
     def ablation_variant_fingerprint(self) -> str:
+        if self.response_path_enabled:
+            payload = {
+                "base_architecture": self.architecture_fingerprint,
+                "response_path_mode": self.response_path_kernel.mode,
+                "response_path_source_variant": (
+                    self.response_path_kernel.source_variant
+                ),
+            }
+            return hashlib.sha256(
+                json.dumps(payload, sort_keys=True).encode("utf-8")
+            ).hexdigest()[:16]
         if (
             self.semantic_node_mode == "bidirectional_q"
             and self.evidence_mode == "calibrated_history"
@@ -1397,6 +1439,16 @@ class TwoStageTKCUKCCDM(nn.Module):
                 "item_hypernetwork": hyper_diagnosis,
                 "target_conditioned": full_diagnosis,
                 "monotonic_control": control_diagnosis,
+            },
+            "response_conditioned_path_kernel": {
+                "active": (
+                    sum(
+                        parameter.numel()
+                        for parameter in self.response_path_kernel.parameters()
+                    )
+                    if self.response_path_kernel is not None
+                    else 0
+                ),
             },
         }
 
@@ -1504,15 +1556,30 @@ class TwoStageTKCUKCCDM(nn.Module):
             target_states * q_vectors.unsqueeze(-1)
         ).sum(dim=1) / q_count
         q_repr = requirement_output.q_repr
+        path_diagnostics: dict[str, torch.Tensor] = {}
+        if self.response_path_kernel is not None:
+            path_output = self.response_path_kernel(
+                upstream_target_state=q_state,
+                target_requirement=q_repr,
+                student_exercise_mask=mask,
+                response_matrix=responses,
+                exercise_evidence=exercise_evidence,
+                target_state_rows=target_state_rows,
+                target_exercise_ids=target_exercise_ids,
+            )
+            target_student_state = path_output.target_student_state
+            path_diagnostics = path_output.diagnostics
+        else:
+            target_student_state = q_state
         match_features = torch.cat(
             [
-                q_state,
+                target_student_state,
                 q_repr,
                 # Shared item-conditioned interaction/discrimination-like
                 # channel. There is no explicit scalar discrimination
                 # parameter in this architecture.
-                q_state * q_repr,
-                torch.abs(q_state - q_repr),
+                target_student_state * q_repr,
+                torch.abs(target_student_state - q_repr),
             ],
             dim=-1,
         )
@@ -1533,7 +1600,9 @@ class TwoStageTKCUKCCDM(nn.Module):
             cognitive_probs = torch.sigmoid(
                 self.cognitive_match(match_features).squeeze(-1) - difficulty
             )
-            state_condition = torch.cat([q_state, q_repr], dim=-1)
+            state_condition = torch.cat(
+                [target_student_state, q_repr], dim=-1
+            )
             guess_probs = self.max_guess * torch.sigmoid(
                 self.guess_head(state_condition).squeeze(-1)
             )
@@ -1600,8 +1669,9 @@ class TwoStageTKCUKCCDM(nn.Module):
                 **requirement_output.diagnostics,
                 **prior_output.diagnostics,
                 **completion_output.diagnostics,
+                **path_diagnostics,
                 "diagnosis_item_conditioned_interaction_norm": (
-                    (q_state * q_repr).norm(dim=-1)
+                    (target_student_state * q_repr).norm(dim=-1)
                 ),
             },
             architecture_fingerprint=self.architecture_fingerprint,

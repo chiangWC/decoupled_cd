@@ -23,6 +23,7 @@ from models import (
     DecoupledCDMV2,
     KaNCDBaseline,
     TwoStageTKCUKCCDM,
+    load_path_kernel_graph,
 )
 from trainers import evaluate_model, train_model
 from utils import append_summary_csv, resolve_device, save_history_csv, set_global_seed, setup_logging, write_json
@@ -151,6 +152,21 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--completion-evidence-cap", type=float, default=20.0)
+    parser.add_argument(
+        "--response-path-mode",
+        choices=["disabled", "relational", "q_only"],
+        default="disabled",
+        help=(
+            "Response-Conditioned Path Kernel graph mode. relational and "
+            "q_only require --response-path-graph."
+        ),
+    )
+    parser.add_argument(
+        "--response-path-graph",
+        default=None,
+        help="Provenance-locked typed static-relation JSON for the path kernel.",
+    )
+    parser.add_argument("--response-path-hops", type=int, default=4)
     parser.add_argument(
         "--context-target-frac",
         type=float,
@@ -845,6 +861,9 @@ def validate_model_args(args: argparse.Namespace) -> None:
         or args.diagnosis_mode != "target_conditioned"
         or args.completion_evidence_cap != 20.0
         or args.context_target_frac != 0.0
+        or args.response_path_mode != "disabled"
+        or args.response_path_graph is not None
+        or args.response_path_hops != 4
     )
     if args.model != "two_stage_tkc_ukc" and completion_nondefaults:
         raise ValueError(
@@ -855,6 +874,26 @@ def validate_model_args(args: argparse.Namespace) -> None:
             raise ValueError("The active research protocol fixes this model to --seed 42.")
         if args.completion_evidence_cap <= 0.0:
             raise ValueError("--completion-evidence-cap must be positive.")
+        if args.response_path_hops <= 0:
+            raise ValueError("--response-path-hops must be positive.")
+        if args.response_path_mode == "disabled":
+            if args.response_path_graph is not None:
+                raise ValueError(
+                    "--response-path-graph requires an enabled response path mode."
+                )
+        else:
+            if args.response_path_graph is None:
+                raise ValueError(
+                    "Enabled response path mode requires --response-path-graph."
+                )
+            if args.diagnosis_mode != "target_conditioned":
+                raise ValueError(
+                    "Response path state must feed target_conditioned diagnosis."
+                )
+            if args.target_requirement_mode != "factorized_item_control":
+                raise ValueError(
+                    "The frozen response path screen uses factorized_item_control."
+                )
         if not 0.0 <= args.context_target_frac < 1.0:
             raise ValueError("--context-target-frac must be in [0, 1).")
         if (
@@ -1195,6 +1234,16 @@ def main() -> None:
         test_bundle = single_bundle
         bundles = {"train": single_bundle, "valid": single_bundle, "test": single_bundle}
 
+    response_path_graph = None
+    if args.response_path_mode != "disabled":
+        response_path_graph = load_path_kernel_graph(
+            args.response_path_graph,
+            mode=args.response_path_mode,
+            q_matrix=train_bundle.q_matrix_tensor,
+            exercise_id_map=train_bundle.exercise_id_map,
+            concept_id_map=train_bundle.concept_id_map,
+        )
+
     model_kwargs = dict(
         num_students=train_bundle.num_students,
         num_exercises=train_bundle.num_exercises,
@@ -1262,6 +1311,8 @@ def main() -> None:
             readout_dropout=args.v2_readout_dropout,
             max_guess=args.v2_gs_max_guess,
             max_slip=args.v2_gs_max_slip,
+            response_path_graph=response_path_graph,
+            response_path_hops=args.response_path_hops,
         )
     elif args.model == "v2":
         model = DecoupledCDMV2(
@@ -1442,6 +1493,29 @@ def main() -> None:
         "diagnosis_mode": args.diagnosis_mode,
         "completion_evidence_cap": args.completion_evidence_cap,
         "context_target_frac": args.context_target_frac,
+        "response_path_mode": args.response_path_mode,
+        "response_path_graph": args.response_path_graph,
+        "response_path_hops": args.response_path_hops,
+        "response_path_source_sha256": (
+            response_path_graph.source_sha256
+            if response_path_graph is not None
+            else None
+        ),
+        "response_path_edge_sha256": (
+            response_path_graph.edge_sha256
+            if response_path_graph is not None
+            else None
+        ),
+        "response_path_source_variant": (
+            response_path_graph.source_variant
+            if response_path_graph is not None
+            else None
+        ),
+        "response_path_graph_audit": (
+            response_path_graph.audit
+            if response_path_graph is not None
+            else None
+        ),
         "architecture_fingerprint": architecture_fingerprint,
         "ablation_variant_fingerprint": ablation_variant_fingerprint,
         "initialization_hash": initialization_hash,

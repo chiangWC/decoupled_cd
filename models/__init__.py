@@ -6,6 +6,12 @@ from .two_stage_tkc_ukc import TwoStageForwardOutput, TwoStageTKCUKCCDM
 from .ensemble_cdm import DecoupledCDMEnsemble
 from .hetero_propagation import HeterogeneousGraphPropagation, PropagationOutput
 from .propagation_v2 import DecoupledPropagationV2
+from .response_conditioned_path_kernel import (
+    PathKernelGraph,
+    PathKernelOutput,
+    ResponseConditionedPathKernel,
+    load_path_kernel_graph,
+)
 
 __all__ = [
     "CountPriorBaseline",
@@ -19,4 +25,8 @@ __all__ = [
     "TwoStageTKCUKCCDM",
     "HeterogeneousGraphPropagation",
     "PropagationOutput",
+    "PathKernelGraph",
+    "PathKernelOutput",
+    "ResponseConditionedPathKernel",
+    "load_path_kernel_graph",
 ]
