@@ -6,6 +6,8 @@ from typing import Any, Dict
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
+from .static_relations import StaticRelationGraph
+
 
 from .q_matrix import normalize_concept_sequence
 
@@ -31,6 +33,7 @@ class StepDataBundle:
     exercise_evidence_tensor: torch.Tensor | None = None
     split_name: str = "train"
     allow_target_in_history: bool = True
+    static_relation_graph: StaticRelationGraph | None = None
     prerequisite_graph: torch.Tensor | None = None
     similarity_graph: torch.Tensor | None = None
 

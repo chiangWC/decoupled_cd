@@ -17,6 +17,7 @@ from .concept_graph import load_concept_graph_csv
 from .mappings import build_unified_id_mappings
 from .q_matrix import build_concept_graph_from_q, build_q_matrix_tensor, normalize_concept_sequence
 from .readers import read_interactions, read_q_matrix
+from .static_relations import load_static_relation_graph
 
 
 def _replace_history_concepts_from_q(
@@ -258,6 +259,8 @@ def prepare_step_data_bundle(
     concept_graph_path: str | Path | None = None,
     prerequisite_graph_path: str | Path | None = None,
     similarity_graph_path: str | Path | None = None,
+    static_relation_path: str | Path | None = None,
+    static_relation_mode: str = "full",
 ) -> StepDataBundle:
     base = prepare_data_bundle(interactions_path=interactions_path, q_matrix_path=q_matrix_path)
 
@@ -275,6 +278,17 @@ def prepare_step_data_bundle(
         load_concept_graph_csv(prerequisite_graph_path) if prerequisite_graph_path is not None else None
     )
     similarity_graph = load_concept_graph_csv(similarity_graph_path) if similarity_graph_path is not None else None
+    static_relation_graph = (
+        load_static_relation_graph(
+            static_relation_path,
+            mode=static_relation_mode,
+            q_matrix_tensor=q_matrix_tensor,
+            exercise_id_map=base["exercise_id_map"],
+            concept_id_map=base["concept_id_map"],
+        )
+        if static_relation_path is not None
+        else None
+    )
     history_tensors = build_history_tensors(
         history_interactions=base["interactions"],
         student_id_map=base["student_id_map"],
@@ -310,6 +324,7 @@ def prepare_step_data_bundle(
         exercise_evidence_tensor=history_tensors["exercise_evidence_tensor"],
         prerequisite_graph=prerequisite_graph,
         similarity_graph=similarity_graph,
+        static_relation_graph=static_relation_graph,
     )
 
 
@@ -341,6 +356,8 @@ def prepare_experiment_split_bundles(
     concept_graph_path: str | Path | None = None,
     prerequisite_graph_path: str | Path | None = None,
     similarity_graph_path: str | Path | None = None,
+    static_relation_path: str | Path | None = None,
+    static_relation_mode: str = "full",
 ) -> Dict[str, Any]:
     if (valid_history_interactions_path is None) != (
         test_history_interactions_path is None
@@ -391,6 +408,17 @@ def prepare_experiment_split_bundles(
         load_concept_graph_csv(prerequisite_graph_path) if prerequisite_graph_path is not None else None
     )
     similarity_graph = load_concept_graph_csv(similarity_graph_path) if similarity_graph_path is not None else None
+    static_relation_graph = (
+        load_static_relation_graph(
+            static_relation_path,
+            mode=static_relation_mode,
+            q_matrix_tensor=q_matrix_tensor,
+            exercise_id_map=mappings["exercise_id_map"],
+            concept_id_map=mappings["concept_id_map"],
+        )
+        if static_relation_path is not None
+        else None
+    )
 
     history_frames = {
         "train": train_df,
@@ -447,6 +475,7 @@ def prepare_experiment_split_bundles(
             "student_concept_evidence_tensor"
         ],
         "exercise_evidence_tensor": global_exercise_evidence,
+        "static_relation_graph": static_relation_graph,
     }
 
     def _bundle(
@@ -481,6 +510,7 @@ def prepare_experiment_split_bundles(
             exercise_evidence_tensor=global_exercise_evidence,
             prerequisite_graph=prerequisite_graph,
             similarity_graph=similarity_graph,
+            static_relation_graph=static_relation_graph,
         )
 
     return {

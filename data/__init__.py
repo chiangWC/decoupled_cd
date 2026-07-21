@@ -18,6 +18,7 @@ from .pipeline import (
 from .pipeline import prepare_experiment_split_bundles
 from .q_matrix import build_concept_graph_from_q, build_q_matrix_tensor, normalize_concept_sequence
 from .readers import read_interactions, read_q_matrix
+from .static_relations import RELATION_SLOTS, StaticRelationGraph, load_static_relation_graph
 
 __all__ = [
     "InteractionDataset",
@@ -29,6 +30,9 @@ __all__ = [
     "build_exercise_evidence_tensor",
     "build_q_matrix_tensor",
     "build_response_matrix",
+    "RELATION_SLOTS",
+    "StaticRelationGraph",
+    "load_static_relation_graph",
     "build_student_concept_evidence_tensor",
     "build_student_id_map",
     "build_unified_id_mappings",

@@ -9,6 +9,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from .curriculum_path_composer import CurriculumPathComposer
+
 
 VALID_DIAGNOSIS_MODES = {
     "item_hypernetwork",
@@ -90,6 +92,7 @@ class QSemanticNodeAlignment(nn.Module):
         "bidirectional_q",
         "raw_identity_control",
         "global_context_control",
+        "curriculum_path",
     }
 
     def forward(
@@ -1145,6 +1148,12 @@ class TwoStageTKCUKCCDM(nn.Module):
         readout_dropout: float = 0.0,
         max_guess: float = 0.3,
         max_slip: float = 0.3,
+        static_relation_edge_index: torch.Tensor | None = None,
+        static_relation_edge_type: torch.Tensor | None = None,
+        static_relation_num_aux_nodes: int = 0,
+        static_relation_variant: str = "none",
+        cpc_channels: int = 4,
+        cpc_hops: int = 4,
         **_unused_kwargs,
     ) -> None:
         super().__init__()
@@ -1194,10 +1203,31 @@ class TwoStageTKCUKCCDM(nn.Module):
         self.evidence_cap = float(evidence_cap)
         self.max_guess = float(max_guess)
         self.max_slip = float(max_slip)
+        self.static_relation_variant = str(static_relation_variant)
 
         self.concept_embedding = nn.Embedding(num_concepts, concept_dim)
         self.exercise_embedding = nn.Embedding(num_exercises, concept_dim)
         self.semantic_node_alignment = QSemanticNodeAlignment()
+        if semantic_node_mode == "curriculum_path":
+            if (
+                static_relation_edge_index is None
+                or static_relation_edge_type is None
+            ):
+                raise ValueError(
+                    "curriculum_path requires a static relation graph."
+                )
+            self.curriculum_path_composer = CurriculumPathComposer(
+                num_exercises=num_exercises,
+                num_concepts=num_concepts,
+                num_aux_nodes=static_relation_num_aux_nodes,
+                dim=concept_dim,
+                edge_index=static_relation_edge_index,
+                edge_type=static_relation_edge_type,
+                channels=cpc_channels,
+                hops=cpc_hops,
+            )
+        else:
+            self.curriculum_path_composer = None
         self.evidence_representation = CalibratedEvidenceRepresentation(
             dim=concept_dim,
             evidence_cap=evidence_cap,
@@ -1282,7 +1312,11 @@ class TwoStageTKCUKCCDM(nn.Module):
     @property
     def architecture_fingerprint(self) -> str:
         payload = {
-            "family": "two_stage_tkc_ukc_v9",
+            "family": (
+                "curriculum_path_composer_v1"
+                if self.curriculum_path_composer is not None
+                else "two_stage_tkc_ukc_v9"
+            ),
             "concept_dim": self.concept_dim,
             "student_id_embedding": False,
             "student_specific_bypass": False,
@@ -1295,6 +1329,10 @@ class TwoStageTKCUKCCDM(nn.Module):
             "diagnosis": (
                 "item_hypernetwork_or_target_conditioned_or_"
                 "monotonic_control"
+            ),
+            "curriculum_path": (
+                "four_channel_four_hop_typed_composition"
+                if self.curriculum_path_composer is not None else "disabled"
             ),
         }
         return hashlib.sha256(
@@ -1311,6 +1349,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             and self.concept_prior_mode == "population_q"
             and self.completion_mode == "personalized_interaction"
             and self.diagnosis_mode == "target_conditioned"
+            and self.curriculum_path_composer is None
         ):
             return self.architecture_fingerprint
         payload = {
@@ -1323,6 +1362,7 @@ class TwoStageTKCUKCCDM(nn.Module):
             "completion_mode": self.completion_mode,
             "diagnosis_mode": self.diagnosis_mode,
             "factorized_control_version": 1,
+            "static_relation_variant": self.static_relation_variant,
         }
         return hashlib.sha256(
             json.dumps(payload, sort_keys=True).encode("utf-8")
@@ -1370,11 +1410,22 @@ class TwoStageTKCUKCCDM(nn.Module):
         factorized_item_capacity = (
             self.target_requirement.factorized_parameter_count()
         )
+        curriculum_path_capacity = (
+            sum(
+                parameter.numel()
+                for parameter in self.curriculum_path_composer.parameters()
+            )
+            if self.curriculum_path_composer is not None else 0
+        )
         return {
             "semantic_node_alignment": {
                 "bidirectional_q": shared_semantic_capacity,
                 "raw_identity_control": shared_semantic_capacity,
                 "global_context_control": shared_semantic_capacity,
+            },
+            "curriculum_path_composer": {
+                "active": curriculum_path_capacity,
+                "graph_variant": curriculum_path_capacity,
             },
             "evidence_representation": (
                 self.evidence_representation.active_parameter_counts()
@@ -1440,12 +1491,19 @@ class TwoStageTKCUKCCDM(nn.Module):
             responses = response_matrix
             concept_evidence = student_concept_evidence
 
-        semantic_output = self.semantic_node_alignment(
-            concept_embeddings=self.concept_embedding.weight,
-            exercise_embeddings=self.exercise_embedding.weight,
-            q_matrix=q_matrix,
-            mode=self.semantic_node_mode,
-        )
+        if self.curriculum_path_composer is not None:
+            semantic_output = self.curriculum_path_composer(
+                concept_embeddings=self.concept_embedding.weight,
+                exercise_embeddings=self.exercise_embedding.weight,
+                exercise_evidence=exercise_evidence,
+            )
+        else:
+            semantic_output = self.semantic_node_alignment(
+                concept_embeddings=self.concept_embedding.weight,
+                exercise_embeddings=self.exercise_embedding.weight,
+                q_matrix=q_matrix,
+                mode=self.semantic_node_mode,
+            )
         concept_nodes = semantic_output.concept_nodes
         exercise_nodes = semantic_output.exercise_nodes
         evidence_output = self.evidence_representation(

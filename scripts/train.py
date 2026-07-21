@@ -69,9 +69,25 @@ def parse_args() -> argparse.Namespace:
             "bidirectional_q",
             "raw_identity_control",
             "global_context_control",
+            "curriculum_path",
         ],
         default="bidirectional_q",
         help="Q-specific semantic alignment and its two capacity-equal controls.",
+    )
+    parser.add_argument(
+        "--static-relation-graph",
+        default=None,
+        help=(
+            "Canonical generated relation JSON for curriculum_path."
+        ),
+    )
+    parser.add_argument(
+        "--static-relation-mode",
+        choices=["full", "q_only"],
+        default="full",
+        help=(
+            "Use real/provided metadata edges or retain only Q edges."
+        ),
     )
     parser.add_argument(
         "--evidence-representation-mode",
@@ -864,6 +880,24 @@ def validate_model_args(args: argparse.Namespace) -> None:
             raise ValueError(
                 "--context-target-frac requires student_recompute_minibatch."
             )
+        if (
+            args.semantic_node_mode == "curriculum_path"
+            and args.static_relation_graph is None
+        ):
+            raise ValueError(
+                "curriculum_path requires --static-relation-graph."
+            )
+        if (
+            args.semantic_node_mode != "curriculum_path"
+            and args.static_relation_graph is not None
+        ):
+            raise ValueError(
+                "--static-relation-graph requires curriculum_path."
+            )
+    elif args.static_relation_graph is not None:
+        raise ValueError(
+            "--static-relation-graph requires --model two_stage_tkc_ukc."
+        )
     if args.v2_monotonic_readout and not (args.v2_target_aware_readout or args.v2_hybrid_readout):
         raise ValueError("--v2-monotonic-readout requires --v2-target-aware-readout or --v2-hybrid-readout.")
     if args.v2_hybrid_readout and args.v2_target_aware_readout:
@@ -1175,6 +1209,8 @@ def main() -> None:
             similarity_graph_path=(
                 args.similarity_graph if args.graph_mode == "dual" else None
             ),
+            static_relation_path=args.static_relation_graph,
+            static_relation_mode=args.static_relation_mode,
         )
         train_bundle = bundles["train"]
         valid_bundle = bundles["valid"]
@@ -1189,6 +1225,8 @@ def main() -> None:
             concept_graph_path=args.concept_graph,
             prerequisite_graph_path=args.prerequisite_graph if args.graph_mode == "dual" else None,
             similarity_graph_path=args.similarity_graph if args.graph_mode == "dual" else None,
+            static_relation_path=args.static_relation_graph,
+            static_relation_mode=args.static_relation_mode,
         )
         train_bundle = single_bundle
         valid_bundle = None
@@ -1246,6 +1284,7 @@ def main() -> None:
         history_evidence_logit_prior_mastery_confidence_cap=args.history_evidence_logit_prior_mastery_confidence_cap,
     )
     if args.model == "two_stage_tkc_ukc":
+        static_graph = train_bundle.static_relation_graph
         model = TwoStageTKCUKCCDM(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
@@ -1262,6 +1301,23 @@ def main() -> None:
             readout_dropout=args.v2_readout_dropout,
             max_guess=args.v2_gs_max_guess,
             max_slip=args.v2_gs_max_slip,
+            static_relation_edge_index=(
+                static_graph.edge_index if static_graph is not None else None
+            ),
+            static_relation_edge_type=(
+                static_graph.edge_type if static_graph is not None else None
+            ),
+            static_relation_num_aux_nodes=(
+                static_graph.num_aux_nodes if static_graph is not None else 0
+            ),
+            static_relation_variant=(
+                (
+                    str(static_graph.audit.get("source_variant") or "source")
+                    + ":" + static_graph.mode
+                )
+                if static_graph is not None
+                else "none"
+            ),
         )
     elif args.model == "v2":
         model = DecoupledCDMV2(
@@ -1445,6 +1501,20 @@ def main() -> None:
         "architecture_fingerprint": architecture_fingerprint,
         "ablation_variant_fingerprint": ablation_variant_fingerprint,
         "initialization_hash": initialization_hash,
+        "static_relation_graph": args.static_relation_graph,
+        "static_relation_mode": args.static_relation_mode,
+        "static_relation_source_sha256": (
+            train_bundle.static_relation_graph.source_sha256
+            if train_bundle.static_relation_graph is not None else None
+        ),
+        "static_relation_edge_sha256": (
+            train_bundle.static_relation_graph.edge_sha256
+            if train_bundle.static_relation_graph is not None else None
+        ),
+        "static_relation_audit": (
+            train_bundle.static_relation_graph.audit
+            if train_bundle.static_relation_graph is not None else None
+        ),
     }
     output = {
         "dataset": args.dataset,
