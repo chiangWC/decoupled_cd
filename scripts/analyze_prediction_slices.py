@@ -24,6 +24,7 @@ from models import (
     DecoupledCDMV2,
     KaNCDBaseline,
     TwoStageTKCUKCCDM,
+    load_path_kernel_graph,
 )
 from trainers.engine import _bundle_tensors, _validate_history_visibility
 from utils import compute_metrics, resolve_device, write_json
@@ -93,6 +94,21 @@ def load_model(
     train_bundle = bundles["train"]
     model_variant = str(summary.get("model", "v1"))
     if model_variant == "two_stage_tkc_ukc":
+        response_path_mode = str(summary.get("response_path_mode", "disabled"))
+        response_path_graph = None
+        if response_path_mode != "disabled":
+            response_path_source = summary.get("response_path_graph")
+            if not response_path_source:
+                raise ValueError(
+                    "Path-enabled checkpoint summary lacks response_path_graph."
+                )
+            response_path_graph = load_path_kernel_graph(
+                response_path_source,
+                mode=response_path_mode,
+                q_matrix=train_bundle.q_matrix_tensor,
+                exercise_id_map=train_bundle.exercise_id_map,
+                concept_id_map=train_bundle.concept_id_map,
+            )
         model = TwoStageTKCUKCCDM(
             num_students=train_bundle.num_students,
             num_exercises=train_bundle.num_exercises,
@@ -129,6 +145,8 @@ def load_model(
             readout_dropout=float(summary.get("v2_readout_dropout", 0.0)),
             max_guess=float(summary.get("v2_gs_max_guess", 0.3)),
             max_slip=float(summary.get("v2_gs_max_slip", 0.3)),
+            response_path_graph=response_path_graph,
+            response_path_hops=int(summary.get("response_path_hops", 4)),
         )
         model.evaluation_student_batch_size = int(
             summary.get("student_batch_size") or 32
