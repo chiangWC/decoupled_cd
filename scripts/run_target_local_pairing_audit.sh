@@ -73,6 +73,16 @@ declare -A PROTOCOL_SHA256=(
   [Junyi]="b394005fab87df8d19ad8592c72a9dc8e540ca774c94b122d3c11e906509b4e5"
 )
 DATASETS=(ASSIST17 MOOCRadar XES3G5M Junyi)
+# Fixed scheduling weights come from the four-variant, one-epoch CUDA smoke on
+# this exact code/data protocol. They affect placement only, never the model
+# recipe or the order of examples within a training job.
+SCHEDULE_ORDER=(MOOCRadar ASSIST17 Junyi XES3G5M)
+declare -A SCHEDULE_WEIGHT=(
+  [MOOCRadar]=201
+  [ASSIST17]=136
+  [Junyi]=96
+  [XES3G5M]=60
+)
 MAX_PARALLEL=3
 
 TASK_PEAK_MIB="${TARGET_LOCAL_TASK_PEAK_MIB:-4096}"
@@ -112,15 +122,31 @@ if (( ${#GPU_SLOTS[@]} > MAX_PARALLEL )); then
   GPU_SLOTS=("${GPU_SLOTS[@]:0:MAX_PARALLEL}")
 fi
 
-next_dataset=0
-while (( next_dataset < ${#DATASETS[@]} )); do
-  PIDS=()
-  NAMES=()
-  for gpu in "${GPU_SLOTS[@]}"; do
-    if (( next_dataset >= ${#DATASETS[@]} )); then
-      break
+WORKER_COUNT=${#GPU_SLOTS[@]}
+WORKER_LOADS=()
+WORKER_QUEUES=()
+for ((worker = 0; worker < WORKER_COUNT; worker++)); do
+  WORKER_LOADS+=(0)
+  WORKER_QUEUES+=("")
+done
+for dataset in "${SCHEDULE_ORDER[@]}"; do
+  lightest_worker=0
+  for ((worker = 1; worker < WORKER_COUNT; worker++)); do
+    if (( WORKER_LOADS[worker] < WORKER_LOADS[lightest_worker] )); then
+      lightest_worker=$worker
     fi
-    dataset="${DATASETS[$next_dataset]}"
+  done
+  WORKER_QUEUES[lightest_worker]+=" $dataset"
+  WORKER_LOADS[lightest_worker]=$((
+    WORKER_LOADS[lightest_worker] + SCHEDULE_WEIGHT[$dataset]
+  ))
+done
+
+run_prediction_worker() {
+  local gpu="$1"
+  shift
+  local dataset prediction_dir
+  for dataset in "$@"; do
     prediction_dir="$STAGING_ROOT/predict/$dataset"
     CUDA_VISIBLE_DEVICES="$gpu" python scripts/target_local_pairing_runner.py predict \
       --dataset "$dataset" \
@@ -130,22 +156,30 @@ while (( next_dataset < ${#DATASETS[@]} )); do
       --expected-commit "$HEAD_COMMIT" \
       --output-dir "$prediction_dir" \
       --device cuda:0 \
-      >"$STAGING_ROOT/logs/${dataset}_predict.log" 2>&1 &
-    PIDS+=("$!")
-    NAMES+=("$dataset")
-    next_dataset=$((next_dataset + 1))
+      >"$STAGING_ROOT/logs/${dataset}_predict.log" 2>&1
   done
-  failed=0
-  for index in "${!PIDS[@]}"; do
-    if ! wait "${PIDS[$index]}"; then
-      echo "Prediction failed for ${NAMES[$index]}; recipe was not changed." >&2
-      failed=1
-    fi
-  done
-  if (( failed != 0 )); then
-    exit 1
+}
+
+PIDS=()
+WORKER_NAMES=()
+for ((worker = 0; worker < WORKER_COUNT; worker++)); do
+  read -r -a worker_datasets <<< "${WORKER_QUEUES[$worker]}"
+  gpu="${GPU_SLOTS[$worker]}"
+  run_prediction_worker "$gpu" "${worker_datasets[@]}" &
+  PIDS+=("$!")
+  WORKER_NAMES+=("gpu=$gpu datasets=${worker_datasets[*]}")
+done
+
+failed=0
+for index in "${!PIDS[@]}"; do
+  if ! wait "${PIDS[$index]}"; then
+    echo "Prediction worker failed (${WORKER_NAMES[$index]}); recipe was not changed." >&2
+    failed=1
   fi
 done
+if (( failed != 0 )); then
+  exit 1
+fi
 
 for dataset in "${DATASETS[@]}"; do
   python scripts/target_local_pairing_runner.py evaluate \

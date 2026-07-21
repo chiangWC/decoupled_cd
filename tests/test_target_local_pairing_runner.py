@@ -348,8 +348,15 @@ class TestTargetLocalPairingRunner(unittest.TestCase):
         self.assertIn("printf \"%s\\n\" \"${GPU_ROWS[@]}\"", script)
         self.assertIn("STAGING_ROOT=\"${OUTPUT_ROOT}.staging-", script)
         self.assertIn("Incomplete artifacts preserved", script)
+        self.assertIn(
+            "SCHEDULE_ORDER=(MOOCRadar ASSIST17 Junyi XES3G5M)",
+            script,
+        )
+        self.assertIn("run_prediction_worker()", script)
+        self.assertIn("WORKER_COUNT=${#GPU_SLOTS[@]}", script)
+        self.assertNotIn("while (( next_dataset", script)
         self.assertLess(
-            script.index("while (( next_dataset"),
+            script.index("for index in \"${!PIDS[@]}\""),
             script.index("for dataset in \"${DATASETS[@]}\""),
         )
         self.assertLess(
