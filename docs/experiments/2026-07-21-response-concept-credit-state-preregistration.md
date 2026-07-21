@@ -207,6 +207,23 @@ The replacement broad C definition gives these exact outcome-free counts:
 The superseded strict definition is retained below as `C_strict`, along with
 its adverse MOOCRadar feasibility result, rather than being erased.
 
+## Clean-ablation gate tightening after `8d4dc37`
+
+After the feasibility amendment, and still before candidate implementation,
+model fitting, prediction, validation-label read, or test-file access, a clean-
+ablation review found a loophole in the control rule. Selecting one control by
+C AUC and then reusing only that control for T, overall, and Brier could ignore
+the other control when it was stronger on one of those axes. That would not
+establish that Full survives both reasonable explanations.
+
+This pre-implementation amendment closes that loophole. Every AUC effect and
+guard below compares Full with the higher AUC of Direct and Capacity Control
+for the metric being tested. Every Brier guard compares Full with the lower
+Brier of the two controls. Which control has higher C AUC is still reported
+descriptively, but it has no control-selection or gating role. The numerical
+thresholds, datasets, stages, training recipe, C/T definitions, and final paper
+qualification rule are unchanged.
+
 ## Primary credit-sensitive slice C
 
 The gating mechanism slice `C` is frozen without reading a validation target
@@ -250,7 +267,7 @@ On student-disjoint holdout validation, its target-label-blind membership is:
 | NIPS34 | 8,717 | 507 |
 
 `C_strict` is reported only as a descriptive mechanism diagnostic. It cannot
-select a control, choose a checkpoint, activate or reject the candidate, or
+rank controls, choose a checkpoint, activate or reject the candidate, or
 replace C in any threshold or confidence interval.
 
 ## Secondary target slice T and why C is separate
@@ -273,19 +290,24 @@ the intended missing-state setting.
 
 ## Frozen activation rule
 
-For dataset `d`, define the stronger control once by the higher
-holdout-validation `C` AUC; ties within `1e-12` select Capacity Control. The
-same selected control is then used for that dataset's C, T, overall, and
-calibration comparisons. Results against both controls are always reported;
-the selected control cannot vary by metric or split.
-
-Define
+For dataset `d` and AUC metric `m`, define the conservative two-control
+contrast
 
 ```text
-delta_C[d] = AUC_C(Full, holdout valid)
-             - max(AUC_C(Direct), AUC_C(Capacity Control))
-delta_T[d] = AUC_T(Full, holdout valid)
-             - AUC_T(selected control, holdout valid)
+delta_auc[m, d] = AUC_m(Full)
+                  - max(AUC_m(Direct), AUC_m(Capacity Control))
+
+delta_C[d] = delta_auc[holdout C, d]
+delta_T[d] = delta_auc[holdout T, d]
+```
+
+Thus Full must simultaneously survive both controls on each evaluated axis;
+the maximizing control may differ by metric, but no control result is hidden.
+For Brier metric `m`, the corresponding conservative regression is
+
+```text
+delta_brier[m, d] = Brier_m(Full)
+                    - min(Brier_m(Direct), Brier_m(Capacity Control)).
 ```
 
 Stage 1 passes only if conditions 1--3 hold and the holdout parts of conditions
@@ -299,18 +321,23 @@ remaining standard parts also hold:
    two-control contrast**: each replicate computes Full-minus-Direct and
    Full-minus-Capacity AUC and records their minimum;
 3. `delta_T >= -0.001` on both datasets and `delta_T >= 0.001` on at least one;
-4. relative to the selected control, holdout-validation overall AUC does not
-   regress by more than `0.001` on either dataset; after Stage 1 passes,
-   standard-validation overall AUC and standard-validation C AUC likewise may
-   not regress by more than `0.001`;
-5. during Stage 1, Full's Brier score on holdout overall, holdout C, and
-   holdout T is no more than `0.0002` worse than the selected control wherever
-   defined; after Stage 1 passes, the same `0.0002` guard applies to standard
-   overall and standard C.
+4. `delta_auc[holdout overall, d] >= -0.001` on both datasets; after Stage 1
+   passes, `delta_auc[standard overall, d] >= -0.001` and
+   `delta_auc[standard C, d] >= -0.001` likewise hold on both datasets;
+5. during Stage 1, `delta_brier[m, d] <= 0.0002` for holdout overall,
+   holdout C, and holdout T wherever defined; after Stage 1 passes, the same
+   bound holds for standard overall and standard C.
 
 The paired bootstrap resamples students, not rows, for 2,000 deterministic
-replicates using split seed 2024 and a dedicated namespace. It is a paired
-uncertainty analysis, not a model seed. Undefined AUC, insufficient C support,
+replicates using split seed 2024 and a dedicated namespace. In every replicate,
+the joint C contrast is
+`min(AUC_C(Full)-AUC_C(Direct), AUC_C(Full)-AUC_C(Capacity))`.
+A replicate is valid only when all three resampled C AUC values are defined.
+Fewer than 1,800 valid replicates out of 2,000 is an automatic failure. The
+artifact saves every invalid replicate index, every replicate's sampled-
+student multiset hash, and an aggregate sampling-manifest hash; the confidence
+interval is computed from valid replicates only. This is a paired uncertainty
+analysis, not a model seed. Undefined required AUC, insufficient C support,
 row/hash mismatch, single-class T, non-finite output, or a failed leakage check
 is an automatic failure. There is no partial pass, tuning round, or test run
 after failure.
@@ -346,8 +373,10 @@ Before formal validation runs, the implementation must pass:
 
 Formal artifacts include the complete configuration, code commit, environment,
 data/Q/mapping hashes, architecture fingerprint, initialization hashes,
-checkpoint hash, row-aligned probabilities, selected-control declaration,
-slice IDs and prevalence, routing entropy/mass diagnostics, S/H/C/T metrics,
-all deltas, clustered-bootstrap replicates and interval, and one machine-
-readable activation decision. Failed runs and negative results are retained as
-provenance but are not promoted to a module contribution.
+checkpoint hash, row-aligned probabilities, both controls' per-metric results,
+the descriptive C-control ranking, slice IDs and prevalence, routing
+entropy/mass diagnostics, S/H/C/T metrics, all two-control deltas, clustered-
+bootstrap replicates, invalid-replicate indices, sampled-student hashes,
+interval, and one machine-readable activation decision. Failed runs and
+negative results are retained as provenance but are not promoted to a module
+contribution.
