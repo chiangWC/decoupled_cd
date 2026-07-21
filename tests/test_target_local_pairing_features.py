@@ -271,6 +271,19 @@ class TestTargetLocalPairingFeatures(unittest.TestCase):
         self.assertEqual(
             result.audit["support_statistic_names"], SUPPORT_STATISTIC_NAMES
         )
+        self.assertEqual(len(result.audit["folds"]), 5)
+        self.assertEqual(
+            len(result.audit["optimizer_mapping_replicate_zero_sha256"]),
+            64,
+        )
+        self.assertTrue(
+            all(
+                len(fold["donor_mapping_sha256"]) == 64
+                and len(fold["reference_students_sha256"]) == 64
+                and len(fold["reference_rows_sha256"]) == 64
+                for fold in result.audit["folds"]
+            )
+        )
         # At least one fold has an item absent from its reference query rows.
         self.assertTrue(
             any(

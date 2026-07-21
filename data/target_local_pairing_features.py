@@ -17,6 +17,7 @@ from scripts.audit_conditional_response_signature import (
 )
 from scripts.audit_target_local_pairing_protocol import (
     DonorMapping,
+    NUM_FOLDS,
     ValidationOnlyProtocol,
     build_donor_mapping,
     build_validation_profiles,
@@ -680,9 +681,10 @@ def build_feature_sets(
 
     raw_contexts: list[StudentFeatureContext] = []
     raw_records: list[QueryFeatureRecord] = []
+    optimizer_donor_rows: list[pd.DataFrame] = []
     fold_audits = []
     context_offset = 0
-    for fold in range(5):
+    for fold in range(NUM_FOLDS):
         reference = [profile for profile in profiles if profile.fold != fold]
         held = [profile for profile in profiles if profile.fold == fold]
         statistics, binner = build_reference_statistics(
@@ -700,6 +702,7 @@ def build_feature_sets(
             fold=fold,
             replicate=0,
         )
+        optimizer_donor_rows.append(donor.rows)
         raw_fold = _raw_feature_set(
             dataset=protocol.dataset,
             split="optimizer_oof_query",
@@ -726,6 +729,7 @@ def build_feature_sets(
                 "held_students": len(held),
                 "reference_students_sha256": statistics.reference_students_hash,
                 "reference_rows_sha256": statistics.reference_rows_hash,
+                "ease_tercile_edges": donor.audit["ease_tercile_edges"],
                 "donor_mapping_sha256": donor.audit["mapping_sha256"],
                 "zero_count_item_rows_map_to_unk": True,
             }
@@ -799,6 +803,12 @@ def build_feature_sets(
         concept_index=concept_index,
         optimizer_item_frequency=optimizer_item_frequency,
     )
+    optimizer_mapping = pd.concat(optimizer_donor_rows, ignore_index=True)
+    optimizer_mapping_sha256 = _hash_values(
+        optimizer_mapping["source_row_id"].astype(str)
+        + ":"
+        + optimizer_mapping["donor_target_item"].astype(str)
+    )
     return FeatureBuildResult(
         optimizer=optimizer,
         validation=validation,
@@ -824,6 +834,9 @@ def build_feature_sets(
             "validation_donor_mapping_sha256": validation_donor.audit[
                 "mapping_sha256"
             ],
+            "optimizer_mapping_replicate_zero_sha256": (
+                optimizer_mapping_sha256
+            ),
         },
     )
 

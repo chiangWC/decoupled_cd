@@ -264,6 +264,14 @@ The separate six-column support summary, in exact tensor order, is
 - the true target identity, union-Q concepts, and train-only statistics;
 - true correct/incorrect item-state means, contrast, counts, and confidences.
 
+The three paired placement probes consume all three row-level response
+channels in their interaction encoder. Strong-OPMS is deliberately not the
+same-raw-input attribution control: it consumes the binary response through
+hard correct/incorrect item-state partitioning plus the six support statistics,
+but does not feed the continuous response-residual/confidence channels into its
+logit. Those channels remain diagnostic outputs for Strong-OPMS. LateFusion,
+not Strong-OPMS, is the exact-input, exact-capacity placement control.
+
 Repeated support attempts remain individual encoder records although their
 `(student,item)` group is split atomically. Pooling is a masked mean, never a
 sum, so history length cannot scale the target injection. The common
@@ -338,10 +346,12 @@ must leave every prediction invariant.
 - no validation early stopping, checkpoint selection, hyperparameter search,
   or post-hoc control selection.
 
-All variants start from one serialized initialization. PermPair is a separate
-training job, not an inference-only corruption. The 200 further donor maps are
-fixed-model sensitivity diagnostics only and never trigger refitting or model
-choice.
+The three paired variants start from one serialized full initialization.
+Strong-OPMS shares their item encoder and outcome-partitioned state
+initialization, while its structurally different diagnosis head has its own
+deterministic initialization. PermPair is a separate training job, not an
+inference-only corruption. The 200 further donor maps are fixed-model
+sensitivity diagnostics only and never trigger refitting or model choice.
 
 ## Metrics and activation gate
 
