@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import subprocess
 import sys
 from typing import Any, Iterable, Sequence
@@ -48,6 +49,7 @@ from scripts.audit_target_local_pairing_protocol import (
 )
 from utils.response_credit_evaluation import (
     BOOTSTRAP_REPLICATES,
+    MIN_VALID_BOOTSTRAP_REPLICATES,
     PROBABILITY_COLUMNS,
     compute_stage1_gate,
     compute_stage2_gate,
@@ -181,6 +183,14 @@ def _git_snapshot(
         for line in remote_output.splitlines()
         if line.strip().startswith("origin/")
     )
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    live_origin_head = None
     if formal:
         if expected_commit is None:
             raise RuntimeError("Formal prediction requires --expected-commit.")
@@ -201,12 +211,43 @@ def _git_snapshot(
             raise RuntimeError(
                 "Formal prediction requires HEAD on an origin tracking ref."
             )
+        if not branch:
+            raise RuntimeError("Formal prediction requires a named git branch.")
+        live_origin_head = _live_origin_branch_head(branch)
+        if live_origin_head != head:
+            raise RuntimeError(
+                "Formal prediction requires the current branch HEAD to equal "
+                f"the live origin branch: local={head}, origin={live_origin_head}."
+            )
     return {
         "head": head,
+        "branch": branch,
         "worktree_clean": not bool(status.strip()),
         "origin_remote_tracking_refs_containing_head": origin_refs,
+        "live_origin_branch_head": live_origin_head,
         "formal_enforced": formal,
     }
+
+
+def _live_origin_branch_head(branch: str) -> str:
+    """Return the exact commit currently advertised by origin for ``branch``."""
+    if not branch or branch.startswith("-"):
+        raise ValueError("A valid branch name is required for the origin check.")
+    reference = f"refs/heads/{branch}"
+    result = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin", reference],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    lines = [line.split() for line in result.stdout.splitlines() if line.strip()]
+    matches = [parts[0] for parts in lines if len(parts) == 2 and parts[1] == reference]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected exactly one live origin ref for {reference}; found {len(matches)}."
+        )
+    return matches[0]
 
 
 def _seed_everything() -> None:
@@ -219,6 +260,49 @@ def _seed_everything() -> None:
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
+
+
+def _runtime_environment(device: torch.device) -> dict[str, Any]:
+    """Capture the execution environment needed to reproduce a formal job."""
+    resolved_index: int | None = None
+    device_name: str | None = None
+    device_capability: list[int] | None = None
+    device_total_memory: int | None = None
+    if device.type == "cuda":
+        resolved_index = (
+            torch.cuda.current_device() if device.index is None else int(device.index)
+        )
+        properties = torch.cuda.get_device_properties(resolved_index)
+        device_name = properties.name
+        device_capability = list(torch.cuda.get_device_capability(resolved_index))
+        device_total_memory = int(properties.total_memory)
+    return {
+        "python_version": platform.python_version(),
+        "python_executable": sys.executable,
+        "platform": platform.platform(),
+        "torch_version": torch.__version__,
+        "torch_cuda_version": torch.version.cuda,
+        "cudnn_version": (
+            None
+            if not hasattr(torch.backends, "cudnn")
+            else torch.backends.cudnn.version()
+        ),
+        "numpy_version": np.__version__,
+        "pandas_version": pd.__version__,
+        "conda_default_env": os.environ.get("CONDA_DEFAULT_ENV"),
+        "conda_prefix": os.environ.get("CONDA_PREFIX"),
+        "cuda_available": torch.cuda.is_available(),
+        "requested_device": str(device),
+        "resolved_cuda_index": resolved_index,
+        "cuda_device_name": device_name,
+        "cuda_device_capability": device_capability,
+        "cuda_device_total_memory_bytes": device_total_memory,
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+        "deterministic_algorithms_enabled": (
+            torch.are_deterministic_algorithms_enabled()
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -634,17 +718,10 @@ def load_standard_stage1_barrier(
         raise RuntimeError(
             "Formal standard prediction requires a passed --stage1-json."
         )
-    decision = json.loads(stage1_json.read_text(encoding="utf-8"))
-    if (
-        decision.get("gate") != "response_credit_stage1_holdout"
-        or not bool(decision.get("stage1_passed"))
-    ):
-        raise RuntimeError("Formal standard prediction requires passed Stage 1.")
-    if decision.get("git_commit") != git_head:
-        raise RuntimeError("Stage 1 decision commit differs from current HEAD.")
-    if not decision.get("architecture_topology_sha256"):
-        raise RuntimeError("Stage 1 decision lacks an architecture topology hash.")
-    return decision
+    return validate_stage1_decision_artifact(
+        stage1_json,
+        expected_commit=git_head,
+    )
 
 
 def run_predict_phase(
@@ -697,6 +774,7 @@ def run_predict_phase(
         batch_size=np.asarray([plan.batch_size], dtype=np.int64),
     )
     model, model_audit = initialize_model(features.optimizer, variant=variant)
+    environment = _runtime_environment(device)
     if stage1_decision is not None and (
         stage1_decision.get("architecture_topology_sha256")
         != model_audit["architecture"]["topology_sha256"]
@@ -761,6 +839,7 @@ def run_predict_phase(
         ),
         "variant": variant,
         "git": git,
+        "environment": environment,
         "source": protocol.audit,
         "optimizer_protocol": optimizer_audit,
         "features": features.audit,
@@ -1019,6 +1098,138 @@ def run_evaluate_phase(
     return payload
 
 
+def _evaluation_input_fingerprints(
+    paths: Sequence[Path],
+    payloads: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if len(paths) != len(payloads):
+        raise ValueError("Evaluation paths and payloads must have equal length.")
+    return [
+        {
+            "dataset": payload["dataset"],
+            "split_kind": payload["split_kind"],
+            "formal": payload["formal"],
+            "git_commit": payload["git_commit"],
+            "architecture_topology_sha256": payload[
+                "architecture_topology_sha256"
+            ],
+            "comparison_signature": payload["comparison_signature"],
+            "evaluation_json_path": str(path.resolve()),
+            "evaluation_json_sha256": sha256_file(path),
+        }
+        for path, payload in zip(paths, payloads, strict=True)
+    ]
+
+
+def validate_stage1_decision_artifact(
+    stage1_json: Path,
+    *,
+    expected_commit: str,
+    expected_topology: str | None = None,
+) -> dict[str, Any]:
+    """Validate Stage 1 from its two immutable formal evaluation artifacts."""
+    stage1_json = Path(stage1_json)
+    decision = json.loads(stage1_json.read_text(encoding="utf-8"))
+    if (
+        decision.get("schema_version") != 1
+        or decision.get("phase") != "response_credit_aggregate"
+        or decision.get("aggregate_stage") != "stage1"
+        or decision.get("gate") != "response_credit_stage1_holdout"
+    ):
+        raise RuntimeError("Stage 1 artifact is not an official aggregate schema.")
+    if decision.get("stage1_passed") is not True:
+        raise RuntimeError("Formal standard prediction requires passed Stage 1.")
+    if decision.get("git_commit") != expected_commit:
+        raise RuntimeError("Stage 1 decision commit differs from current HEAD.")
+    topology = decision.get("architecture_topology_sha256")
+    if not isinstance(topology, str) or not topology:
+        raise RuntimeError("Stage 1 decision lacks an architecture topology hash.")
+    if expected_topology is not None and topology != expected_topology:
+        raise RuntimeError("Stage 1 topology differs from current evaluations.")
+
+    datasets = decision.get("datasets")
+    if not isinstance(datasets, dict) or set(datasets) != set(EXPECTED_DATASETS):
+        raise RuntimeError("Stage 1 must contain both preregistered datasets.")
+    checks = decision.get("checks")
+    if (
+        not isinstance(checks, dict)
+        or not checks
+        or any(value is not True for value in checks.values())
+    ):
+        raise RuntimeError("Stage 1 artifact does not contain all passing checks.")
+
+    recomputed = compute_stage1_gate(list(datasets.values()))
+    for field in ("stage1_passed", "checks", "control_rule", "datasets"):
+        if _canonical_json(decision.get(field)) != _canonical_json(
+            recomputed.get(field)
+        ):
+            raise RuntimeError(
+                f"Stage 1 aggregate field {field!r} differs from recomputation."
+            )
+
+    fingerprints = decision.get("evaluation_inputs")
+    if not isinstance(fingerprints, list) or len(fingerprints) != len(
+        EXPECTED_DATASETS
+    ):
+        raise RuntimeError("Stage 1 requires two evaluation fingerprints.")
+    fingerprints_by_dataset = {
+        str(value.get("dataset")): value for value in fingerprints
+    }
+    if set(fingerprints_by_dataset) != set(EXPECTED_DATASETS):
+        raise RuntimeError("Stage 1 evaluation fingerprints have wrong datasets.")
+
+    for dataset in EXPECTED_DATASETS:
+        fingerprint = fingerprints_by_dataset[dataset]
+        if (
+            fingerprint.get("formal") is not True
+            or fingerprint.get("split_kind") != "holdout"
+            or fingerprint.get("git_commit") != expected_commit
+            or fingerprint.get("architecture_topology_sha256") != topology
+            or not fingerprint.get("comparison_signature")
+        ):
+            raise RuntimeError(
+                f"Stage 1 fingerprint is invalid for {dataset}."
+            )
+        evaluation_path = Path(str(fingerprint.get("evaluation_json_path", "")))
+        if not evaluation_path.is_file() or sha256_file(evaluation_path) != fingerprint.get(
+            "evaluation_json_sha256"
+        ):
+            raise RuntimeError(
+                f"Stage 1 evaluation artifact hash mismatch for {dataset}."
+            )
+        payload = json.loads(evaluation_path.read_text(encoding="utf-8"))
+        if (
+            payload.get("schema_version") != 1
+            or payload.get("phase") != "response_credit_evaluate"
+            or payload.get("formal") is not True
+            or payload.get("dataset") != dataset
+            or payload.get("split_kind") != "holdout"
+            or payload.get("git_commit") != expected_commit
+            or payload.get("architecture_topology_sha256") != topology
+            or payload.get("comparison_signature")
+            != fingerprint.get("comparison_signature")
+            or set(payload.get("prediction_manifests", {})) != set(VARIANTS)
+        ):
+            raise RuntimeError(
+                f"Stage 1 formal holdout evaluation is invalid for {dataset}."
+            )
+        evaluation = payload.get("evaluation")
+        if _canonical_json(evaluation) != _canonical_json(datasets[dataset]):
+            raise RuntimeError(
+                f"Stage 1 embedded evaluation differs for {dataset}."
+            )
+        bootstrap = evaluation.get("joint_c_bootstrap", {})
+        if (
+            bootstrap.get("requested_replicates") != BOOTSTRAP_REPLICATES
+            or int(bootstrap.get("valid_replicates", -1))
+            < MIN_VALID_BOOTSTRAP_REPLICATES
+        ):
+            raise RuntimeError(
+                f"Stage 1 bootstrap provenance is invalid for {dataset}."
+            )
+    return decision
+
+
 def run_aggregate_phase(
     *,
     stage: str,
@@ -1040,6 +1251,10 @@ def run_aggregate_phase(
     if len(commits) != 1 or len(architectures) != 1:
         raise RuntimeError("Gate inputs do not share one commit and architecture.")
     evaluations = [value["evaluation"] for value in payloads]
+    evaluation_inputs = _evaluation_input_fingerprints(
+        evaluation_jsons,
+        payloads,
+    )
     if stage == "stage1":
         if stage1_json is not None:
             raise ValueError("Stage 1 must not receive --stage1-json.")
@@ -1047,12 +1262,33 @@ def run_aggregate_phase(
     else:
         if stage1_json is None:
             raise ValueError("Stage 2 requires --stage1-json.")
-        stage1 = json.loads(stage1_json.read_text(encoding="utf-8"))
+        stage1 = validate_stage1_decision_artifact(
+            stage1_json,
+            expected_commit=next(iter(commits)),
+            expected_topology=next(iter(architectures)),
+        )
+        if set(stage1["datasets"]) != {
+            str(value["dataset"]) for value in evaluations
+        }:
+            raise RuntimeError(
+                "Stage 1 and current standard evaluations have different datasets."
+            )
         decision = compute_stage2_gate(evaluations, stage1=stage1)
     decision.update(
         {
+            "phase": "response_credit_aggregate",
+            "aggregate_stage": stage,
             "git_commit": next(iter(commits)),
             "architecture_topology_sha256": next(iter(architectures)),
+            "evaluation_inputs": evaluation_inputs,
+            "stage1_artifact": (
+                None
+                if stage1_json is None
+                else {
+                    "path": str(stage1_json.resolve()),
+                    "sha256": sha256_file(stage1_json),
+                }
+            ),
             "multi_seed_used": False,
             "bootstrap_is_model_seed": False,
         }
