@@ -1,0 +1,1182 @@
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict, dataclass
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from typing import Any, Iterable, Sequence
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from data.pool_protocol import sha256_file
+from data.response_concept_credit_features import (
+    CreditFeatureBuildResult,
+    CreditFeatureSet,
+    CreditStudentBatch,
+    TARGET_SCOPE_BY_DATASET,
+    build_credit_feature_sets,
+    collate_credit_student_batch,
+)
+from models.response_concept_credit_probe import (
+    DEFAULT_EMBEDDING_DIM,
+    DEFAULT_HIDDEN_DIM,
+    DEFAULT_ROUTING_ITERATIONS,
+    DEFAULT_STATE_DIM,
+    VARIANTS,
+    ResponseConceptCreditProbe,
+)
+from scripts.audit_target_local_pairing_protocol import (
+    MODEL_SEED,
+    SPLIT_SEED,
+    build_optimizer_profiles,
+    finalize_protocol_for_retained_optimizer,
+    join_validation_predictions_with_labels,
+    load_validation_labels_for_evaluation,
+    load_validation_only_protocol,
+    validation_row_order_sha256,
+)
+from utils.response_credit_evaluation import (
+    BOOTSTRAP_REPLICATES,
+    PROBABILITY_COLUMNS,
+    compute_stage1_gate,
+    compute_stage2_gate,
+    evaluate_credit_predictions,
+)
+
+
+EPOCHS = 20
+BATCH_SIZE = 128
+LEARNING_RATE = 1e-3
+WEIGHT_DECAY = 1e-4
+BATCH_NAMESPACE = "response-credit-student-epoch-batches"
+EXPECTED_DATASETS = tuple(TARGET_SCOPE_BY_DATASET)
+EXPECTED_SPLITS = ("holdout", "standard")
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _hash_values(values: Iterable[object]) -> str:
+    digest = hashlib.sha256()
+    for value in values:
+        digest.update(str(value).encode("utf-8"))
+        digest.update(b"\x1f")
+    return digest.hexdigest()
+
+
+def _hash_array(value: np.ndarray) -> str:
+    array = np.ascontiguousarray(value)
+    digest = hashlib.sha256()
+    digest.update(str(array.dtype).encode("ascii"))
+    digest.update(np.asarray(array.shape, dtype="<i8").tobytes())
+    digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def _state_dict_sha256(state: dict[str, torch.Tensor]) -> str:
+    digest = hashlib.sha256()
+    for name, tensor in sorted(state.items()):
+        value = tensor.detach().cpu().contiguous()
+        digest.update(name.encode("utf-8"))
+        digest.update(str(value.dtype).encode("ascii"))
+        digest.update(np.asarray(value.shape, dtype="<i8").tobytes())
+        digest.update(value.numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _prediction_semantic_sha256(
+    frame: pd.DataFrame,
+    *,
+    variant: str,
+) -> str:
+    digest = hashlib.sha256()
+    probability = PROBABILITY_COLUMNS[variant]
+    for row in frame.itertuples(index=False):
+        digest.update(str(row.source_row_id).encode("utf-8"))
+        digest.update(np.asarray([getattr(row, probability)], dtype="<f4").tobytes())
+    return digest.hexdigest()
+
+
+def _atomic_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(
+        json.dumps(value, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def _atomic_csv(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    frame.to_csv(temporary, index=False)
+    os.replace(temporary, path)
+
+
+def _atomic_checkpoint(path: Path, state: dict[str, torch.Tensor]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    torch.save(
+        {name: value.detach().cpu() for name, value in state.items()},
+        temporary,
+    )
+    os.replace(temporary, path)
+
+
+def _atomic_npz(path: Path, **arrays: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("wb") as handle:
+        np.savez_compressed(handle, **arrays)
+    os.replace(temporary, path)
+
+
+def _require_empty_output(path: Path) -> None:
+    if path.exists() and any(path.iterdir()):
+        raise FileExistsError(f"Output directory is not empty: {path}")
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _git_snapshot(
+    *,
+    formal: bool,
+    expected_commit: str | None,
+) -> dict[str, Any]:
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    remote_output = subprocess.run(
+        ["git", "branch", "-r", "--contains", head],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    origin_refs = sorted(
+        line.strip()
+        for line in remote_output.splitlines()
+        if line.strip().startswith("origin/")
+    )
+    if formal:
+        if expected_commit is None:
+            raise RuntimeError("Formal prediction requires --expected-commit.")
+        resolved = subprocess.run(
+            ["git", "rev-parse", expected_commit],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if resolved != head:
+            raise RuntimeError(
+                f"HEAD {head} does not match expected commit {resolved}."
+            )
+        if status.strip():
+            raise RuntimeError("Formal prediction requires a clean worktree.")
+        if not origin_refs:
+            raise RuntimeError(
+                "Formal prediction requires HEAD on an origin tracking ref."
+            )
+    return {
+        "head": head,
+        "worktree_clean": not bool(status.strip()),
+        "origin_remote_tracking_refs_containing_head": origin_refs,
+        "formal_enforced": formal,
+    }
+
+
+def _seed_everything() -> None:
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    np.random.seed(MODEL_SEED)
+    torch.manual_seed(MODEL_SEED)
+    torch.use_deterministic_algorithms(True)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(MODEL_SEED)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+
+@dataclass(frozen=True)
+class StudentBatchPlan:
+    permutations: np.ndarray
+    batch_size: int
+    namespace: str
+    sha256: str
+
+    def epoch_batches(self, epoch: int) -> tuple[np.ndarray, ...]:
+        values = self.permutations[epoch]
+        return tuple(
+            values[start : start + self.batch_size]
+            for start in range(0, len(values), self.batch_size)
+        )
+
+
+def build_student_batch_plan(
+    student_count: int,
+    *,
+    dataset: str,
+    split_kind: str,
+    epochs: int,
+    batch_size: int = BATCH_SIZE,
+) -> StudentBatchPlan:
+    if student_count < 1 or epochs < 1 or batch_size != BATCH_SIZE:
+        raise ValueError("Invalid student batch-plan dimensions.")
+    seed_bytes = hashlib.sha256(
+        f"{MODEL_SEED}\x1f{BATCH_NAMESPACE}\x1f{dataset}\x1f{split_kind}".encode(
+            "utf-8"
+        )
+    ).digest()[:8]
+    rng = np.random.default_rng(int.from_bytes(seed_bytes, "little"))
+    permutations = np.stack(
+        [rng.permutation(student_count) for _ in range(epochs)]
+    ).astype(np.int64)
+    sha256 = _hash_values(
+        (
+            BATCH_NAMESPACE,
+            MODEL_SEED,
+            dataset,
+            split_kind,
+            epochs,
+            batch_size,
+            student_count,
+            _hash_array(permutations),
+        )
+    )
+    return StudentBatchPlan(permutations, batch_size, BATCH_NAMESPACE, sha256)
+
+
+def _model_kwargs(features: CreditFeatureSet) -> dict[str, int]:
+    return {
+        "num_items": features.num_items,
+        "num_concepts": features.num_concepts,
+        "max_q_cardinality": features.max_q_cardinality,
+        "embedding_dim": DEFAULT_EMBEDDING_DIM,
+        "state_dim": DEFAULT_STATE_DIM,
+        "hidden_dim": DEFAULT_HIDDEN_DIM,
+        "routing_iterations": DEFAULT_ROUTING_ITERATIONS,
+    }
+
+
+def initialize_model(
+    features: CreditFeatureSet,
+    *,
+    variant: str,
+) -> tuple[ResponseConceptCreditProbe, dict[str, Any]]:
+    if variant not in VARIANTS:
+        raise ValueError(f"Unexpected variant: {variant}.")
+    _seed_everything()
+    model = ResponseConceptCreditProbe(**_model_kwargs(features))
+    state_hash = _state_dict_sha256(model.state_dict())
+    parameter_schema = tuple(
+        (name, tuple(parameter.shape))
+        for name, parameter in model.named_parameters()
+    )
+    topology = {
+        "family": "response_concept_credit_activation_probe_v1",
+        "embedding_dim": DEFAULT_EMBEDDING_DIM,
+        "state_dim": DEFAULT_STATE_DIM,
+        "hidden_dim": DEFAULT_HIDDEN_DIM,
+        "routing_iterations": DEFAULT_ROUTING_ITERATIONS,
+        "model_source_sha256": sha256_file(
+            PROJECT_ROOT / "models/response_concept_credit_probe.py"
+        ),
+        "feature_source_sha256": sha256_file(
+            PROJECT_ROOT / "data/response_concept_credit_features.py"
+        ),
+        "runner_source_sha256": sha256_file(
+            PROJECT_ROOT / "scripts/run_response_credit_activation.py"
+        ),
+        "student_id_embedding": False,
+        "diagnosis_student_input": "framework_state_only",
+        "loss": "response_bce_only",
+    }
+    topology_sha256 = hashlib.sha256(
+        _canonical_json(topology).encode("utf-8")
+    ).hexdigest()
+    instance_dimensions = {
+        key: value
+        for key, value in _model_kwargs(features).items()
+        if key in {"num_items", "num_concepts", "max_q_cardinality"}
+    }
+    instance_sha256 = hashlib.sha256(
+        _canonical_json(
+            {
+                "topology_sha256": topology_sha256,
+                "instance_dimensions": instance_dimensions,
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+    architecture = {
+        **topology,
+        "topology_sha256": topology_sha256,
+        "instance_dimensions": instance_dimensions,
+        "instance_sha256": instance_sha256,
+    }
+    return model, {
+        "variant": variant,
+        "initialization_sha256": state_hash,
+        "common_initialization_sha256": state_hash,
+        "total_parameter_count": sum(
+            parameter.numel() for parameter in model.parameters()
+        ),
+        "parameter_schema_sha256": _hash_values(parameter_schema),
+        "architecture": architecture,
+        "variant_architecture_fingerprint": model.architecture_fingerprint(
+            variant
+        ),
+    }
+
+
+def _forward(
+    model: ResponseConceptCreditProbe,
+    batch: CreditStudentBatch,
+    *,
+    variant: str,
+) -> Any:
+    return model(
+        variant=variant,
+        support_item_ids=batch.support_item_ids,
+        support_q_indices=batch.support_q_indices,
+        support_q_mask=batch.support_q_mask,
+        support_responses=batch.support_responses,
+        support_item_ease=batch.support_item_ease,
+        support_item_confidence=batch.support_item_confidence,
+        support_group_attempt_confidence=(
+            batch.support_group_attempt_confidence
+        ),
+        support_mask=batch.support_mask,
+        query_context_indices=batch.query_context_indices,
+        target_q_indices=batch.target_q_indices,
+        target_q_mask=batch.target_q_mask,
+    )
+
+
+def gradient_audit(
+    model: ResponseConceptCreditProbe,
+    *,
+    variant: str,
+    features: CreditFeatureSet,
+    device: torch.device,
+) -> dict[str, Any]:
+    indices = np.arange(min(8, len(features.contexts)), dtype=np.int64)
+    batch = collate_credit_student_batch(features, indices, device=device)
+    if batch.labels is None:
+        raise RuntimeError("Gradient audit requires optimizer labels.")
+    model.to(device)
+    model.train()
+    model.zero_grad(set_to_none=True)
+    output = _forward(model, batch, variant=variant)
+    loss = F.binary_cross_entropy_with_logits(output.logits, batch.labels)
+    if not bool(torch.isfinite(loss)):
+        raise RuntimeError("Gradient-audit loss is non-finite.")
+    loss.backward()
+    finite = {}
+    for name, parameter in model.named_parameters():
+        if parameter.grad is None:
+            finite[name] = None
+            continue
+        if not bool(torch.isfinite(parameter.grad).all()):
+            raise RuntimeError(f"Non-finite gradient: {name}.")
+        finite[name] = float(parameter.grad.norm().item())
+    if finite.get("diagnosis_head.2.weight") in {None, 0.0}:
+        raise RuntimeError("Diagnosis path has no finite learning signal.")
+    if variant in {"full", "capacity"} and finite.get(
+        "routing_output.weight"
+    ) in {None, 0.0}:
+        raise RuntimeError("Learned routing output has no finite learning signal.")
+    model.zero_grad(set_to_none=True)
+    model.cpu()
+    return {
+        "loss": float(loss.item()),
+        "finite_gradient_parameters": sum(value is not None for value in finite.values()),
+        "none_gradient_parameters": [
+            name for name, value in finite.items() if value is None
+        ],
+        "zero_gradient_parameters": [
+            name for name, value in finite.items() if value == 0.0
+        ],
+    }
+
+
+def train_variant(
+    model: ResponseConceptCreditProbe,
+    *,
+    variant: str,
+    features: CreditFeatureSet,
+    plan: StudentBatchPlan,
+    device: torch.device,
+    epochs: int,
+) -> dict[str, Any]:
+    model.to(device)
+    model.train()
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY,
+    )
+    epoch_losses = []
+    epoch_query_rows = []
+    for epoch in range(epochs):
+        total_loss = 0.0
+        total_rows = 0
+        for context_indices in plan.epoch_batches(epoch):
+            batch = collate_credit_student_batch(
+                features,
+                context_indices,
+                device=device,
+            )
+            if batch.labels is None:
+                raise RuntimeError("Optimizer feature set is missing labels.")
+            optimizer.zero_grad(set_to_none=True)
+            output = _forward(model, batch, variant=variant)
+            per_row = F.binary_cross_entropy_with_logits(
+                output.logits,
+                batch.labels,
+                reduction="none",
+            )
+            loss = per_row.sum() / len(per_row)
+            loss.backward()
+            optimizer.step()
+            total_loss += float(per_row.detach().sum().item())
+            total_rows += len(per_row)
+        epoch_losses.append(total_loss / total_rows)
+        epoch_query_rows.append(total_rows)
+    model.cpu()
+    return {
+        "epochs": epochs,
+        "loss_reduction": "mean_over_query_rows_in_each_student_batch",
+        "reported_epoch_loss": "sum_query_bce_divided_by_epoch_query_rows",
+        "epoch_losses": epoch_losses,
+        "epoch_query_rows": epoch_query_rows,
+        "final_epoch_loss": epoch_losses[-1],
+        "final_state_sha256": _state_dict_sha256(model.state_dict()),
+    }
+
+
+@torch.no_grad()
+def predict_variant(
+    model: ResponseConceptCreditProbe,
+    *,
+    variant: str,
+    features: CreditFeatureSet,
+    device: torch.device,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    model.to(device)
+    model.eval()
+    probabilities: list[np.ndarray] = []
+    source_row_ids: list[str] = []
+    students: list[str] = []
+    exercises: list[str] = []
+    in_c: list[np.ndarray] = []
+    in_c_strict: list[np.ndarray] = []
+    in_t: list[np.ndarray] = []
+    target_coverage: list[np.ndarray] = []
+    student_entropy: list[np.ndarray] = []
+    student_mass_error: list[np.ndarray] = []
+    student_observed: list[np.ndarray] = []
+    for start in range(0, len(features.contexts), BATCH_SIZE):
+        context_indices = np.arange(
+            start,
+            min(start + BATCH_SIZE, len(features.contexts)),
+        )
+        batch = collate_credit_student_batch(
+            features,
+            context_indices,
+            device=device,
+        )
+        output = _forward(model, batch, variant=variant)
+        probabilities.append(output.probs.detach().cpu().numpy())
+        source_row_ids.extend(batch.source_row_ids)
+        students.extend(batch.students)
+        exercises.extend(batch.exercises)
+        in_c.append(batch.in_c)
+        in_c_strict.append(batch.in_c_strict)
+        in_t.append(batch.in_t)
+        target_coverage.append(batch.target_coverage)
+
+        valid = batch.support_mask
+        entropy = output.routing_entropy
+        mass_error = (
+            output.routed_mass
+            - batch.support_q_mask.sum(dim=-1).to(output.routed_mass.dtype)
+        ).abs()
+        valid_count = valid.sum(dim=1).clamp_min(1)
+        student_entropy.append(
+            (
+                (entropy * valid).sum(dim=1)
+                / valid_count.to(entropy.dtype)
+            ).detach().cpu().numpy()
+        )
+        student_mass_error.append(
+            (
+                (mass_error * valid).sum(dim=1)
+                / valid_count.to(mass_error.dtype)
+            ).detach().cpu().numpy()
+        )
+        student_observed.append(
+            output.module_diagnostics["observed_concept_fraction"]
+            .detach()
+            .cpu()
+            .numpy()
+        )
+    model.cpu()
+    probs = np.concatenate(probabilities).astype(np.float32)
+    if source_row_ids != [record.source_row_id for record in features.records]:
+        raise RuntimeError("Student-batch prediction order differs from feature order.")
+    if not np.isfinite(probs).all() or len(probs) != len(features.records):
+        raise RuntimeError("Prediction vector is invalid.")
+    frame = pd.DataFrame(
+        {
+            "source_row_id": source_row_ids,
+            "stu_id": students,
+            "exer_id": exercises,
+            "target_coverage": np.concatenate(target_coverage),
+            "in_c": np.concatenate(in_c),
+            "in_c_strict": np.concatenate(in_c_strict),
+            "in_t": np.concatenate(in_t),
+            PROBABILITY_COLUMNS[variant]: probs,
+        }
+    )
+    return frame, {
+        "mean_routing_entropy": float(np.concatenate(student_entropy).mean()),
+        "maximum_mean_routed_mass_error": float(
+            np.concatenate(student_mass_error).max()
+        ),
+        "mean_observed_concept_fraction": float(
+            np.concatenate(student_observed).mean()
+        ),
+        "students": len(features.contexts),
+        "query_rows": len(features.records),
+    }
+
+
+def build_features(
+    *,
+    dataset: str,
+    source_dir: Path,
+) -> tuple[Any, CreditFeatureBuildResult, dict[str, Any]]:
+    protocol = load_validation_only_protocol(dataset, source_dir)
+    profiles, optimizer_audit = build_optimizer_profiles(
+        protocol.optimizer_train,
+        q_lookup=protocol.q_lookup,
+    )
+    protocol = finalize_protocol_for_retained_optimizer(protocol, profiles)
+    features = build_credit_feature_sets(
+        protocol,
+        optimizer_profiles=profiles,
+    )
+    return protocol, features, optimizer_audit
+
+
+def run_audit_phase(
+    *,
+    dataset: str,
+    source_dir: Path,
+    output_dir: Path,
+) -> dict[str, Any]:
+    _require_empty_output(output_dir)
+    protocol, features, optimizer_audit = build_features(
+        dataset=dataset,
+        source_dir=source_dir,
+    )
+    payload = {
+        "schema_version": 1,
+        "phase": "response_credit_audit",
+        "dataset": dataset,
+        "source": protocol.audit,
+        "optimizer": optimizer_audit,
+        "features": features.audit,
+        "leakage_audit": {
+            "validation_labels_loaded": False,
+            "test_files_opened": False,
+            "opened_source_files": ["train.csv", "valid.csv", "Q_matrix.csv"],
+        },
+    }
+    _atomic_json(output_dir / "audit.json", payload)
+    return payload
+
+
+def load_standard_stage1_barrier(
+    *,
+    formal: bool,
+    split_kind: str,
+    stage1_json: Path | None,
+    git_head: str,
+) -> dict[str, Any] | None:
+    if not formal or split_kind != "standard":
+        return None
+    if stage1_json is None:
+        raise RuntimeError(
+            "Formal standard prediction requires a passed --stage1-json."
+        )
+    decision = json.loads(stage1_json.read_text(encoding="utf-8"))
+    if (
+        decision.get("gate") != "response_credit_stage1_holdout"
+        or not bool(decision.get("stage1_passed"))
+    ):
+        raise RuntimeError("Formal standard prediction requires passed Stage 1.")
+    if decision.get("git_commit") != git_head:
+        raise RuntimeError("Stage 1 decision commit differs from current HEAD.")
+    if not decision.get("architecture_topology_sha256"):
+        raise RuntimeError("Stage 1 decision lacks an architecture topology hash.")
+    return decision
+
+
+def run_predict_phase(
+    *,
+    dataset: str,
+    split_kind: str,
+    variant: str,
+    source_dir: Path,
+    output_dir: Path,
+    device_name: str,
+    epochs: int,
+    nonformal: bool,
+    expected_commit: str | None,
+    stage1_json: Path | None,
+) -> dict[str, Any]:
+    if dataset not in EXPECTED_DATASETS or split_kind not in EXPECTED_SPLITS:
+        raise ValueError("Unexpected dataset or split kind.")
+    if variant not in VARIANTS:
+        raise ValueError("Unexpected variant.")
+    if epochs != EPOCHS and not nonformal:
+        raise RuntimeError("Non-20-epoch prediction requires --nonformal.")
+    formal = not nonformal
+    if formal and epochs != EPOCHS:
+        raise RuntimeError("Formal prediction must use exactly 20 epochs.")
+    git = _git_snapshot(formal=formal, expected_commit=expected_commit)
+    stage1_decision = load_standard_stage1_barrier(
+        formal=formal,
+        split_kind=split_kind,
+        stage1_json=stage1_json,
+        git_head=git["head"],
+    )
+    _require_empty_output(output_dir)
+    protocol, features, optimizer_audit = build_features(
+        dataset=dataset,
+        source_dir=source_dir,
+    )
+    device = torch.device(device_name)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but is unavailable.")
+    plan = build_student_batch_plan(
+        len(features.optimizer.contexts),
+        dataset=dataset,
+        split_kind=split_kind,
+        epochs=epochs,
+    )
+    plan_path = output_dir / "student_batch_plan.npz"
+    _atomic_npz(
+        plan_path,
+        permutations=plan.permutations,
+        batch_size=np.asarray([plan.batch_size], dtype=np.int64),
+    )
+    model, model_audit = initialize_model(features.optimizer, variant=variant)
+    if stage1_decision is not None and (
+        stage1_decision.get("architecture_topology_sha256")
+        != model_audit["architecture"]["topology_sha256"]
+    ):
+        raise RuntimeError("Stage 1 architecture differs from the standard model.")
+    gradients = gradient_audit(
+        model,
+        variant=variant,
+        features=features.optimizer,
+        device=device,
+    )
+    model_audit["direct_unused_routing_parameters"] = (
+        gradients["none_gradient_parameters"]
+        if variant == "direct"
+        else []
+    )
+    training = train_variant(
+        model,
+        variant=variant,
+        features=features.optimizer,
+        plan=plan,
+        device=device,
+        epochs=epochs,
+    )
+    checkpoint_path = output_dir / f"{variant}_epoch_{epochs}.pt"
+    _atomic_checkpoint(checkpoint_path, model.state_dict())
+    predictions, diagnostics = predict_variant(
+        model,
+        variant=variant,
+        features=features.validation,
+        device=device,
+    )
+    if "label" in predictions:
+        raise RuntimeError("Prediction artifact must be label free.")
+    order_hash = validation_row_order_sha256(predictions)
+    if order_hash != features.validation.row_order_sha256:
+        raise RuntimeError("Prediction row order differs from validation features.")
+    prediction_path = output_dir / f"validation_predictions_{variant}_unlabeled.csv"
+    _atomic_csv(prediction_path, predictions)
+    prediction_semantic_hash = _prediction_semantic_sha256(
+        predictions,
+        variant=variant,
+    )
+    manifest = {
+        "schema_version": 1,
+        "phase": "response_credit_predict",
+        "formal": formal,
+        "nonformal_reason": (
+            None if formal else f"explicit_nonformal_epochs_{epochs}"
+        ),
+        "dataset": dataset,
+        "split_kind": split_kind,
+        "stage1_barrier": (
+            None
+            if stage1_decision is None
+            else {
+                "path": str(stage1_json.resolve()),
+                "sha256": sha256_file(stage1_json),
+                "stage1_passed": True,
+                "git_commit": stage1_decision["git_commit"],
+            }
+        ),
+        "variant": variant,
+        "git": git,
+        "source": protocol.audit,
+        "optimizer_protocol": optimizer_audit,
+        "features": features.audit,
+        "optimization": {
+            "model_seed": MODEL_SEED,
+            "split_seed": SPLIT_SEED,
+            "epochs": epochs,
+            "student_batch_size": BATCH_SIZE,
+            "learning_rate": LEARNING_RATE,
+            "weight_decay": WEIGHT_DECAY,
+            "optimizer": "AdamW",
+            "scheduler": None,
+            "early_stopping": False,
+            "checkpoint_selection": f"epoch_{epochs}_only",
+            "loss": "query_row_mean_response_bce",
+            "batch_namespace": plan.namespace,
+            "batch_plan_sha256": plan.sha256,
+            "batch_plan_file_sha256": sha256_file(plan_path),
+        },
+        "model": model_audit,
+        "gradient_audit": gradients,
+        "training": training,
+        "routing_diagnostics": diagnostics,
+        "artifacts": {
+            "predictions": {
+                "path": prediction_path.name,
+                "sha256": sha256_file(prediction_path),
+                "semantic_sha256": prediction_semantic_hash,
+                "row_order_sha256": order_hash,
+                "rows": len(predictions),
+            },
+            "checkpoint": {
+                "path": checkpoint_path.name,
+                "sha256": sha256_file(checkpoint_path),
+                "state_sha256": training["final_state_sha256"],
+            },
+            "student_batch_plan": {
+                "path": plan_path.name,
+                "sha256": sha256_file(plan_path),
+            },
+        },
+        "leakage_audit": {
+            "validation_labels_loaded": False,
+            "prediction_artifact_contains_label": False,
+            "test_files_opened": False,
+            "opened_source_files": ["train.csv", "valid.csv", "Q_matrix.csv"],
+        },
+    }
+    _atomic_json(output_dir / "prediction_manifest.json", manifest)
+    return manifest
+
+
+def _load_variant_prediction(
+    directory: Path,
+    *,
+    expected_variant: str,
+) -> tuple[dict[str, Any], pd.DataFrame]:
+    manifest_path = directory / "prediction_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        manifest.get("phase") != "response_credit_predict"
+        or manifest.get("variant") != expected_variant
+    ):
+        raise RuntimeError(f"Unexpected prediction manifest for {expected_variant}.")
+    spec = manifest["artifacts"]["predictions"]
+    path = directory / spec["path"]
+    if sha256_file(path) != spec["sha256"]:
+        raise RuntimeError(f"Prediction SHA mismatch for {expected_variant}.")
+    frame = pd.read_csv(path)
+    probability = PROBABILITY_COLUMNS[expected_variant]
+    required = {
+        "source_row_id",
+        "stu_id",
+        "exer_id",
+        "target_coverage",
+        "in_c",
+        "in_c_strict",
+        "in_t",
+        probability,
+    }
+    if required - set(frame.columns) or "label" in frame:
+        raise RuntimeError(f"Invalid unlabeled artifact for {expected_variant}.")
+    if validation_row_order_sha256(frame) != spec["row_order_sha256"]:
+        raise RuntimeError(f"Prediction order mismatch for {expected_variant}.")
+    semantic_hash = _prediction_semantic_sha256(
+        frame,
+        variant=expected_variant,
+    )
+    if semantic_hash != spec["semantic_sha256"]:
+        raise RuntimeError(f"Prediction semantic hash mismatch for {expected_variant}.")
+    return manifest, frame
+
+
+def _comparison_signature(manifest: dict[str, Any]) -> str:
+    payload = {
+        "formal": manifest["formal"],
+        "dataset": manifest["dataset"],
+        "split_kind": manifest["split_kind"],
+        "git": manifest["git"]["head"],
+        "source_hashes": manifest["source"]["source_files"],
+        "optimizer_protocol": manifest["optimizer_protocol"],
+        "features": manifest["features"],
+        "optimization": manifest["optimization"],
+        "architecture": manifest["model"]["architecture"],
+        "initialization": manifest["model"]["common_initialization_sha256"],
+        "parameter_count": manifest["model"]["total_parameter_count"],
+        "parameter_schema": manifest["model"]["parameter_schema_sha256"],
+        "prediction_order": manifest["artifacts"]["predictions"][
+            "row_order_sha256"
+        ],
+    }
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def run_evaluate_phase(
+    *,
+    full_dir: Path,
+    direct_dir: Path,
+    capacity_dir: Path,
+    source_dir: Path,
+    output_dir: Path,
+    bootstrap_replicates: int,
+) -> dict[str, Any]:
+    _require_empty_output(output_dir)
+    directories = {
+        "full": full_dir,
+        "direct": direct_dir,
+        "capacity": capacity_dir,
+    }
+    loaded = {
+        variant: _load_variant_prediction(
+            directory,
+            expected_variant=variant,
+        )
+        for variant, directory in directories.items()
+    }
+    manifests = {variant: value[0] for variant, value in loaded.items()}
+    signatures = {
+        _comparison_signature(manifest) for manifest in manifests.values()
+    }
+    if len(signatures) != 1:
+        raise RuntimeError(
+            "Three variants do not share commit/config/data/init/batch/row hashes."
+        )
+    formal_values = {manifest["formal"] for manifest in manifests.values()}
+    if len(formal_values) != 1:
+        raise RuntimeError("Variants mix formal and nonformal predictions.")
+    formal = next(iter(formal_values))
+    if formal and (
+        bootstrap_replicates != BOOTSTRAP_REPLICATES
+        or any(
+            manifest["optimization"]["epochs"] != EPOCHS
+            for manifest in manifests.values()
+        )
+    ):
+        raise RuntimeError("Formal evaluation requires 20 epochs and 2000 bootstrap replicates.")
+
+    base = loaded["full"][1].copy()
+    identity_columns = [
+        "source_row_id",
+        "stu_id",
+        "exer_id",
+        "target_coverage",
+        "in_c",
+        "in_c_strict",
+        "in_t",
+    ]
+    for variant in ("direct", "capacity"):
+        other = loaded[variant][1]
+        if not base.loc[:, identity_columns].equals(other.loc[:, identity_columns]):
+            raise RuntimeError(f"Prediction identities/slices differ for {variant}.")
+        base[PROBABILITY_COLUMNS[variant]] = other[
+            PROBABILITY_COLUMNS[variant]
+        ].to_numpy()
+    full_manifest = manifests["full"]
+    expected_source = Path(full_manifest["source"]["source_directory"]).resolve()
+    if source_dir.resolve() != expected_source:
+        raise RuntimeError("Evaluation source directory differs from prediction source.")
+    labels = load_validation_labels_for_evaluation(
+        source_dir / "valid.csv",
+        feature_rows=base,
+        expected_valid_sha256=full_manifest["source"]["source_files"][
+            "valid.csv"
+        ]["sha256"],
+    )
+    aligned = join_validation_predictions_with_labels(
+        base,
+        labels,
+        expected_prediction_order_sha256=full_manifest["artifacts"][
+            "predictions"
+        ]["row_order_sha256"],
+    )
+    summary, bootstrap = evaluate_credit_predictions(
+        aligned,
+        dataset=full_manifest["dataset"],
+        split_kind=full_manifest["split_kind"],
+        bootstrap_replicates=bootstrap_replicates,
+        bootstrap_seed=SPLIT_SEED,
+    )
+    aligned_path = output_dir / "aligned_predictions_with_labels.csv"
+    bootstrap_path = output_dir / "joint_c_student_bootstrap.npz"
+    _atomic_csv(aligned_path, aligned)
+    _atomic_npz(
+        bootstrap_path,
+        joint_min_delta=bootstrap.joint_min_delta,
+        valid=bootstrap.valid,
+        invalid_indices=bootstrap.invalid_indices,
+        sampled_student_hashes=np.asarray(
+            bootstrap.sampled_student_hashes,
+            dtype="U64",
+        ),
+    )
+    payload = {
+        "schema_version": 1,
+        "phase": "response_credit_evaluate",
+        "formal": formal,
+        "dataset": full_manifest["dataset"],
+        "split_kind": full_manifest["split_kind"],
+        "git_commit": full_manifest["git"]["head"],
+        "architecture_topology_sha256": full_manifest["model"]["architecture"][
+            "topology_sha256"
+        ],
+        "comparison_signature": next(iter(signatures)),
+        "evaluation": summary,
+        "prediction_manifests": {
+            variant: {
+                "path": str((directory / "prediction_manifest.json").resolve()),
+                "sha256": sha256_file(directory / "prediction_manifest.json"),
+            }
+            for variant, directory in directories.items()
+        },
+        "artifacts": {
+            "aligned_predictions": {
+                "path": aligned_path.name,
+                "sha256": sha256_file(aligned_path),
+            },
+            "joint_c_bootstrap": {
+                "path": bootstrap_path.name,
+                "sha256": sha256_file(bootstrap_path),
+                "sampling_manifest_sha256": (
+                    bootstrap.sampling_manifest_sha256
+                ),
+                "invalid_indices": bootstrap.invalid_indices.tolist(),
+                "sampled_student_hashes": list(
+                    bootstrap.sampled_student_hashes
+                ),
+            },
+        },
+        "leakage_audit": {
+            "all_three_prediction_manifests_present_before_labels": True,
+            "row_id_join_one_to_one": True,
+            "test_files_opened": False,
+        },
+    }
+    _atomic_json(output_dir / "evaluation.json", payload)
+    return payload
+
+
+def run_aggregate_phase(
+    *,
+    stage: str,
+    evaluation_jsons: Sequence[Path],
+    output_dir: Path,
+    stage1_json: Path | None,
+) -> dict[str, Any]:
+    _require_empty_output(output_dir)
+    payloads = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in evaluation_jsons
+    ]
+    if any(value.get("phase") != "response_credit_evaluate" for value in payloads):
+        raise RuntimeError("Aggregate inputs must be credit evaluation artifacts.")
+    if any(not value.get("formal") for value in payloads):
+        raise RuntimeError("Activation gates reject nonformal evaluations.")
+    commits = {value["git_commit"] for value in payloads}
+    architectures = {value["architecture_topology_sha256"] for value in payloads}
+    if len(commits) != 1 or len(architectures) != 1:
+        raise RuntimeError("Gate inputs do not share one commit and architecture.")
+    evaluations = [value["evaluation"] for value in payloads]
+    if stage == "stage1":
+        if stage1_json is not None:
+            raise ValueError("Stage 1 must not receive --stage1-json.")
+        decision = compute_stage1_gate(evaluations)
+    else:
+        if stage1_json is None:
+            raise ValueError("Stage 2 requires --stage1-json.")
+        stage1 = json.loads(stage1_json.read_text(encoding="utf-8"))
+        decision = compute_stage2_gate(evaluations, stage1=stage1)
+    decision.update(
+        {
+            "git_commit": next(iter(commits)),
+            "architecture_topology_sha256": next(iter(architectures)),
+            "multi_seed_used": False,
+            "bootstrap_is_model_seed": False,
+        }
+    )
+    _atomic_json(output_dir / "activation_decision.json", decision)
+    return decision
+
+
+def _add_source_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--dataset", required=True, choices=EXPECTED_DATASETS)
+    parser.add_argument("--source-dir", required=True, type=Path)
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Validation-only response-to-concept credit routing audit. "
+            "No command accepts a test path."
+        )
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    audit = subparsers.add_parser("audit")
+    _add_source_arguments(audit)
+    audit.add_argument("--output-dir", required=True, type=Path)
+
+    predict = subparsers.add_parser("predict")
+    _add_source_arguments(predict)
+    predict.add_argument("--split-kind", required=True, choices=EXPECTED_SPLITS)
+    predict.add_argument("--variant", required=True, choices=VARIANTS)
+    predict.add_argument("--output-dir", required=True, type=Path)
+    predict.add_argument("--device", required=True)
+    predict.add_argument("--epochs", type=int, default=EPOCHS)
+    predict.add_argument("--nonformal", action="store_true")
+    predict.add_argument("--expected-commit")
+    predict.add_argument("--stage1-json", type=Path)
+
+    evaluate = subparsers.add_parser("evaluate")
+    evaluate.add_argument("--full-dir", required=True, type=Path)
+    evaluate.add_argument("--direct-dir", required=True, type=Path)
+    evaluate.add_argument("--capacity-dir", required=True, type=Path)
+    evaluate.add_argument("--source-dir", required=True, type=Path)
+    evaluate.add_argument("--output-dir", required=True, type=Path)
+    evaluate.add_argument(
+        "--bootstrap-replicates",
+        type=int,
+        default=BOOTSTRAP_REPLICATES,
+    )
+
+    aggregate = subparsers.add_parser("aggregate")
+    aggregate.add_argument("--stage", required=True, choices=("stage1", "stage2"))
+    aggregate.add_argument(
+        "--evaluation-json",
+        required=True,
+        action="append",
+        type=Path,
+    )
+    aggregate.add_argument("--stage1-json", type=Path)
+    aggregate.add_argument("--output-dir", required=True, type=Path)
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+    if args.command == "audit":
+        result = run_audit_phase(
+            dataset=args.dataset,
+            source_dir=args.source_dir,
+            output_dir=args.output_dir,
+        )
+        printable = {
+            "dataset": result["dataset"],
+            "validation_rows": result["features"]["validation_query_rows"],
+            "C_rows": result["features"]["validation_c_rows"],
+        }
+    elif args.command == "predict":
+        result = run_predict_phase(
+            dataset=args.dataset,
+            split_kind=args.split_kind,
+            variant=args.variant,
+            source_dir=args.source_dir,
+            output_dir=args.output_dir,
+            device_name=args.device,
+            epochs=args.epochs,
+            nonformal=args.nonformal,
+            expected_commit=args.expected_commit,
+            stage1_json=args.stage1_json,
+        )
+        printable = {
+            "dataset": result["dataset"],
+            "split_kind": result["split_kind"],
+            "variant": result["variant"],
+            "formal": result["formal"],
+            "prediction_rows": result["artifacts"]["predictions"]["rows"],
+        }
+    elif args.command == "evaluate":
+        result = run_evaluate_phase(
+            full_dir=args.full_dir,
+            direct_dir=args.direct_dir,
+            capacity_dir=args.capacity_dir,
+            source_dir=args.source_dir,
+            output_dir=args.output_dir,
+            bootstrap_replicates=args.bootstrap_replicates,
+        )
+        printable = {
+            "dataset": result["dataset"],
+            "split_kind": result["split_kind"],
+            "formal": result["formal"],
+            "C_delta": result["evaluation"]["control_envelope_deltas"]["C"][
+                "auc_vs_control_envelope"
+            ],
+        }
+    else:
+        result = run_aggregate_phase(
+            stage=args.stage,
+            evaluation_jsons=args.evaluation_json,
+            output_dir=args.output_dir,
+            stage1_json=args.stage1_json,
+        )
+        printable = {
+            "gate": result["gate"],
+            "passed": result.get("stage1_passed", result.get("activated")),
+        }
+    print(json.dumps(printable, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
