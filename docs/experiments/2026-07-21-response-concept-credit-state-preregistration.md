@@ -176,31 +176,82 @@ Interaction-level concept strings cannot override it. Duplicate
 for row identity. All state inputs, item ease, support coverage, slice
 membership, and diagnostics are built only from training support.
 
+## Label-blind feasibility amendment after `48bdf1e`
+
+Commit `48bdf1e` preregistered a stricter C slice. After that commit, but before
+any candidate implementation, model fitting, prediction, validation-label
+read, or test-file access, a target-label-blind feasibility precheck used
+student/item identities, union-Q, train-only support membership and, only to
+apply the already frozen strict definition, train-only support responses.
+Under the frozen student-disjoint holdout protocol, the strict slice contained
+only 156 rows from 35 students on MOOCRadar, versus 8,717 rows from 507 students
+on NIPS34. It therefore failed the already registered minimum of 500 rows and
+100 students on MOOCRadar before a model could be evaluated.
+
+Allowing this known structural failure to stand would make the candidate fail
+mechanically rather than test its routing mechanism. This amendment is thus a
+pre-implementation feasibility correction, not a response to an observed
+effect. No validation outcome, test row, model probability, checkpoint, or
+metric was inspected to choose the replacement. All model, training, C-effect,
+T-effect, overall, bootstrap, and Brier thresholds remain unchanged.
+
+The replacement broad C definition gives these exact outcome-free counts:
+
+| Protocol | Dataset | C rows | C students |
+|---|---|---:|---:|
+| holdout | MOOCRadar | 1,581 | 295 |
+| holdout | NIPS34 | 28,051 | 1,013 |
+| standard | MOOCRadar | 2,557 | 406 |
+| standard | NIPS34 | 29,079 | 1,015 |
+
+The superseded strict definition is retained below as `C_strict`, along with
+its adverse MOOCRadar feasibility result, rather than being erased.
+
 ## Primary credit-sensitive slice C
 
-The primary mechanism slice `C` is frozen without reading a validation target
+The gating mechanism slice `C` is frozen without reading a validation target
 label or prediction. A validation query row belongs to `C` exactly when:
 
 1. its target item has at least two concepts in union-Q;
-2. after excluding the target `(student,item)` group, every target concept
-   occurs in at least three of that student's train-only support rows; and
-3. the range of the target concepts' support response rates is at least 0.10,
-   where concept `c` uses the fixed Beta-smoothed statistic
-   `(correct_c + 1) / (attempts_c + 2)` and a support row is counted once for
-   `c` when `c` is in that row's union-Q.
+2. after excluding the target `(student,item)` group, the student's train-only
+   support contains at least three **distinct multi-concept items** whose
+   union-Q intersects the target Q set; and
+3. at least two distinct concepts in the target Q set are covered by those
+   eligible multi-concept support items.
 
-This definition identifies rows on which the student's history contains both
-multi-concept ambiguity and heterogeneous concept-related outcomes. It does
-not claim those smoothed rates are ground-truth mastery and they are never
-model labels. Slice row IDs are frozen before validation labels are opened.
-For a dataset to be identified, holdout-validation `C` must contain at least
-500 rows, at least 100 students, and both response classes; otherwise the
-candidate cannot pass this two-dataset activation screen.
+Support items, not repeated interaction rows, determine the count in condition
+2. This broad, outcome-free slice identifies targets for which responsibility
+allocation has multiple ambiguous support items and at least two plausible
+target-concept destinations. It does not use support correctness to select
+rows. Slice row IDs are frozen before validation labels are opened. For a
+dataset to be identified, holdout-validation `C` must contain at least 500
+rows, at least 100 students, and, once labels are opened after prediction,
+both response classes; otherwise the candidate cannot pass this two-dataset
+activation screen.
 
 Holdout-validation `C` AUC is the primary mechanism metric. Standard-validation
 `C` AUC, ACC, RMSE, Brier, and ECE are reported as robustness diagnostics and
 must obey the regression guard below. No threshold in the definition of `C`
 may be changed after inspecting a validation prediction.
+
+### Descriptive strict slice C_strict
+
+`C_strict` retains the original `48bdf1e` definition. It requires a multi-Q
+target, at least three target-group-excluded train-only support rows for every
+target concept, and a range of at least 0.10 among the concepts' Beta-smoothed
+support response rates `(correct_c + 1) / (attempts_c + 2)`. A support row is
+counted once for `c` when `c` is in its union-Q.
+
+On student-disjoint holdout validation, its target-label-blind membership is:
+
+| Dataset | C_strict rows | C_strict students |
+|---|---:|---:|
+| MOOCRadar | 156 | 35 |
+| NIPS34 | 8,717 | 507 |
+
+`C_strict` is reported only as a descriptive mechanism diagnostic. It cannot
+select a control, choose a checkpoint, activate or reject the candidate, or
+replace C in any threshold or confidence interval.
 
 ## Secondary target slice T and why C is separate
 
@@ -208,12 +259,12 @@ may be changed after inspecting a validation prediction.
 low-coverage for NIPS34, built solely from the corresponding training history.
 It is evaluated on holdout validation.
 
-`C` and `T` need not overlap. In fact, exact-zero `T` asks for a target concept
-with no direct student history, whereas `C` requires enough train-only history
-on every target concept to make within-Q responsibility potentially
-identifiable. `C` therefore tests the module's declared local mechanism; `T`
-tests whether better allocation and shared completion transfer to the missing
-or sparse state that matters to the project-level external-win objective.
+`C` and `T` need not overlap. Exact-zero `T` asks for a target concept with no
+direct student history, whereas `C` requires multi-concept support items that
+cover at least two concepts in the target Q set. `C` therefore tests the
+module's declared local routing mechanism; `T` tests whether better allocation
+and shared completion transfer to the missing or sparse state that matters to
+the project-level external-win objective.
 
 Improving `C` alone would support a narrow diagnostic finding but would not
 justify continuing a state-completion module for this project. The secondary
