@@ -31,6 +31,13 @@ def parse_args() -> argparse.Namespace:
         required=True,
         metavar=("MODEL", "PAIRED_DIR", "SUMMARY_JSON"),
     )
+    parser.add_argument(
+        "--model-failure",
+        action="append",
+        nargs=3,
+        default=[],
+        metavar=("MODEL", "DATASET", "REASON"),
+    )
     parser.add_argument("--bootstrap", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -151,22 +158,55 @@ def analyze(args: argparse.Namespace) -> tuple[dict[str, Any], pd.DataFrame]:
     non_name, non_dir_raw, non_summary_raw = args.non_graph
     if non_name != "EduCDM-KaNCD-GMF":
         raise ValueError("Gate D non-graph reference is EduCDM-KaNCD-GMF.")
+    failures = {
+        (model, dataset): reason
+        for model, dataset, reason in args.model_failure
+    }
+    if len(failures) != len(args.model_failure):
+        raise ValueError("Duplicate Gate D model failure.")
+    if any(model not in GRAPH_MODELS for model, _ in failures):
+        raise ValueError("Gate D failure names an unknown graph model.")
     summaries = {
         model: load_summary(summary)
         for model, (_, summary) in graph_specs.items()
     }
     non_summary = load_summary(Path(non_summary_raw))
-    dataset_sets = [set(rows) for rows in summaries.values()]
-    dataset_sets.append(set(non_summary))
-    if any(dataset_set != dataset_sets[0] for dataset_set in dataset_sets[1:]):
-        raise ValueError("Gate D dataset sets differ across models.")
+    datasets = set(non_summary)
+    for model, rows in summaries.items():
+        failed = {
+            dataset
+            for failed_model, dataset in failures
+            if failed_model == model
+        }
+        if set(rows).intersection(failed):
+            raise ValueError(f"{model}: result and failure overlap.")
+        if set(rows).union(failed) != datasets:
+            raise ValueError(
+                f"{model}: results plus failures do not cover Gate D datasets."
+            )
     output_rows: list[dict[str, Any]] = []
     admitted_datasets: list[str] = []
-    for dataset in sorted(dataset_sets[0]):
+    for dataset in sorted(datasets):
         non_rows = load_rows(Path(non_dir_raw), dataset)
         graph_support_count = 0
         interaction_support_count = 0
         for model in GRAPH_MODELS:
+            failure = failures.get((model, dataset))
+            if failure is not None:
+                output_rows.append(
+                    {
+                        "dataset": dataset,
+                        "graph_model": model,
+                        "graph_damage": None,
+                        "graph_support": False,
+                        "non_graph_damage": non_summary[dataset][
+                            "log_loss_damage_concept_minus_random"
+                        ],
+                        "model_failure": failure,
+                        "log_loss_support": False,
+                    }
+                )
+                continue
             graph_rows = load_rows(graph_specs[model][0], dataset)
             effect = interaction(
                 graph_rows,
@@ -192,6 +232,7 @@ def analyze(args: argparse.Namespace) -> tuple[dict[str, Any], pd.DataFrame]:
                     "non_graph_damage": non_summary[dataset][
                         "log_loss_damage_concept_minus_random"
                     ],
+                    "model_failure": None,
                     **effect,
                 }
             )
@@ -211,6 +252,10 @@ def analyze(args: argparse.Namespace) -> tuple[dict[str, Any], pd.DataFrame]:
         "non_graph_model": non_name,
         "bootstrap": args.bootstrap,
         "seed": args.seed,
+        "model_failures": [
+            {"model": model, "dataset": dataset, "reason": reason}
+            for (model, dataset), reason in sorted(failures.items())
+        ],
         "dataset_rule": {
             "minimum_graph_support": 3,
             "minimum_positive_interactions": 2,
