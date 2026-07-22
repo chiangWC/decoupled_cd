@@ -6,8 +6,12 @@ from tempfile import TemporaryDirectory
 import unittest
 
 import pandas as pd
+import torch
 
 from data.pool_protocol import sha256_file
+from scripts.run_educdm_kancd_concept_depletion_gate import (
+    load_official_net_class,
+)
 from scripts.run_kancd_concept_depletion_gate import (
     FILES,
     verify_protocol_arm,
@@ -169,6 +173,18 @@ class ConceptDepletionGateCTest(unittest.TestCase):
         self.assertFalse(check["admitted"])
         self.assertEqual(check["common_cross_family_datasets"], ["C"])
         self.assertEqual(int(table["robust_cross_family_support"].sum()), 1)
+
+    def test_official_educdm_kancd_network_is_callable(self) -> None:
+        net_class = load_official_net_class()
+        model = net_class(4, 3, 2, "gmf", 5)
+        probabilities = model(
+            torch.tensor([0, 1]),
+            torch.tensor([1, 2]),
+            torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+        )
+
+        self.assertEqual(tuple(probabilities.shape), (2,))
+        self.assertTrue(bool(torch.isfinite(probabilities).all()))
 
 
 if __name__ == "__main__":
