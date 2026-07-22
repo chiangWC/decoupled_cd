@@ -121,6 +121,55 @@ class ConceptDepletionGateCTest(unittest.TestCase):
         self.assertTrue(payload["admitted"])
         self.assertEqual(payload["common_cross_family_count"], 3)
 
+    def test_official_cross_check_can_reject_primary_admission(self) -> None:
+        datasets = ("A", "B", "C")
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {}
+            for model in ("ORCDF-NCD", "SVGCD", "KaNCD"):
+                path = root / f"{model}.json"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "datasets": [
+                                {
+                                    "dataset": dataset,
+                                    "supports_concept_specific_damage": True,
+                                    "log_loss_damage_concept_minus_random": 0.1,
+                                }
+                                for dataset in datasets
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                paths[model] = path
+            official = root / "official.json"
+            official.write_text(
+                json.dumps(
+                    {
+                        "datasets": [
+                            {
+                                "dataset": dataset,
+                                "supports_concept_specific_damage": (
+                                    dataset == "C"
+                                ),
+                                "log_loss_damage_concept_minus_random": 0.1,
+                            }
+                            for dataset in datasets
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload, table = summarize(paths, official)
+
+        self.assertTrue(payload["admitted"])
+        check = payload["official_cross_check"]
+        self.assertFalse(check["admitted"])
+        self.assertEqual(check["common_cross_family_datasets"], ["C"])
+        self.assertEqual(int(table["robust_cross_family_support"].sum()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
