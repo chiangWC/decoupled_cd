@@ -186,10 +186,14 @@ def analyze(args: argparse.Namespace) -> tuple[dict[str, Any], pd.DataFrame]:
             )
     output_rows: list[dict[str, Any]] = []
     admitted_datasets: list[str] = []
+    maximum_possible_admitted_datasets: list[str] = []
     for dataset in sorted(datasets):
         non_rows = load_rows(Path(non_dir_raw), dataset)
         graph_support_count = 0
         interaction_support_count = 0
+        unresolved_count = sum(
+            (model, dataset) in failures for model in GRAPH_MODELS
+        )
         for model in GRAPH_MODELS:
             failure = failures.get((model, dataset))
             if failure is not None:
@@ -239,12 +243,41 @@ def analyze(args: argparse.Namespace) -> tuple[dict[str, Any], pd.DataFrame]:
         supports_family = (
             graph_support_count >= 3 and interaction_support_count >= 2
         )
+        maximum_graph_support_count = graph_support_count + unresolved_count
+        maximum_interaction_support_count = (
+            interaction_support_count + unresolved_count
+        )
+        could_support_family = (
+            maximum_graph_support_count >= 3
+            and maximum_interaction_support_count >= 2
+        )
         if supports_family:
             admitted_datasets.append(dataset)
+        if could_support_family:
+            maximum_possible_admitted_datasets.append(dataset)
         for row in output_rows[-len(GRAPH_MODELS) :]:
             row["graph_support_count"] = graph_support_count
             row["interaction_support_count"] = interaction_support_count
             row["dataset_supports_graph_family"] = supports_family
+            row["unresolved_model_count"] = unresolved_count
+            row["maximum_graph_support_count"] = (
+                maximum_graph_support_count
+            )
+            row["maximum_interaction_support_count"] = (
+                maximum_interaction_support_count
+            )
+            row["dataset_could_support_graph_family"] = (
+                could_support_family
+            )
+    maximum_possible_admitted_count = len(
+        maximum_possible_admitted_datasets
+    )
+    if len(admitted_datasets) >= 3:
+        decision = "admit_graph_family_problem"
+    elif maximum_possible_admitted_count < 3:
+        decision = "reject_graph_family_problem"
+    else:
+        decision = "inconclusive_missing_results"
     payload = {
         "schema_version": 1,
         "gate": "graph_family_concept_depletion_gate_d",
@@ -262,13 +295,16 @@ def analyze(args: argparse.Namespace) -> tuple[dict[str, Any], pd.DataFrame]:
         },
         "admitted_datasets": admitted_datasets,
         "admitted_dataset_count": len(admitted_datasets),
+        "maximum_possible_admitted_datasets": (
+            maximum_possible_admitted_datasets
+        ),
+        "maximum_possible_admitted_dataset_count": (
+            maximum_possible_admitted_count
+        ),
         "required_datasets": 3,
         "admitted": len(admitted_datasets) >= 3,
-        "decision": (
-            "admit_graph_family_problem"
-            if len(admitted_datasets) >= 3
-            else "reject_graph_family_problem"
-        ),
+        "futility_rejection_proven": maximum_possible_admitted_count < 3,
+        "decision": decision,
     }
     return payload, pd.DataFrame(output_rows)
 
