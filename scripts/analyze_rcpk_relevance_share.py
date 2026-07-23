@@ -105,8 +105,6 @@ def _validate_predictions(
     full: pd.DataFrame,
     control: pd.DataFrame,
     valid: pd.DataFrame,
-    student_map: dict[str, int],
-    exercise_map: dict[str, int],
 ) -> None:
     required = {"stu_id", "exer_id", "label", "prob"}
     if not required.issubset(full) or not required.issubset(control):
@@ -116,17 +114,13 @@ def _validate_predictions(
     for column in ("stu_id", "exer_id", "label"):
         if not np.array_equal(full[column].to_numpy(), control[column].to_numpy()):
             raise ValueError(f"Full/control rows differ in {column}")
-    expected_students = np.asarray(
-        [student_map[str(value)] for value in valid["stu_id"]], dtype=int
-    )
-    expected_exercises = np.asarray(
-        [exercise_map[str(value)] for value in valid["exer_id"]], dtype=int
-    )
+    expected_students = valid["stu_id"].astype(str).to_numpy()
+    expected_exercises = valid["exer_id"].astype(str).to_numpy()
     expected_labels = valid["label"].to_numpy(dtype=float)
-    if not np.array_equal(full["stu_id"].to_numpy(dtype=int), expected_students):
-        raise ValueError("Prediction student IDs do not match dense validation mapping")
-    if not np.array_equal(full["exer_id"].to_numpy(dtype=int), expected_exercises):
-        raise ValueError("Prediction exercise IDs do not match dense validation mapping")
+    if not np.array_equal(full["stu_id"].astype(str).to_numpy(), expected_students):
+        raise ValueError("Prediction student IDs do not match validation rows")
+    if not np.array_equal(full["exer_id"].astype(str).to_numpy(), expected_exercises):
+        raise ValueError("Prediction exercise IDs do not match validation rows")
     if not np.array_equal(full["label"].to_numpy(dtype=float), expected_labels):
         raise ValueError("Prediction labels do not match validation rows")
 
@@ -228,8 +222,6 @@ def main() -> None:
         full,
         control,
         valid,
-        mappings["student_id_map"],
-        mappings["exercise_id_map"],
     )
 
     histories = [set() for _ in mappings["student_id_map"]]
@@ -240,7 +232,11 @@ def main() -> None:
 
     incoming_q = _incoming_neighbors(graph.q_transition_t)
     incoming_metadata = _incoming_neighbors(graph.metadata_transition_t)
-    targets = full["exer_id"].to_numpy(dtype=int)
+    raw_targets = full["exer_id"].to_numpy()
+    targets = np.asarray(
+        [mappings["exercise_id_map"][str(value)] for value in raw_targets],
+        dtype=int,
+    )
     reachable_by_target = {
         int(target): reachable_history_sources(
             target=int(target),
@@ -252,7 +248,11 @@ def main() -> None:
         for target in np.unique(targets)
     }
 
-    students = full["stu_id"].to_numpy(dtype=int)
+    raw_students = full["stu_id"].to_numpy()
+    students = np.asarray(
+        [mappings["student_id_map"][str(value)] for value in raw_students],
+        dtype=int,
+    )
     history_count = np.asarray([len(histories[s]) for s in students], dtype=int)
     reachable_count = np.asarray(
         [
@@ -279,8 +279,8 @@ def main() -> None:
     rows = pd.DataFrame(
         {
             "row_index": np.arange(len(full)),
-            "stu_id": students,
-            "exer_id": targets,
+            "stu_id": raw_students,
+            "exer_id": raw_targets,
             "label": labels,
             "full_prob": full_probs,
             "global_prob": global_probs,
