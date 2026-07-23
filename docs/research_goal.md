@@ -73,3 +73,17 @@ XES3G5M is an additional external architecture win with a negligible negative
 module delta and is not used as attribution evidence. The next phase is paper
 validation and comparison, not compulsory module accumulation. The rejected
 H/T results remain reportable limitations.
+
+## RCPK mechanism clarification (2026-07-23)
+
+A same-input, same-capacity control confirms that RCPK's target-conditioned
+relation gather materially outperforms a student-global relation summary on
+ASSIST09 and NIPS34. This strengthens the structural attribution of the existing
+standard-only module. The accompanying natural relevance-share analysis rejects
+low-share target-irrelevant relational dilution as a cross-dataset problem
+statement: ASSIST09 has the opposite direction, Junyi is inconclusive and
+NIPS34 has no share variation. Retain the mechanism result, but do not present
+relational dilution, TKC/UKC incompleteness, difficulty calibration or efficiency
+as an established premise. A paper claim still requires a focused novelty audit
+against existing interaction-aware graph CD before the new control is evaluated
+on frozen test rows.

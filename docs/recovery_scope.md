@@ -54,3 +54,14 @@ audit failed and is retained only as a negative experiment. New structural
 work requires a separate, evidence-backed responsibility and preregistered
 control; otherwise proceed with paper validation, external comparisons, and
 analysis of the qualified RCPK mechanism.
+
+## Target-conditioning boundary (2026-07-23)
+
+The clean student-global control establishes that target-conditioned relation
+aggregation is functionally important on ASSIST09 and NIPS34 under identical
+inputs, capacity and initialization. It does not validate the proposed
+low-relevance-share dilution explanation; that natural diagnostic failed. New
+sessions may use the clean mechanism result as attribution evidence, but must
+not restore relational dilution as the problem premise or relabel it as
+TKC/UKC completion. See
+`docs/experiments/2026-07-23-rcpk-target-conditioning-gate-result.md`.
