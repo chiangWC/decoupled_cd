@@ -209,15 +209,22 @@ class ResponseConditionedPathKernel(nn.Module):
         graph: PathKernelGraph,
         hops: int = 4,
         item_ease_shrinkage: float = 20.0,
+        aggregation_mode: str = "target_conditioned",
     ) -> None:
         super().__init__()
         if dim <= 0 or hops <= 0 or item_ease_shrinkage <= 0.0:
             raise ValueError("Path-kernel dimensions and shrinkage must be positive.")
+        if aggregation_mode not in {"target_conditioned", "student_global"}:
+            raise ValueError(
+                "Path-kernel aggregation must be target_conditioned or "
+                "student_global."
+            )
         self.dim = int(dim)
         self.num_nodes = int(graph.num_nodes)
         self.num_exercises = int(graph.num_exercises)
         self.hops = int(hops)
         self.item_ease_shrinkage = float(item_ease_shrinkage)
+        self.aggregation_mode = aggregation_mode
         self.source_sha256 = graph.source_sha256
         self.edge_sha256 = graph.edge_sha256
         self.source_variant = graph.source_variant
@@ -323,11 +330,22 @@ class ResponseConditionedPathKernel(nn.Module):
                 ) + self._propagate(
                     self.metadata_transition_t, previous_no_metadata
                 )
-                transported = used_metadata.reshape(
+                transported_by_node = used_metadata.reshape(
                     self.NUM_CHANNELS,
                     batch_students,
                     self.num_nodes,
-                )[:, target_rows, target_items].transpose(0, 1)
+                )
+                if self.aggregation_mode == "target_conditioned":
+                    transported = transported_by_node[
+                        :, target_rows, target_items
+                    ].transpose(0, 1)
+                else:
+                    global_transport = transported_by_node[
+                        :, :, : self.num_exercises
+                    ].sum(dim=-1)
+                    transported = global_transport[
+                        :, target_rows
+                    ].transpose(0, 1)
                 mass = transported[:, 0]
                 first_reached = (first_hop == 0.0) & (mass > 0.0)
                 first_hop[first_reached] = float(hop)

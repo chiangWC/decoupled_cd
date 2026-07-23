@@ -1152,6 +1152,7 @@ class TwoStageTKCUKCCDM(nn.Module):
         max_slip: float = 0.3,
         response_path_graph: PathKernelGraph | None = None,
         response_path_hops: int = 4,
+        response_path_aggregation: str = "target_conditioned",
         **_unused_kwargs,
     ) -> None:
         super().__init__()
@@ -1292,6 +1293,7 @@ class TwoStageTKCUKCCDM(nn.Module):
                 graph=response_path_graph,
                 hops=response_path_hops,
                 item_ease_shrinkage=20.0,
+                aggregation_mode=response_path_aggregation,
             )
             if response_path_graph is not None
             else None
@@ -1342,6 +1344,13 @@ class TwoStageTKCUKCCDM(nn.Module):
                     self.response_path_kernel.source_variant
                 ),
             }
+            if (
+                self.response_path_kernel.aggregation_mode
+                != "target_conditioned"
+            ):
+                payload["response_path_aggregation"] = (
+                    self.response_path_kernel.aggregation_mode
+                )
             return hashlib.sha256(
                 json.dumps(payload, sort_keys=True).encode("utf-8")
             ).hexdigest()[:16]

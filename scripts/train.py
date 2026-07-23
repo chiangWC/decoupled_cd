@@ -168,6 +168,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--response-path-hops", type=int, default=4)
     parser.add_argument(
+        "--response-path-aggregation",
+        choices=["target_conditioned", "student_global"],
+        default="target_conditioned",
+        help=(
+            "Gather relation-path channels at each target or pool one shared "
+            "relation summary per student."
+        ),
+    )
+    parser.add_argument(
         "--context-target-frac",
         type=float,
         default=0.0,
@@ -864,6 +873,7 @@ def validate_model_args(args: argparse.Namespace) -> None:
         or args.response_path_mode != "disabled"
         or args.response_path_graph is not None
         or args.response_path_hops != 4
+        or args.response_path_aggregation != "target_conditioned"
     )
     if args.model != "two_stage_tkc_ukc" and completion_nondefaults:
         raise ValueError(
@@ -880,6 +890,11 @@ def validate_model_args(args: argparse.Namespace) -> None:
             if args.response_path_graph is not None:
                 raise ValueError(
                     "--response-path-graph requires an enabled response path mode."
+                )
+            if args.response_path_aggregation != "target_conditioned":
+                raise ValueError(
+                    "--response-path-aggregation requires an enabled response "
+                    "path mode."
                 )
         else:
             if args.response_path_graph is None:
@@ -1318,6 +1333,7 @@ def main() -> None:
             max_slip=args.v2_gs_max_slip,
             response_path_graph=response_path_graph,
             response_path_hops=args.response_path_hops,
+            response_path_aggregation=args.response_path_aggregation,
         )
     elif args.model == "v2":
         model = DecoupledCDMV2(
@@ -1501,6 +1517,7 @@ def main() -> None:
         "response_path_mode": args.response_path_mode,
         "response_path_graph": args.response_path_graph,
         "response_path_hops": args.response_path_hops,
+        "response_path_aggregation": args.response_path_aggregation,
         "response_path_source_sha256": (
             response_path_graph.source_sha256
             if response_path_graph is not None

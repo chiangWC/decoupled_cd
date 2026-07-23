@@ -147,6 +147,9 @@ def load_model(
             max_slip=float(summary.get("v2_gs_max_slip", 0.3)),
             response_path_graph=response_path_graph,
             response_path_hops=int(summary.get("response_path_hops", 4)),
+            response_path_aggregation=str(
+                summary.get("response_path_aggregation", "target_conditioned")
+            ),
         )
         model.evaluation_student_batch_size = int(
             summary.get("student_batch_size") or 32
