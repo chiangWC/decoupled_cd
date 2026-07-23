@@ -293,15 +293,23 @@ def main() -> None:
         }
     )
     positive = (rows["history_count"] >= 5) & (rows["reachable_history_count"] > 0)
-    ranked = rows.loc[positive, "relevance_share"].rank(method="first")
-    rows.loc[positive, "relevance_bin"] = pd.qcut(
-        ranked, q=3, labels=BIN_NAMES
-    ).astype(str)
+    unique_positive_shares = int(
+        rows.loc[positive, "relevance_share"].nunique()
+    )
+    trend_identifiable = unique_positive_shares >= 3
+    if trend_identifiable:
+        ranked = rows.loc[positive, "relevance_share"].rank(method="first")
+        rows.loc[positive, "relevance_bin"] = pd.qcut(
+            ranked, q=3, labels=BIN_NAMES
+        ).astype(str)
+    else:
+        rows.loc[positive, "relevance_bin"] = "positive_unstratified"
     rows.loc[(rows["history_count"] >= 5) & ~positive, "relevance_bin"] = "zero"
 
+    reported_bins = (*BIN_NAMES, "positive_unstratified", "zero", "ineligible")
     bin_metrics = {
         name: _metrics(rows[rows["relevance_bin"] == name])
-        for name in (*BIN_NAMES, "zero", "ineligible")
+        for name in reported_bins
         if (rows["relevance_bin"] == name).any()
     }
     overall_bootstrap = paired_student_cluster_bootstrap(
@@ -311,10 +319,17 @@ def main() -> None:
         replicates=args.replicates,
         seed=args.seed,
     )
-    trend_bootstrap = _clustered_low_high_bootstrap(
-        rows,
-        replicates=args.replicates,
-        seed=args.seed,
+    trend_bootstrap = (
+        _clustered_low_high_bootstrap(
+            rows,
+            replicates=args.replicates,
+            seed=args.seed,
+        )
+        if trend_identifiable
+        else {
+            "status": "unidentifiable_less_than_three_unique_positive_shares",
+            "unique_positive_share_values": unique_positive_shares,
+        }
     )
     result = {
         "dataset": args.dataset,
@@ -329,6 +344,8 @@ def main() -> None:
         "global_prediction_sha256": _sha256(args.global_predictions),
         "overall": _metrics(rows),
         "positive_share_rows": int(positive.sum()),
+        "unique_positive_share_values": unique_positive_shares,
+        "trend_identifiable": trend_identifiable,
         "zero_share_rows": int(((rows["history_count"] >= 5) & ~positive).sum()),
         "short_history_rows": int((rows["history_count"] < 5).sum()),
         "bins": bin_metrics,
